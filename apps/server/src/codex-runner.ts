@@ -166,7 +166,9 @@ function buildPayload(
     case "command_exec": {
       const prev = existing?.kind === "command_exec" ? existing : null;
       const rawOutput =
-        typeof item.output === "string" ? item.output : prev?.output ?? "";
+        typeof item.aggregated_output === "string" ? item.aggregated_output
+        : typeof item.output === "string" ? item.output
+        : prev?.output ?? "";
       const outputTruncated = rawOutput.length > MAX_CMD_OUTPUT_CHARS;
       const exitCode =
         typeof item.exit_code === "number" ? item.exit_code : prev?.exitCode ?? null;

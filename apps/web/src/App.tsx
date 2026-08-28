@@ -418,6 +418,7 @@ export default function App() {
   const [form, setForm] = useState(emptyForm);
   const [prompt, setPrompt] = useState("");
   const [activeRun, setActiveRun] = useState<AgentRun | null>(null);
+  const [runs, setRuns] = useState<AgentRun[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState<boolean | null>(null);
@@ -471,6 +472,7 @@ export default function App() {
 
   useEffect(() => {
     setActiveRun(null);
+    setRuns([]);
     setShowSettings(false);
     setTraceRunId(null);
     if (!selectedId) {
@@ -481,6 +483,7 @@ export default function App() {
       .then(([, result]) => {
         if (selectedIdRef.current !== selectedId) return;
         const latest = result.runs[0] ?? null;
+        setRuns(result.runs);
         setActiveRun(latest);
         if (latest && ["queued", "running"].includes(latest.status)) {
           void pollRun(latest.id, selectedId).catch((reason) =>
@@ -583,7 +586,10 @@ export default function App() {
         await new Promise((resolve) => window.setTimeout(resolve, 900));
         if (!mountedRef.current) return;
         const result = await api.run(runId);
-        if (selectedIdRef.current === agentId) setActiveRun(result.run);
+        if (selectedIdRef.current === agentId) {
+          setActiveRun(result.run);
+          setRuns((prev) => prev.map((r) => r.id === result.run.id ? result.run : r));
+        }
         if (!["queued", "running"].includes(result.run.status)) {
           await Promise.all([refreshMessages(agentId), refreshAgents()]);
           return;
@@ -605,6 +611,7 @@ export default function App() {
       if (selectedIdRef.current === selected.id) {
         setMessages((current) => [...current, result.message]);
         setActiveRun(result.run);
+        setRuns((prev) => [result.run, ...prev]);
       }
       setAgents((current) =>
         current.map((agent) =>
@@ -888,15 +895,32 @@ export default function App() {
                     </div>
                   </div>
                 ) : (
-                  messages.map((message) => (
-                    <article className={"message message-" + message.role} key={message.id}>
-                      <div className="message-meta">
-                        <strong>{message.role === "user" ? "You" : selected.name}</strong>
-                        <span>{formatTime(message.createdAt)}</span>
-                      </div>
-                      <div className="message-body">{message.content}</div>
-                    </article>
-                  ))
+                  messages.map((message) => {
+                    const msgRun = message.role === "assistant"
+                      ? runs.find((r) => r.id === message.runId)
+                      : null;
+                    const hasTrace = msgRun?.traceSummary && msgRun.traceSummary.spanCount > 0;
+                    return (
+                      <article className={"message message-" + message.role} key={message.id}>
+                        <div className="message-meta">
+                          <strong>{message.role === "user" ? "You" : selected.name}</strong>
+                          <span>{formatTime(message.createdAt)}</span>
+                          {hasTrace && msgRun && (
+                            <button
+                              className="button button-ghost"
+                              style={{ fontSize: "0.72rem", padding: "2px 8px", marginLeft: 8 }}
+                              onClick={() => setTraceRunId(msgRun.id)}
+                            >
+                              {msgRun.traceSummary!.failedSpanCount > 0
+                                ? `trace (${msgRun.traceSummary!.failedSpanCount} failed)`
+                                : `trace (${msgRun.traceSummary!.spanCount} spans)`}
+                            </button>
+                          )}
+                        </div>
+                        <div className="message-body">{message.content}</div>
+                      </article>
+                    );
+                  })
                 )}
                 {activeRun && ["queued", "running"].includes(activeRun.status) && (
                   <article className="message message-assistant thinking">

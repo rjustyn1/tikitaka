@@ -1,4 +1,6 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import type { AppConfig } from "./config.js";
 import {
@@ -184,7 +186,17 @@ export class ContainerCodexRunner implements AgentRunner {
         stdout += chunk.toString("utf8");
         const lines = stdout.split(/\r?\n/);
         stdout = lines.pop() ?? "";
-        for (const line of lines) parseCodexEventLine(line, parsed);
+        for (const line of lines) {
+          if (process.env.TRACE_RAW_DUMP === "1" && line.trim()) {
+            const dir = join(process.cwd(), ".data", "raw-events");
+            mkdirSync(dir, { recursive: true });
+            appendFileSync(
+              join(dir, `${request.agentId}-${Date.now()}.jsonl`),
+              line + "\n",
+            );
+          }
+          parseCodexEventLine(line, parsed);
+        }
       } else {
         stderr += chunk.toString("utf8");
         if (stderr.length > 16_384) stderr = stderr.slice(-16_384);
