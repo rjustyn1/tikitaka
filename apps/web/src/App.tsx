@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, setAuthToken } from "./api";
-import type { Agent, AgentRun, Message, SystemInfo } from "./types";
+import type { Agent, AgentRun, Message, RunTraceSummary, SystemInfo, TraceSpan } from "./types";
 
 const starterPrompts = [
   "Create a small TypeScript CLI that prints a weather summary from sample JSON.",
@@ -35,6 +35,378 @@ function Spinner() {
   return <span className="spinner" aria-label="Loading" />;
 }
 
+type TraceFilter = "all" | "failed" | "reasoning";
+
+function TracePanel({
+  runId,
+  onClose,
+}: {
+  runId: string;
+  onClose: () => void;
+}) {
+  const [loading, setLoading] = useState(true);
+  const [summary, setSummary] = useState<RunTraceSummary | null>(null);
+  const [spans, setSpans] = useState<TraceSpan[]>([]);
+  const [filter, setFilter] = useState<TraceFilter>("all");
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    setLoading(true);
+    const params: { type?: string; status?: string } = {};
+    if (filter === "failed") params.status = "failed";
+    if (filter === "reasoning") params.type = "reasoning";
+    api
+      .trace(runId, filter === "all" ? undefined : params)
+      .then((result) => {
+        setSummary(result.summary);
+        setSpans(result.spans);
+      })
+      .catch(() => undefined)
+      .finally(() => setLoading(false));
+  }, [runId, filter]);
+
+  const toggleExpand = (id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const spanIcon = (type: TraceSpan["type"]) => {
+    switch (type) {
+      case "reasoning": return "💭";
+      case "command_exec": return "$";
+      case "file_write": return "📄";
+      case "tool_call": return "🔧";
+      case "agent_message": return "◎";
+      case "error": return "✕";
+    }
+  };
+
+  const statusBadge = (span: TraceSpan) => {
+    if (span.type === "command_exec" && span.payload.kind === "command_exec") {
+      const code = span.payload.exitCode;
+      if (code !== null) {
+        return (
+          <span
+            style={{
+              fontSize: "0.7rem",
+              padding: "1px 5px",
+              borderRadius: 3,
+              background: code === 0 ? "var(--color-success, #22c55e)" : "var(--color-danger, #ef4444)",
+              color: "#fff",
+              marginLeft: 6,
+            }}
+          >
+            exit {code}
+          </span>
+        );
+      }
+    }
+    if (span.status === "failed")
+      return (
+        <span
+          style={{
+            fontSize: "0.7rem",
+            padding: "1px 5px",
+            borderRadius: 3,
+            background: "var(--color-danger, #ef4444)",
+            color: "#fff",
+            marginLeft: 6,
+          }}
+        >
+          failed
+        </span>
+      );
+    if (span.status === "incomplete")
+      return (
+        <span
+          style={{
+            fontSize: "0.7rem",
+            padding: "1px 5px",
+            borderRadius: 3,
+            background: "var(--color-muted, #888)",
+            color: "#fff",
+            marginLeft: 6,
+          }}
+        >
+          incomplete
+        </span>
+      );
+    return null;
+  };
+
+  const renderPayload = (span: TraceSpan) => {
+    const expanded = expandedIds.has(span.id);
+    const p = span.payload;
+    if (p.kind === "reasoning") {
+      const lines = p.text.split("\n");
+      const preview = lines.slice(0, 3).join("\n");
+      const clipped = !expanded && lines.length > 3;
+      return (
+        <div style={{ marginTop: 4 }}>
+          <pre
+            style={{
+              margin: 0,
+              whiteSpace: "pre-wrap",
+              fontSize: "0.8rem",
+              opacity: 0.85,
+            }}
+          >
+            {clipped ? preview + "…" : p.text}
+          </pre>
+          {(lines.length > 3 || p.truncated) && (
+            <button
+              onClick={() => toggleExpand(span.id)}
+              style={{
+                fontSize: "0.75rem",
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                padding: 0,
+                opacity: 0.6,
+                marginTop: 2,
+              }}
+            >
+              {expanded ? "Show less" : "Show more"}
+            </button>
+          )}
+        </div>
+      );
+    }
+    if (p.kind === "command_exec") {
+      const outputLines = p.output.split("\n");
+      const preview = outputLines.slice(0, 5).join("\n");
+      const clipped = !expanded && outputLines.length > 5;
+      return (
+        <div style={{ marginTop: 4 }}>
+          <code style={{ fontSize: "0.8rem", display: "block", marginBottom: 4, opacity: 0.9 }}>
+            {p.command}
+          </code>
+          {p.output && (
+            <>
+              <pre
+                style={{
+                  margin: 0,
+                  whiteSpace: "pre-wrap",
+                  fontSize: "0.75rem",
+                  opacity: 0.75,
+                  maxHeight: expanded ? "none" : undefined,
+                }}
+              >
+                {clipped ? preview + "…" : p.output}
+              </pre>
+              {outputLines.length > 5 && (
+                <button
+                  onClick={() => toggleExpand(span.id)}
+                  style={{
+                    fontSize: "0.75rem",
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    padding: 0,
+                    opacity: 0.6,
+                    marginTop: 2,
+                  }}
+                >
+                  {expanded ? "Show less" : "Show more"}
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      );
+    }
+    if (p.kind === "file_write") {
+      return (
+        <ul style={{ margin: "4px 0 0", paddingLeft: 16, fontSize: "0.8rem" }}>
+          {p.changes.map((c, i) => (
+            <li key={i}>
+              <code>{c.path}</code>{" "}
+              <span style={{ opacity: 0.6 }}>{c.changeKind}</span>
+            </li>
+          ))}
+        </ul>
+      );
+    }
+    if (p.kind === "agent_message") {
+      return (
+        <p style={{ margin: "4px 0 0", fontSize: "0.8rem", opacity: 0.85 }}>
+          {p.text.slice(0, 200)}
+          {p.text.length > 200 ? "…" : ""}
+        </p>
+      );
+    }
+    if (p.kind === "error") {
+      return (
+        <p style={{ margin: "4px 0 0", fontSize: "0.8rem", color: "var(--color-danger, #ef4444)" }}>
+          {p.message}
+        </p>
+      );
+    }
+    return null;
+  };
+
+  // Build an id set of spans that are children (have a parentId in the current span list)
+  const childIds = new Set(spans.filter((s) => s.parentId !== null).map((s) => s.parentId as string));
+
+  // Render spans: parent reasoning cards contain their children
+  const rendered: React.ReactNode[] = [];
+  const visited = new Set<string>();
+
+  for (const span of spans) {
+    if (visited.has(span.id)) continue;
+    visited.add(span.id);
+    const isFailed = span.status === "failed" || span.status === "incomplete";
+    const children = spans.filter((s) => s.parentId === span.id);
+    children.forEach((c) => visited.add(c.id));
+
+    const cardStyle: React.CSSProperties = {
+      border: "1px solid var(--color-border, rgba(0,0,0,0.12))",
+      borderLeft: isFailed
+        ? "3px solid var(--color-danger, #ef4444)"
+        : span.type === "reasoning"
+          ? "3px solid var(--color-accent, #6366f1)"
+          : "1px solid var(--color-border, rgba(0,0,0,0.12))",
+      borderRadius: 6,
+      padding: "8px 10px",
+      marginBottom: 8,
+      fontSize: "0.85rem",
+    };
+
+    rendered.push(
+      <div key={span.id} style={cardStyle}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ fontFamily: "monospace", opacity: 0.5, fontSize: "0.7rem" }}>
+            {String(span.seq).padStart(3, "0")}
+          </span>
+          <span>{spanIcon(span.type)}</span>
+          <span style={{ fontWeight: 600 }}>{span.type}</span>
+          {statusBadge(span)}
+          {span.durationMs !== null && (
+            <span style={{ marginLeft: "auto", opacity: 0.5, fontSize: "0.7rem" }}>
+              {span.durationMs}ms
+            </span>
+          )}
+        </div>
+        {renderPayload(span)}
+        {children.map((child) => {
+          const childFailed = child.status === "failed" || child.status === "incomplete";
+          return (
+            <div
+              key={child.id}
+              style={{
+                marginTop: 8,
+                marginLeft: 16,
+                borderLeft: childFailed
+                  ? "2px solid var(--color-danger, #ef4444)"
+                  : "2px solid var(--color-border, rgba(0,0,0,0.15))",
+                paddingLeft: 10,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontFamily: "monospace", opacity: 0.5, fontSize: "0.7rem" }}>
+                  {String(child.seq).padStart(3, "0")}
+                </span>
+                <span>{spanIcon(child.type)}</span>
+                <span style={{ fontWeight: 500 }}>{child.type}</span>
+                {statusBadge(child)}
+              </div>
+              {renderPayload(child)}
+            </div>
+          );
+        })}
+      </div>,
+    );
+  }
+
+  // Render any un-parented spans not yet visited (shouldn't happen often)
+  for (const span of spans) {
+    if (!visited.has(span.id)) {
+      visited.add(span.id);
+      rendered.push(
+        <div
+          key={span.id}
+          style={{
+            border: "1px solid var(--color-border, rgba(0,0,0,0.12))",
+            borderRadius: 6,
+            padding: "8px 10px",
+            marginBottom: 8,
+          }}
+        >
+          <span>{spanIcon(span.type)}</span>{" "}
+          <span style={{ fontWeight: 600 }}>{span.type}</span>
+          {statusBadge(span)}
+          {renderPayload(span)}
+        </div>,
+      );
+    }
+  }
+
+  return (
+    <div className="settings-panel" style={{ overflowY: "auto", maxHeight: "100vh" }}>
+      <div className="settings-title">
+        <div>
+          <span className="eyebrow">Run trace</span>
+          <h2>Agent execution steps</h2>
+        </div>
+        <button type="button" onClick={onClose}>×</button>
+      </div>
+
+      {summary && (
+        <div
+          style={{
+            display: "flex",
+            gap: 16,
+            flexWrap: "wrap",
+            marginBottom: 16,
+            fontSize: "0.82rem",
+          }}
+        >
+          <span><strong>{summary.spanCount}</strong> spans</span>
+          <span style={{ color: summary.failedSpanCount > 0 ? "var(--color-danger, #ef4444)" : undefined }}>
+            <strong>{summary.failedSpanCount}</strong> failed
+          </span>
+          <span><strong>{summary.reasoningCount}</strong> reasoning</span>
+          <span><strong>{summary.actionCount}</strong> actions</span>
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+        {(["all", "failed", "reasoning"] as TraceFilter[]).map((f) => (
+          <button
+            key={f}
+            onClick={() => setFilter(f)}
+            style={{
+              padding: "3px 10px",
+              borderRadius: 4,
+              border: "1px solid var(--color-border, rgba(0,0,0,0.2))",
+              background: filter === f ? "var(--color-accent, #6366f1)" : "transparent",
+              color: filter === f ? "#fff" : "inherit",
+              cursor: "pointer",
+              fontSize: "0.8rem",
+            }}
+          >
+            {f === "all" ? "All" : f === "failed" ? "Failed only" : "Reasoning only"}
+          </button>
+        ))}
+      </div>
+
+      {loading ? (
+        <div style={{ textAlign: "center", padding: 24 }}>
+          <Spinner />
+        </div>
+      ) : spans.length === 0 ? (
+        <p style={{ opacity: 0.6, fontSize: "0.85rem" }}>No spans recorded for this run.</p>
+      ) : (
+        <div>{rendered}</div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -42,6 +414,7 @@ export default function App() {
   const [system, setSystem] = useState<SystemInfo | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [traceRunId, setTraceRunId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [prompt, setPrompt] = useState("");
   const [activeRun, setActiveRun] = useState<AgentRun | null>(null);
@@ -99,6 +472,7 @@ export default function App() {
   useEffect(() => {
     setActiveRun(null);
     setShowSettings(false);
+    setTraceRunId(null);
     if (!selectedId) {
       setMessages([]);
       return;
@@ -427,6 +801,10 @@ export default function App() {
               </div>
             </header>
 
+            {traceRunId && (
+              <TracePanel runId={traceRunId} onClose={() => setTraceRunId(null)} />
+            )}
+
             {showSettings && (
               <form className="settings-panel" onSubmit={saveAgent}>
                 <div className="settings-title">
@@ -536,8 +914,32 @@ export default function App() {
                   <article className="run-error">
                     <strong>Run failed</strong>
                     <span>{activeRun.error}</span>
+                    {activeRun.traceSummary && activeRun.traceSummary.spanCount > 0 && (
+                      <button
+                        className="button button-ghost"
+                        style={{ marginTop: 8, fontSize: "0.8rem" }}
+                        onClick={() => setTraceRunId(activeRun.id)}
+                      >
+                        View trace ({activeRun.traceSummary.spanCount} spans)
+                      </button>
+                    )}
                   </article>
                 )}
+                {activeRun &&
+                  ["completed", "cancelled"].includes(activeRun.status) &&
+                  activeRun.traceSummary &&
+                  activeRun.traceSummary.spanCount > 0 && (
+                    <div style={{ textAlign: "right", padding: "4px 0" }}>
+                      <button
+                        className="button button-ghost"
+                        style={{ fontSize: "0.78rem" }}
+                        onClick={() => setTraceRunId(activeRun.id)}
+                      >
+                        View trace ({activeRun.traceSummary.spanCount} spans,{" "}
+                        {activeRun.traceSummary.failedSpanCount} failed)
+                      </button>
+                    </div>
+                  )}
                 <div ref={messageEnd} />
               </div>
 

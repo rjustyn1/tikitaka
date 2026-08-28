@@ -7,6 +7,7 @@ import { z } from "zod";
 import type { AppConfig } from "./config.js";
 import { HttpError } from "./errors.js";
 import type { AgentService } from "./agent-service.js";
+import type { RunTraceSummary, TraceSpan } from "./types.js";
 
 const agentIdParams = z.object({ id: z.string().uuid() });
 const runIdParams = z.object({ id: z.string().uuid() });
@@ -126,6 +127,28 @@ export async function createApp(
   app.get("/api/runs/:id", async (request) => {
     const { id } = runIdParams.parse(request.params);
     return { run: service.getRun(id) };
+  });
+
+  app.get("/api/runs/:id/trace", async (request) => {
+    const { id } = runIdParams.parse(request.params);
+    const query = request.query as Record<string, string | undefined>;
+    const { run, spans } = service.getSpans(id);
+    const typeFilter = query.type?.split(",").filter(Boolean);
+    const statusFilter = query.status?.split(",").filter(Boolean);
+    const filteredSpans: TraceSpan[] = spans.filter((s) => {
+      if (typeFilter?.length && !typeFilter.includes(s.type)) return false;
+      if (statusFilter?.length && !statusFilter.includes(s.status)) return false;
+      return true;
+    });
+    const summary: RunTraceSummary = run.traceSummary ?? {
+      spanCount: spans.length,
+      failedSpanCount: spans.filter((s) => s.status === "failed").length,
+      reasoningCount: spans.filter((s) => s.type === "reasoning").length,
+      actionCount: spans.filter(
+        (s) => s.type !== "reasoning" && s.type !== "error",
+      ).length,
+    };
+    return { run, summary, spans: filteredSpans };
   });
 
   if (config.nodeEnv === "production") {

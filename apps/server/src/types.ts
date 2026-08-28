@@ -30,6 +30,46 @@ export interface RunUsage {
   outputTokens?: number;
 }
 
+export type TraceSpanType =
+  | "reasoning"
+  | "command_exec"
+  | "file_write"
+  | "tool_call"
+  | "agent_message"
+  | "error";
+
+export type TraceSpanStatus = "started" | "completed" | "failed" | "incomplete";
+
+export type TraceSpanPayload =
+  | { kind: "reasoning"; text: string; truncated: boolean; terminal?: boolean }
+  | { kind: "command_exec"; command: string; exitCode: number | null; output: string; outputTruncated: boolean }
+  | { kind: "file_write"; changes: Array<{ path: string; changeKind: "add" | "update" | "delete" | "unknown" }> }
+  | { kind: "tool_call"; server: string; tool: string; arguments: unknown; result: unknown }
+  | { kind: "agent_message"; text: string }
+  | { kind: "error"; message: string; fatal: boolean };
+
+export interface TraceSpan {
+  id: string;
+  runId: string;
+  agentId: string;
+  seq: number;
+  type: TraceSpanType;
+  parentId: string | null;
+  status: TraceSpanStatus;
+  startedAt: string;
+  completedAt: string | null;
+  durationMs: number | null;
+  payload: TraceSpanPayload;
+  itemId: string | null;
+}
+
+export interface RunTraceSummary {
+  spanCount: number;
+  failedSpanCount: number;
+  reasoningCount: number;
+  actionCount: number;
+}
+
 export interface AgentRun {
   id: string;
   agentId: string;
@@ -38,6 +78,7 @@ export interface AgentRun {
   output: string | null;
   error: string | null;
   usage: RunUsage | null;
+  traceSummary: RunTraceSummary | null;
   startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
@@ -48,6 +89,7 @@ export interface Database {
   agents: Agent[];
   messages: Message[];
   runs: AgentRun[];
+  spans: TraceSpan[];
 }
 
 export interface CreateAgentInput {
@@ -70,9 +112,12 @@ export interface RunnerResult {
 
 export interface RunnerRequest {
   agentId: string;
+  runId: string;
   workspacePath: string;
   prompt: string;
   threadId: string | null;
+  onSpan?: (span: TraceSpan) => void;
+  onThreadId?: (id: string) => void;
 }
 
 export interface AgentRunner {

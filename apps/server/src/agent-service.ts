@@ -9,11 +9,25 @@ import type {
   AgentRunner,
   CreateAgentInput,
   Message,
+  RunTraceSummary,
+  TraceSpan,
   UpdateAgentInput,
 } from "./types.js";
 import { WorkspaceManager } from "./workspace.js";
 
 const now = () => new Date().toISOString();
+
+function computeTraceSummary(spans: TraceSpan[], runId: string): RunTraceSummary {
+  const runSpans = spans.filter((s) => s.runId === runId);
+  return {
+    spanCount: runSpans.length,
+    failedSpanCount: runSpans.filter((s) => s.status === "failed").length,
+    reasoningCount: runSpans.filter((s) => s.type === "reasoning").length,
+    actionCount: runSpans.filter(
+      (s) => s.type !== "reasoning" && s.type !== "error",
+    ).length,
+  };
+}
 
 export class AgentService {
   private readonly activeExecutions = new Map<string, Promise<void>>();
@@ -35,6 +49,16 @@ export class AgentService {
           run.status = "cancelled";
           run.error = "Server restarted while this run was active";
           run.completedAt = now();
+          // Mark any open spans for this run as incomplete
+          for (const span of database.spans) {
+            if (span.runId === run.id && span.status === "started") {
+              span.status = "incomplete";
+              span.completedAt = run.completedAt;
+              span.durationMs =
+                new Date(run.completedAt).getTime() -
+                new Date(span.startedAt).getTime();
+            }
+          }
         }
       }
       for (const agent of database.agents) {
@@ -94,8 +118,10 @@ export class AgentService {
         throw new HttpError(409, "Stop the active run before editing this Agent");
       }
       if (input.name !== undefined) agent.name = input.name.trim();
-      if (input.description !== undefined) agent.description = input.description.trim();
-      if (input.instructions !== undefined) agent.instructions = input.instructions.trim();
+      if (input.description !== undefined)
+        agent.description = input.description.trim();
+      if (input.instructions !== undefined)
+        agent.instructions = input.instructions.trim();
       agent.lastError = null;
       agent.updatedAt = now();
       return structuredClone(agent);
@@ -112,6 +138,7 @@ export class AgentService {
       database.agents = database.agents.filter((item) => item.id !== id);
       database.messages = database.messages.filter((item) => item.agentId !== id);
       database.runs = database.runs.filter((item) => item.agentId !== id);
+      database.spans = database.spans.filter((item) => item.agentId !== id);
     });
     return { archivedWorkspace };
   }
@@ -150,6 +177,15 @@ export class AgentService {
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   }
 
+  getSpans(runId: string): { run: AgentRun; spans: TraceSpan[] } {
+    const run = this.getRun(runId);
+    const spans = this.store
+      .snapshot()
+      .spans.filter((s) => s.runId === runId)
+      .sort((a, b) => a.seq - b.seq);
+    return { run, spans };
+  }
+
   async sendMessage(
     agentId: string,
     prompt: string,
@@ -170,6 +206,7 @@ export class AgentService {
       output: null,
       error: null,
       usage: null,
+      traceSummary: null,
       startedAt: null,
       completedAt: null,
       createdAt: timestamp,
@@ -240,18 +277,34 @@ export class AgentService {
         storedRun.startedAt = now();
       }
     });
+
+    // Collect spans via callback; single flush at terminal state
+    const spanBuffer: TraceSpan[] = [];
+    let capturedThreadId: string | null = agentAtStart.codexThreadId;
+
     try {
       if (this.cancellationRequests.has(agentAtStart.id)) {
         throw new RunCancelledError();
       }
       const result = await this.runner.run({
         agentId: agentAtStart.id,
+        runId: run.id,
         workspacePath: agentAtStart.workspacePath,
         prompt: run.prompt,
         threadId: agentAtStart.codexThreadId,
+        onThreadId: (id) => {
+          capturedThreadId = id;
+        },
+        onSpan: (span) => {
+          spanBuffer.push(span);
+        },
       });
+      capturedThreadId = result.threadId ?? capturedThreadId;
       const completedAt = now();
       await this.store.mutate((database) => {
+        if (spanBuffer.length > 0) {
+          database.spans.push(...spanBuffer);
+        }
         const storedRun = database.runs.find((item) => item.id === run.id);
         const agent = database.agents.find((item) => item.id === agentAtStart.id);
         if (!storedRun || !agent) return;
@@ -259,6 +312,7 @@ export class AgentService {
         storedRun.output = result.output;
         storedRun.usage = result.usage;
         storedRun.completedAt = completedAt;
+        storedRun.traceSummary = computeTraceSummary(database.spans, run.id);
         database.messages.push({
           id: randomUUID(),
           agentId: agent.id,
@@ -268,26 +322,42 @@ export class AgentService {
           createdAt: completedAt,
         });
         agent.status = "ready";
-        agent.codexThreadId = result.threadId;
+        agent.codexThreadId = capturedThreadId;
         agent.lastError = null;
         agent.updatedAt = completedAt;
       });
     } catch (error) {
       const completedAt = now();
       const cancelled = error instanceof RunCancelledError;
-      const message = error instanceof Error ? error.message : String(error);
+      const message =
+        error instanceof Error ? error.message : String(error);
+      // Mark any buffered "started" spans as incomplete before flushing
+      for (const span of spanBuffer) {
+        if (span.status === "started") {
+          span.status = "incomplete";
+          span.completedAt = completedAt;
+          span.durationMs =
+            new Date(completedAt).getTime() - new Date(span.startedAt).getTime();
+        }
+      }
       await this.store.mutate((database) => {
+        if (spanBuffer.length > 0) {
+          database.spans.push(...spanBuffer);
+        }
         const storedRun = database.runs.find((item) => item.id === run.id);
         const agent = database.agents.find((item) => item.id === agentAtStart.id);
         if (storedRun) {
           storedRun.status = cancelled ? "cancelled" : "failed";
           storedRun.error = message;
           storedRun.completedAt = completedAt;
+          storedRun.traceSummary = computeTraceSummary(database.spans, run.id);
         }
         if (agent) {
           if (agent.status !== "stopped") {
             agent.status = cancelled ? "ready" : "error";
           }
+          // Fix 3: persist threadId unconditionally, not just on success
+          if (capturedThreadId !== null) agent.codexThreadId = capturedThreadId;
           agent.lastError = cancelled ? null : message;
           agent.updatedAt = completedAt;
         }

@@ -1,11 +1,14 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 import type { AppConfig } from "./config.js";
-import { buildCodexArgs, parseCodexEventLine } from "./codex-runner.js";
+import {
+  buildCodexArgs,
+  createParsedEvents,
+  parseCodexEventLine,
+} from "./codex-runner.js";
 import { RunCancelledError } from "./errors.js";
 import type {
   AgentRunner,
-  RunUsage,
   RunnerRequest,
   RunnerResult,
 } from "./types.js";
@@ -20,13 +23,6 @@ interface ActiveContainer {
   outputExceeded: boolean;
   settled: Promise<void>;
   termination: Promise<void> | null;
-}
-
-interface ParsedEvents {
-  messages: string[];
-  threadId: string | null;
-  usage: RunUsage | null;
-  errors: string[];
 }
 
 export function containerName(agentId: string, instanceId = "default"): string {
@@ -166,12 +162,13 @@ export class ContainerCodexRunner implements AgentRunner {
     };
     this.active.set(request.agentId, active);
 
-    const parsed: ParsedEvents = {
-      messages: [],
+    const parsed = createParsedEvents({
+      runId: request.runId,
+      agentId: request.agentId,
       threadId: request.threadId,
-      usage: null,
-      errors: [],
-    };
+      ...(request.onSpan !== undefined && { onSpan: request.onSpan }),
+      ...(request.onThreadId !== undefined && { onThreadId: request.onThreadId }),
+    });
     let stdout = "";
     let stderr = "";
     let totalBytes = 0;
@@ -230,6 +227,22 @@ export class ContainerCodexRunner implements AgentRunner {
       if (!output) throw new Error("Codex completed without an agent message");
       return { output, threadId: parsed.threadId, usage: parsed.usage };
     } finally {
+      const finishedAt = new Date().toISOString();
+      for (const [, span] of parsed.openSpans) {
+        span.status = "incomplete";
+        span.completedAt = finishedAt;
+        span.durationMs =
+          new Date(finishedAt).getTime() - new Date(span.startedAt).getTime();
+        parsed.spans.push(span);
+        parsed.onSpan?.(span);
+      }
+      parsed.openSpans.clear();
+      for (const span of parsed.pendingReasoning) {
+        if (span.status === "completed" && span.payload.kind === "reasoning") {
+          span.payload.terminal = true;
+        }
+      }
+      parsed.pendingReasoning = [];
       clearTimeout(timeout);
       this.active.delete(request.agentId);
     }

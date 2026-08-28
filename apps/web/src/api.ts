@@ -1,4 +1,4 @@
-import type { Agent, AgentRun, Message, SystemInfo } from "./types";
+import type { Agent, AgentRun, Message, RunTraceSummary, SystemInfo, TraceSpan } from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -78,4 +78,13 @@ export const api = {
       },
     ),
   run: (id: string) => request<{ run: AgentRun }>("/api/runs/" + id),
+  trace: (id: string, params?: { type?: string; status?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.type) qs.set("type", params.type);
+    if (params?.status) qs.set("status", params.status);
+    const query = qs.toString() ? "?" + qs.toString() : "";
+    return request<{ run: AgentRun; summary: RunTraceSummary; spans: TraceSpan[] }>(
+      "/api/runs/" + id + "/trace" + query,
+    );
+  },
 };
