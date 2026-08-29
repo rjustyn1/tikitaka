@@ -44,7 +44,7 @@ import {
   buildGroupTaskCharter,
   buildTurnPrompt,
 } from "./group-prompt.js";
-import type { MemoryPipeline } from "./memory-pipeline.js";
+import type { MemoryPipeline } from "./pipeline.js";
 import { findMembershipError, readMembers } from "./group-chain.js";
 
 const now = () => new Date().toISOString();

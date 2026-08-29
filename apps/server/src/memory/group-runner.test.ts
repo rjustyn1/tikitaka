@@ -8,7 +8,8 @@ import { JsonStore } from "../store.js";
 import { FakeRunner } from "../test-helpers.js";
 import type { Agent } from "../types.js";
 import { WorkspaceManager } from "../workspace.js";
-import { NoopMemoryPipeline, type MemoryPipeline } from "./memory-pipeline.js";
+import type { MemoryPipeline } from "./pipeline.js";
+import { RecordingMemoryPipeline } from "../test-helpers.js";
 import type { GroupMember } from "../types.js";
 
 const temporaryDirectories: string[] = [];
@@ -34,7 +35,7 @@ const TERMINAL_TASK_STATUSES = ["completed", "partial", "failed", "cancelled"];
 interface Harness {
   service: AgentService;
   runner: FakeRunner;
-  pipeline: NoopMemoryPipeline;
+  pipeline: RecordingMemoryPipeline;
   store: JsonStore;
   root: string;
   backend: Agent;
@@ -45,7 +46,7 @@ interface Harness {
 
 async function makeHarness(
   runner: FakeRunner = new FakeRunner(),
-  pipeline: MemoryPipeline & { calls?: unknown } = new NoopMemoryPipeline(),
+  pipeline: MemoryPipeline & { calls?: unknown } = new RecordingMemoryPipeline(),
 ): Promise<Harness> {
   const root = await mkdtemp(path.join(tmpdir(), "launchpad-group-"));
   temporaryDirectories.push(root);
@@ -78,7 +79,7 @@ async function makeHarness(
   return {
     service,
     runner,
-    pipeline: pipeline as NoopMemoryPipeline,
+    pipeline: pipeline as RecordingMemoryPipeline,
     store,
     root,
     backend,
@@ -410,7 +411,7 @@ describe("failure and cancellation", () => {
       failFor: (request) =>
         request.prompt.includes("security-review") ? "Codex exploded" : null,
     });
-    const pipeline = new NoopMemoryPipeline();
+    const pipeline = new RecordingMemoryPipeline();
     const harness = await makeHarness(runner, pipeline);
     const { task } = await runToCompletion(harness);
     const response = harness.service.getGroupTask(task.id);
@@ -517,7 +518,7 @@ describe("failure and cancellation", () => {
 
 describe("Bridge 4 - handover to the memory pipeline", () => {
   it("calls the pipeline once with the sink node id after the chain completes", async () => {
-    const pipeline = new NoopMemoryPipeline();
+    const pipeline = new RecordingMemoryPipeline();
     const harness = await makeHarness(new FakeRunner(), pipeline);
     const { task } = await runToCompletion(harness);
     const response = harness.service.getGroupTask(task.id);

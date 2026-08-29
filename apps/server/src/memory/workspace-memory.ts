@@ -3,63 +3,20 @@
 // separate from workspace.ts (Person 2), which owns shared code + the group
 // charter. Both call the SAME managed-block helpers.
 //
-// ┌─ STUB SEAM (Person 2 / workspace.ts) ────────────────────────────────────┐
-// │ replaceManagedBlock / removeManagedBlock are stubbed here as local pure   │
-// │ functions so landing.ts works standalone. When Person 2 lands the real    │
-// │ helpers in workspace.ts and exports them, WE swap these local copies for  │
-// │ an import from "../workspace.js" and delete the two functions below.      │
-// │ The signatures below are the contract Person 2 must match exactly.        │
-// └───────────────────────────────────────────────────────────────────────────┘
+// Managed-block helpers come from workspace.ts (Person 2 owns them). Both
+// writers share ONE implementation, so a governed-memory block written here is
+// preserved byte-for-byte by writeInstructions() there.
 
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Agent, MemoryNote } from "../types.js";
+import { removeManagedBlock, replaceManagedBlock } from "../workspace.js";
+
+// Re-exported so existing importers of this module are unaffected by the swap.
+export { removeManagedBlock, replaceManagedBlock };
 
 const GOVERNED_HEADING = "## Governed Memories";
 const SKILLS_DIR = ".agents/skills";
-
-/**
- * STUB (Person 2 to own in workspace.ts). Upsert a managed block delimited by
- * `<!-- ${markerId} -->` / `<!-- /${markerId} -->`. Replaces an existing block
- * in place, or appends one if absent. Pure; never touches other content.
- */
-export function replaceManagedBlock(
-  existing: string,
-  markerId: string,
-  body: string,
-): string {
-  const open = `<!-- ${markerId} -->`;
-  const close = `<!-- /${markerId} -->`;
-  const block = `${open}\n${body}\n${close}`;
-
-  const startIndex = existing.indexOf(open);
-  if (startIndex !== -1) {
-    const endIndex = existing.indexOf(close, startIndex);
-    if (endIndex !== -1) {
-      const before = existing.slice(0, startIndex);
-      const after = existing.slice(endIndex + close.length);
-      return `${before}${block}${after}`;
-    }
-  }
-  const separator = existing.length === 0 || existing.endsWith("\n") ? "" : "\n";
-  return `${existing}${separator}${block}\n`;
-}
-
-/**
- * STUB (Person 2 to own in workspace.ts). Remove a managed block and its
- * markers. Pure; leaves the rest of the file untouched.
- */
-export function removeManagedBlock(existing: string, markerId: string): string {
-  const open = `<!-- ${markerId} -->`;
-  const close = `<!-- /${markerId} -->`;
-  const startIndex = existing.indexOf(open);
-  if (startIndex === -1) return existing;
-  const endIndex = existing.indexOf(close, startIndex);
-  if (endIndex === -1) return existing;
-  const before = existing.slice(0, startIndex).replace(/\n+$/, "\n");
-  const after = existing.slice(endIndex + close.length).replace(/^\n+/, "");
-  return `${before}${after}`;
-}
 
 /** Deterministic skill slug from a note's description + id. */
 export function noteSlug(note: MemoryNote): string {

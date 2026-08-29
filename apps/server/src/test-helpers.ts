@@ -12,6 +12,7 @@
 
 import { RunCancelledError } from "./errors.js";
 import type { AgentRunner, RunnerRequest, RunnerResult } from "./types.js";
+import type { MemoryPipeline } from "./memory/pipeline.js";
 
 export interface FakeRunnerOptions {
   /** Defaults to `"Completed: " + prompt`, matching the original local fake. */
@@ -107,5 +108,23 @@ export class FakeRunner implements AgentRunner {
 
   async isAvailable(): Promise<boolean> {
     return true;
+  }
+}
+
+/**
+ * A MemoryPipeline that records what it was called with.
+ *
+ * Production code uses `NoopMemoryPipeline` from `memory/pipeline.js`, which is
+ * deliberately silent. Bridge 4 assertions need to see the hand-off, so the
+ * recording double lives here rather than in the production module.
+ */
+export class RecordingMemoryPipeline implements MemoryPipeline {
+  readonly calls: Array<{ groupTaskId: string; sinkNodeIds: string[] }> = [];
+
+  async runMemoryPipeline(
+    groupTaskId: string,
+    sinkNodeIds: string[],
+  ): Promise<void> {
+    this.calls.push({ groupTaskId, sinkNodeIds });
   }
 }

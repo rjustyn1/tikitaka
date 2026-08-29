@@ -3,10 +3,13 @@ import type { AppConfig } from "./config.js";
 import { isArkConfigured } from "./config.js";
 import { HttpError, RunCancelledError } from "./errors.js";
 import { GroupRunner } from "./memory/group-runner.js";
+import { LandingService } from "./memory/landing.js";
+import { LedgerService } from "./memory/ledger.js";
 import {
   NoopMemoryPipeline,
   type MemoryPipeline,
-} from "./memory/memory-pipeline.js";
+} from "./memory/pipeline.js";
+import { ReviewService } from "./memory/review.js";
 import { JsonStore } from "./store.js";
 import { computeTraceSummary } from "./trace-summary.js";
 import type {
@@ -62,6 +65,12 @@ export class AgentService implements AgentLease {
 
   private readonly groupRunner: GroupRunner;
 
+  // W3 - the governed-memory services. Routes call these through AgentService;
+  // they never write files or mutate the ledger directly.
+  private readonly landing: LandingService;
+  private readonly ledger: LedgerService;
+  private readonly review: ReviewService;
+
   constructor(
     private readonly config: AppConfig,
     private readonly store: JsonStore,
@@ -78,6 +87,15 @@ export class AgentService implements AgentLease {
       runner,
       this,
       memoryPipeline,
+    );
+    // W3 - governed-memory services (integrationManifest3 section 3).
+    this.ledger = new LedgerService(store);
+    this.landing = new LandingService(store);
+    this.review = new ReviewService(
+      store,
+      this.landing,
+      this.ledger,
+      config.reviewAllSkills,
     );
   }
 
@@ -571,38 +589,22 @@ export class AgentService implements AgentLease {
   }
 
   listNotes(query: ListNotesQuery): MemoryNote[] {
-    let notes = this.store.snapshot().notes;
-    if (query.agentId) {
-      notes = notes.filter((note) => note.targetAgentIds.includes(query.agentId!));
-    }
-    if (query.status) {
-      notes = notes.filter((note) => note.status === query.status);
-    }
-    return notes.sort((left, right) =>
-      right.createdAt.localeCompare(left.createdAt),
-    );
+    return this.review.listNotes(query);
   }
 
-  async reviewNote(_id: string, _input: ReviewNoteInput): Promise<MemoryNote> {
-    throw new HttpError(501, "Note review is not implemented yet");
+  async reviewNote(id: string, input: ReviewNoteInput): Promise<MemoryNote> {
+    return this.review.applyReview(id, input);
   }
 
-  async revokeNote(_id: string, _input: RevokeNoteInput): Promise<MemoryNote> {
-    throw new HttpError(501, "Note revocation is not implemented yet");
+  async revokeNote(id: string, input: RevokeNoteInput): Promise<MemoryNote> {
+    return this.review.revoke(id, input);
   }
 
   listAgentMemory(agentId: string): LandedMemoryFile[] {
-    return this.store
-      .snapshot()
-      .landedMemoryFiles.filter(
-        (file) => file.agentId === agentId && file.removedAt === null,
-      );
+    return this.landing.listAgentMemory(agentId);
   }
 
   listTaskGrants(taskId: string): GrantRecord[] {
-    return this.store
-      .snapshot()
-      .grants.filter((grant) => grant.groupTaskId === taskId)
-      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    return this.ledger.listTaskGrants(taskId);
   }
 }
