@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -52,5 +52,55 @@ describe("JsonStore", () => {
     expect(store.snapshot().messages.map((message) => message.content)).toEqual([
       "queue recovered",
     ]);
+  });
+
+  it("backfills group + memory arrays when loading a pre-group database", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "launchpad-store-backfill-"));
+    temporaryDirectories.push(root);
+    const filePath = path.join(root, "db.json");
+    const legacy = {
+      version: 1,
+      agents: [
+        {
+          id: "agent-1",
+          name: "Legacy",
+          description: "",
+          instructions: "",
+          status: "ready",
+          workspacePath: "/tmp/agent-1",
+          codexThreadId: null,
+          lastError: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      messages: [],
+      runs: [],
+      spans: [],
+    };
+    await writeFile(filePath, JSON.stringify(legacy), "utf8");
+
+    const store = new JsonStore(filePath);
+    await store.initialize();
+    const snapshot = store.snapshot();
+
+    // Existing data is preserved.
+    expect(snapshot.agents.map((agent) => agent.id)).toEqual(["agent-1"]);
+    // Every new array exists and is empty.
+    for (const key of [
+      "groups",
+      "groupTasks",
+      "groupMessages",
+      "groupParticipants",
+      "groupPlanNodes",
+      "contextInjections",
+      "notes",
+      "grants",
+      "runtimeLocks",
+      "landedMemoryFiles",
+    ] as const) {
+      expect(Array.isArray(snapshot[key])).toBe(true);
+      expect(snapshot[key]).toEqual([]);
+    }
   });
 });

@@ -8,6 +8,16 @@ const emptyDatabase = (): Database => ({
   messages: [],
   runs: [],
   spans: [],
+  groups: [],
+  groupTasks: [],
+  groupMessages: [],
+  groupParticipants: [],
+  groupPlanNodes: [],
+  contextInjections: [],
+  notes: [],
+  grants: [],
+  runtimeLocks: [],
+  landedMemoryFiles: [],
 });
 
 export class JsonStore {
@@ -25,6 +35,17 @@ export class JsonStore {
         throw new Error("Unsupported database format");
       }
       if (!Array.isArray(parsed.spans)) parsed.spans = [];
+      // Backfill group + memory arrays so pre-group databases still load.
+      if (!Array.isArray(parsed.groups)) parsed.groups = [];
+      if (!Array.isArray(parsed.groupTasks)) parsed.groupTasks = [];
+      if (!Array.isArray(parsed.groupMessages)) parsed.groupMessages = [];
+      if (!Array.isArray(parsed.groupParticipants)) parsed.groupParticipants = [];
+      if (!Array.isArray(parsed.groupPlanNodes)) parsed.groupPlanNodes = [];
+      if (!Array.isArray(parsed.contextInjections)) parsed.contextInjections = [];
+      if (!Array.isArray(parsed.notes)) parsed.notes = [];
+      if (!Array.isArray(parsed.grants)) parsed.grants = [];
+      if (!Array.isArray(parsed.runtimeLocks)) parsed.runtimeLocks = [];
+      if (!Array.isArray(parsed.landedMemoryFiles)) parsed.landedMemoryFiles = [];
       for (const run of parsed.runs) {
         if (!("traceSummary" in run)) (run as AgentRun).traceSummary = null;
       }

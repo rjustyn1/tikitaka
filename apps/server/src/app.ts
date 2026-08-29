@@ -24,6 +24,59 @@ const messageBody = z.object({
   content: z.string().trim().min(1).max(50_000),
 });
 
+// Group + governed-memory route schemas (see technical-dev-docs/API-ROUTES.md).
+const groupIdParams = z.object({ id: z.string().uuid() });
+const groupTaskParams = z.object({
+  id: z.string().uuid(),
+  taskId: z.string().uuid(),
+});
+const noteIdParams = z.object({ id: z.string().uuid() });
+const taskIdParams = z.object({ id: z.string().uuid() });
+
+const createGroupBody = z.object({
+  name: z.string().trim().min(1).max(80),
+  description: z.string().trim().max(500).optional(),
+  memberAgentIds: z.array(z.string().uuid()).min(1),
+});
+
+const updateGroupBody = createGroupBody
+  .partial()
+  .refine((value) => Object.keys(value).length > 0, "At least one field is required");
+
+const startGroupTaskBody = z.object({
+  prompt: z.string().trim().min(1).max(50_000),
+});
+
+const reviewNoteBody = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("approve"), reviewerName: z.string().trim().min(1) }),
+  z.object({
+    type: z.literal("edit"),
+    reviewerName: z.string().trim().min(1),
+    content: z.string().trim().min(1).max(2000).optional(),
+    severity: z.enum(["normal", "severe"]).optional(),
+    targetAgentIds: z.array(z.string().uuid()).optional(),
+    description: z.string().trim().min(1).max(300).optional(),
+    approveAfterEdit: z.boolean().default(false),
+  }),
+  z.object({
+    type: z.literal("reject"),
+    reviewerName: z.string().trim().min(1),
+    reason: z.string().trim().min(1).max(500),
+  }),
+]);
+
+const revokeNoteBody = z.object({
+  reviewerName: z.string().trim().min(1),
+  reason: z.string().trim().min(1).max(500),
+});
+
+const notesQuery = z.object({
+  agentId: z.string().uuid().optional(),
+  status: z
+    .enum(["candidate", "pending", "quarantined", "active", "rejected", "revoked"])
+    .optional(),
+});
+
 export async function createApp(
   config: AppConfig,
   service: AgentService,
@@ -149,6 +202,82 @@ export async function createApp(
       ).length,
     };
     return { run, summary, spans: filteredSpans };
+  });
+
+  // --- Groups ---------------------------------------------------------------
+
+  app.get("/api/groups", async () => ({ groups: service.listGroups() }));
+
+  app.post("/api/groups", async (request, reply) => {
+    const body = createGroupBody.parse(request.body);
+    const group = await service.createGroup(body);
+    return reply.code(201).send({ group });
+  });
+
+  app.get("/api/groups/:id", async (request) => {
+    const { id } = groupIdParams.parse(request.params);
+    return { group: service.getGroup(id) };
+  });
+
+  app.patch("/api/groups/:id", async (request) => {
+    const { id } = groupIdParams.parse(request.params);
+    const body = updateGroupBody.parse(request.body);
+    return { group: await service.updateGroup(id, body) };
+  });
+
+  // --- Group tasks ------------------------------------------------------------
+
+  app.post("/api/groups/:id/tasks", async (request, reply) => {
+    const { id } = groupIdParams.parse(request.params);
+    const body = startGroupTaskBody.parse(request.body);
+    const task = await service.startGroupTask(id, body.prompt);
+    return reply.code(202).send({ task });
+  });
+
+  app.get("/api/groups/:id/tasks/:taskId", async (request) => {
+    const { taskId } = groupTaskParams.parse(request.params);
+    return service.getGroupTask(taskId);
+  });
+
+  app.get("/api/groups/:id/tasks/:taskId/timeline", async (request) => {
+    const { taskId } = groupTaskParams.parse(request.params);
+    return { messages: service.getGroupTask(taskId).messages };
+  });
+
+  app.get("/api/groups/:id/tasks/:taskId/context-injections", async (request) => {
+    const { taskId } = groupTaskParams.parse(request.params);
+    return { contextInjections: service.getGroupTask(taskId).contextInjections };
+  });
+
+  // --- Governed memory notes --------------------------------------------------
+
+  app.get("/api/notes", async (request) => {
+    const query = notesQuery.parse(request.query);
+    return { notes: service.listNotes(query) };
+  });
+
+  app.post("/api/notes/:id/review", async (request) => {
+    const { id } = noteIdParams.parse(request.params);
+    const body = reviewNoteBody.parse(request.body);
+    return { note: await service.reviewNote(id, body) };
+  });
+
+  app.post("/api/notes/:id/revoke", async (request) => {
+    const { id } = noteIdParams.parse(request.params);
+    const body = revokeNoteBody.parse(request.body);
+    return { note: await service.revokeNote(id, body) };
+  });
+
+  // --- Audit views ------------------------------------------------------------
+
+  app.get("/api/agents/:id/memory", async (request) => {
+    const { id } = agentIdParams.parse(request.params);
+    return { files: service.listAgentMemory(id) };
+  });
+
+  app.get("/api/tasks/:id/grants", async (request) => {
+    const { id } = taskIdParams.parse(request.params);
+    return { grants: service.listTaskGrants(id) };
   });
 
   if (config.nodeEnv === "production") {

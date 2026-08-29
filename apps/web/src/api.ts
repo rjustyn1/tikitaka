@@ -1,4 +1,20 @@
-import type { Agent, AgentRun, Message, RunTraceSummary, SystemInfo, TraceSpan } from "./types";
+import type {
+  Agent,
+  AgentGroup,
+  AgentRun,
+  GrantRecord,
+  GroupTask,
+  GroupTaskResponse,
+  LandedMemoryFile,
+  Message,
+  MemoryNote,
+  MemoryStatus,
+  ReviewNoteInput,
+  RevokeNoteInput,
+  RunTraceSummary,
+  SystemInfo,
+  TraceSpan,
+} from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -87,4 +103,55 @@ export const api = {
       "/api/runs/" + id + "/trace" + query,
     );
   },
+
+  // --- Groups + governed memory ---------------------------------------------
+  groups: () => request<{ groups: AgentGroup[] }>("/api/groups"),
+  group: (id: string) => request<{ group: AgentGroup }>("/api/groups/" + id),
+  createGroup: (body: {
+    name: string;
+    description?: string;
+    memberAgentIds: string[];
+  }) =>
+    request<{ group: AgentGroup }>("/api/groups", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateGroup: (
+    id: string,
+    body: { name?: string; description?: string; memberAgentIds?: string[] },
+  ) =>
+    request<{ group: AgentGroup }>("/api/groups/" + id, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  startGroupTask: (id: string, prompt: string) =>
+    request<{ task: GroupTask }>("/api/groups/" + id + "/tasks", {
+      method: "POST",
+      body: JSON.stringify({ prompt }),
+    }),
+  groupTask: (groupId: string, taskId: string) =>
+    request<GroupTaskResponse>(
+      "/api/groups/" + groupId + "/tasks/" + taskId,
+    ),
+  notes: (params?: { agentId?: string; status?: MemoryStatus }) => {
+    const qs = new URLSearchParams();
+    if (params?.agentId) qs.set("agentId", params.agentId);
+    if (params?.status) qs.set("status", params.status);
+    const query = qs.toString() ? "?" + qs.toString() : "";
+    return request<{ notes: MemoryNote[] }>("/api/notes" + query);
+  },
+  reviewNote: (id: string, body: ReviewNoteInput) =>
+    request<{ note: MemoryNote }>("/api/notes/" + id + "/review", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  revokeNote: (id: string, body: RevokeNoteInput) =>
+    request<{ note: MemoryNote }>("/api/notes/" + id + "/revoke", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  agentMemory: (id: string) =>
+    request<{ files: LandedMemoryFile[] }>("/api/agents/" + id + "/memory"),
+  taskGrants: (id: string) =>
+    request<{ grants: GrantRecord[] }>("/api/tasks/" + id + "/grants"),
 };
