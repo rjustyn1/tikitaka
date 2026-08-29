@@ -315,19 +315,17 @@ export async function createApp(
     return { grants: service.listTaskGrants(id) };
   });
 
-  if (config.nodeEnv === "production") {
-    const webRoot = fileURLToPath(new URL("../../web/dist", import.meta.url));
-    await app.register(fastifyStatic, {
-      root: webRoot,
-      prefix: "/",
-    });
-    app.setNotFoundHandler((request, reply) => {
-      if (request.url.startsWith("/api/")) {
-        return reply.code(404).send({ error: "API route not found" });
-      }
-      return reply.sendFile("index.html");
-    });
-  }
+  /**
+   * A ZodError's `message` is the JSON dump of every issue. Sent as-is it
+   * reaches the UI as a wall of braces, so summarise it for humans and keep the
+   * structured issues in `details` for anything reading the API.
+   */
+  const describeValidation = (error: z.ZodError): string => {
+    const issue = error.issues[0];
+    if (!issue) return "Invalid request";
+    const field = issue.path.join(".");
+    return field ? field + ": " + issue.message : issue.message;
+  };
 
   app.setErrorHandler((error, request, reply) => {
     const appError = error instanceof Error ? error : new Error(String(error));
@@ -348,10 +346,25 @@ export async function createApp(
       request.log.error(appError);
     }
     return reply.code(statusCode).send({
-      error: appError.message,
+      error: validationError ? describeValidation(error) : appError.message,
       ...(validationError ? { details: error.issues } : {}),
     });
   });
+
+  if (config.nodeEnv === "production") {
+    const webRoot = fileURLToPath(new URL("../../web/dist", import.meta.url));
+    await app.register(fastifyStatic, {
+      root: webRoot,
+      prefix: "/",
+    });
+    app.setNotFoundHandler((request, reply) => {
+      if (request.url.startsWith("/api/")) {
+        return reply.code(404).send({ error: "API route not found" });
+      }
+      return reply.sendFile("index.html");
+    });
+  }
+
 
   return app;
 }

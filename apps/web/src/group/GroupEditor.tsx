@@ -84,11 +84,21 @@ export function GroupEditor({ agents, group, busy, onCancel, onSubmit }: Props) 
   const assignRole = (agentId: string, role: GroupRole) => {
     setAssignments((prev) => {
       const next = { ...prev };
-      // A role is held by exactly one Agent, so moving it clears the old holder.
-      for (const [id, assigned] of Object.entries(next)) {
-        if (assigned === role && id !== agentId) delete next[id];
-      }
+      const previousRole = next[agentId];
+      const currentHolder = Object.keys(next).find(
+        (id) => next[id] === role && id !== agentId,
+      );
       next[agentId] = role;
+      // A role is held by exactly one Agent. SWAP with the current holder
+      // rather than dropping it: silently unassigning someone invalidates the
+      // whole form and the user has to work out which role went missing.
+      if (currentHolder) {
+        if (previousRole) {
+          next[currentHolder] = previousRole;
+        } else {
+          delete next[currentHolder];
+        }
+      }
       return next;
     });
   };
