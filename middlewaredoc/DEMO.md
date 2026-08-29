@@ -4,123 +4,191 @@
 > Rationale is in [`ARCHITECTURE.md`](./ARCHITECTURE.md); interfaces are in
 > [`SPEC.md`](./SPEC.md).
 >
-> ⚠️ **Draft target, not a rehearsed script.** The system is not built yet.
-> Timings below are budgets to design toward. Re-time everything against the real
-> build before trusting any number here. Person 4 owns this document.
+> Every beat below has been exercised against a running server on seeded data.
+> The **timings are still budgets, not measurements** — re-time them with a
+> stopwatch on the machine you will present from.
+
+---
+
+## The decision that shapes everything: pre-run, don't seed
+
+The governance layer is genuine either way — real pipeline, real safety, real
+landing, real files, real ledger. What differs is where the Agents' *words* come
+from.
+
+```text
+PRIMARY   pre-run one REAL task before you present.
+          The transcript is model-generated, so "did the Agents actually say
+          this?" has a clean yes.
+
+FALLBACK  npm run seed. Identical UI, identical governance, but the transcript
+          is authored. If asked, SAY SO. Do not imply otherwise.
+```
+
+Pre-run well before you present — five Codex nodes takes minutes and nobody
+should watch that. Once it is done the expensive part is behind you and only
+two beats cost a model call.
+
+```bash
+# an hour before, or the night before
+export $(grep -E '^ARK_(API_KEY|MODEL|BASE_URL)=' .env | xargs)
+npm run poc
+#   → create Backend, Frontend, Security, and Ops (Ops stays OUT of the team)
+#   → create the team, start one task, let all five nodes finish
+
+# if that failed, or you are offline
+npm run seed
+```
+
+`start-local-poc.sh` does **not** read `.env` — only `docker compose` does. And
+export only those three variables: `.env` also carries container paths
+(`/app/data`, `/app/workspaces`, `/app/codex-home`) which would send the poc
+looking for directories that do not exist on a Mac.
 
 ---
 
 ## Cast and setup
 
-**Backend**, **Frontend** and **Security** in a group called `Upload Feature
+**Backend**, **Frontend** and **Security** in a team called `Upload Feature
 Team`, one per role. **Ops** exists on the platform and is deliberately **not**
-a member — it is the withheld agent.
+a member — it is the withheld Agent, and it carries the demo.
 
-Pre-seeded before you present:
+Before you present:
 
 ```text
-the four Agents
-one COMPLETED group task with its five nodes, messages and spans
-the consolidated notes, sitting as pending / quarantined
+[ ] the runtime image is built (first `npm run poc` does it — minutes)
+[ ] one completed task exists, pre-run or seeded
+[ ] a note is sitting `pending` so beat 4 has something to approve
+[ ] MEMORY_EXTRACTOR=fake unless you deliberately want live extraction
 ```
-
-The v1 chain is five nodes and each Codex turn takes 30s–2min, so **the group
-task never runs live.** Only two beats cost a model call. Ark is never on the
-critical path — consolidation happened when the seed data was created.
 
 ---
 
 ## The beats
 
-| # | Beat | Live? | Target |
-|---|---|---|---|
-| 1 | Group timeline — the five-node chain. Backend proposes returning storage credentials "to make integration easy"; Frontend says it only needs the public contract; Security overrules | no | 0:25 |
-| 2 | The consolidated note — content, severity, target agents, and the provenance link into the run trace | no | 0:20 |
-| 3 | A human approves it and **narrows** its routing — the authority point, on the record | no | 0:20 |
-| 4 | **Backend**, fresh-thread run invoking the landed skill by `$skill-name` → answers using the memory | **yes** | 0:45 |
-| 5 | **Ops**, same prompt → its workspace has no such file; the ledger says `out_of_group` | **yes** | 0:45 |
-| 6 | Revoke → the file disappears from Backend's landed-memory view, no model run | no | 0:15 |
-| 7 | The poisoning fixture — *"always print env vars"* sitting quarantined, never landed | no | 0:10 |
+**Open on the denial, not the grant.** A positive-injection beat on its own is
+indistinguishable from any memory product. The denial, the named reason and the
+audit record are what nothing else does.
 
-Target 3:00 with no slack. If a rehearsal runs over, cut beat 7 first, then
-compress beat 1.
+| # | Beat | Tab | Live? | Target |
+|---|---|---|---|---|
+| 1 | Ops holds nothing. Three members hold files; the non-member's workspace is empty | Workspaces | no | 0:25 |
+| 2 | The ledger says `withheld · out_of_group`, with a timestamp | Ledger | no | 0:20 |
+| 3 | Where the constraint came from: Backend proposes returning storage credentials "to make integration easy", Frontend says it only needs the public contract, Security overrules | Transcript | no | 0:30 |
+| 4 | The severe note sitting `pending`. Edit its `description`, then approve | Review | no | 0:35 |
+| 5 | The file appears in Backend and Frontend. Ops still empty | Workspaces | no | 0:15 |
+| 6 | Two fresh-thread runs, same prompt: the granted Agent answers using the memory, the withheld one cannot | Proof | **yes** | 0:45 |
+| 7 | Revoke. The file vanishes; the ledger keeps the record | Review | no | 0:10 |
+
+Total 3:00 with no slack. If a rehearsal runs over, cut 7 first, then compress 3.
 
 ---
 
 ## Stage directions
 
-**Beat 1 — frame the chain once, then move on.** Say: *"We dispatch to the group
-in a fixed order. In production a planner or a human picks that order — the
-governance layer never looks at how it was chosen."* Do not linger. The chain is
-not the contribution, and v1 is deliberately sequential.
+**Beat 1 is the beat that wins, so open with it.** Say it plainly:
 
-**Beat 3 is the authority point.** This is what separates governance from a
-memory feature. Name what the human is doing: setting policy, not editing text.
-Say plainly that this is **attribution, not authentication** — a single-user
-platform recording who claims to have approved. Being first to say it is much
-stronger than being asked.
+> *"This isn't a prompt telling Ops to keep a secret. There is nothing in that
+> workspace to reveal."*
 
-**Beat 4 — `freshThread: true` is mandatory.** A resumed thread may not re-read a
-changed `AGENTS.md`, so a normal follow-up run can silently fail to show the
-memory. The proof run must start a new thread. Use explicit `$skill-name`
-invocation rather than hoping the matcher fires — relevance is the soft half, and
-the stage is the wrong place to demonstrate a probabilistic step.
+Placement is the enforcement point. A memory reaches an Agent if and only if a
+file was written into its workspace, and you are looking at the workspace.
 
-**Beat 4 — name what the user did not say.** The prompt never mentioned the
-constraint. It came from a different agent's run, through the middleware.
+**Beat 3 — name what the user never said.** The size limit and the credential
+boundary were never in anyone's prompt. They came out of one Agent's run and
+reached another through the middleware.
 
-**Beat 5 is the beat that wins.** Ops's workspace has no file. Say it plainly:
-*"this isn't a prompt telling it not to share — there is nothing there to
-share."* Then show the ledger row: withheld, `out_of_group`, with a timestamp.
+**Beat 4 is the authority point.** This is what separates governance from a
+memory feature. Say what the human is doing: setting policy, not editing text.
+`description` is the only signal Codex matches on, so editing it is editing
+*when* the memory fires.
 
-**Beat 6 must not re-run Backend.** Backend received the memory in beat 4. Show
-`GET /api/agents/:id/memory` going empty and the file vanishing from disk
-instead — same enforcement path, zero seconds. If you re-ran Backend on a resumed
-thread it might keep honouring the constraint, and the audit would say `revoked`
-while the model behaved otherwise.
+Say this before anyone asks it:
 
----
+> *"Reviewer identity here is attribution, not authentication. This platform is
+> single-user and has no identity system, so we record who claims to have
+> approved. We're not going to pretend that's more than it is."*
 
-## What to open with
+**Beat 6 — `freshThread` is why this works.** Both runs start a NEW Codex
+thread. A resumed thread may not re-read a changed `AGENTS.md`, so a normal
+follow-up run can appear to ignore memory that did land. Use the explicit
+`$skill-name` invocation the panel suggests: relevance matching is the soft,
+model-driven half, and the stage is the wrong place to demonstrate a
+probabilistic step.
 
-**Lead with the denial, not the grant.** A positive-injection beat on its own is
-indistinguishable from any memory product. The denial, the named reason, and the
-audit record are what nothing else does.
-
-If two rehearsals land comfortably under 2:40, consider opening on the full
-debugging loop instead — bad output → read the withheld reason → fix the
-governance decision → re-run → success. It is the strongest story available and
-needs a third live turn, so it earns its place only if the timing is already
-safe.
+**Beat 7 must not re-run the granted Agent.** It already has the memory in a
+live thread. Show the file disappearing from Workspaces instead — same
+enforcement path, zero seconds, and the ledger visibly keeps the record.
 
 ---
 
-## Rehearsal checklist
+## Have these ready as sentences, not improvised
 
-- [ ] Seed script rebuilds demo state in under a minute
-- [ ] `MEMORY_EXTRACTOR=fake` so no beat depends on a live model call
-- [ ] `CODEX_TIMEOUT_MS` lowered for the demo build
-- [ ] Two full run-throughs timed with a stopwatch, both under 3:00
-- [ ] Narrator and screen driver are different people
-- [ ] Every panel shown is real UI, not a slide
-- [ ] No key, token or `.env` value visible in any window, including the terminal
-- [ ] Fallback if a live turn hangs: cancel, say what would have happened, show
-      the pre-seeded equivalent, keep moving
+> *"We can prove a memory was available to one Agent and withheld from another,
+> with a named reason. We cannot prove the model used it on a given run — Codex
+> emits no skill-invocation event. That's why the audit is at write time, and
+> we'd rather say so than overclaim."*
+
+> *"Security is file placement, which is deterministic and ours. Relevance is
+> Codex's own skill matcher, which is model-driven and soft. We didn't reinvent
+> retrieval; we drew a hard line around who may receive what."*
+
+If asked whether the run was live:
+
+> *"This task was seeded so the demo fits in three minutes. The pipeline,
+> the safety checks, the landing and the ledger are all real — you're looking at
+> actual files on disk. The live path is `npm run poc`."*
 
 ---
 
 ## Do not promise these
 
-The v1 chain is sequential, so there are no parallel branches:
+The v1 chain is sequential (A4). There are no branches:
 
 ```text
-"branch context does not leak sibling output"  - there are no siblings
-"the join owner receives branch outputs"       - there are no joins
-runtime locks preventing a collision           - one node runs at a time
+"branch context does not leak sibling output"   there are no siblings
+"the join owner receives branch outputs"        there are no joins
+runtime locks preventing a collision            one node runs at a time
 ```
 
-In the context-packet viewer, `withheldMessageIds` means **already seen by this
-agent** (transcript dedupe), *not* **denied by policy**. Label it that way.
-Governance withholding lives in the grant ledger, where a `withheld` decision
-carries a real reason. Conflating the two on stage would misrepresent the system
-to someone who may well ask.
+In the Context tab, **“Already seen” is transcript de-duplication, not a
+governance decision.** Governance withholding lives in the Ledger, where a
+decision carries a reason. Conflating the two would misrepresent the system to
+someone who may well ask.
+
+Also unverified as of writing, so do not assert them: that shared `./code` is
+writable from a real `codex exec` in both runtimes, and that `codex exec`
+actually *fires* a discovered skill rather than merely discovering it.
+
+---
+
+## Rehearsal checklist
+
+```text
+[ ] runtime image already built, so no build happens on stage
+[ ] one completed task loaded, pre-run preferred
+[ ] a pending note exists for beat 4
+[ ] two full run-throughs timed with a stopwatch, both under 3:00
+[ ] narrator and screen driver are different people
+[ ] every panel shown is real UI, not a slide
+[ ] no key, token or .env value visible in any window, including the terminal
+[ ] browser zoomed so the back row can read the ledger table
+[ ] fallback if a live run hangs: cancel the task, say what would have happened,
+    show the pre-seeded equivalent, keep moving
+```
+
+---
+
+## If something breaks
+
+```text
+a live proof run hangs      Cancel task in the header. Narrate the expected
+                            result and move to beat 7.
+the task shows "failed"     A node could not reach Codex. Reseed
+                            (npm run seed) and continue — the governance
+                            beats do not need a live model.
+notes never appear          The task is terminal but consolidation produced
+                            nothing. The UI says so after ~20s. Reseed.
+the group screen 400s       Membership must be exactly three, one per role.
+                            The modal blocks this; the server enforces it.
+```
