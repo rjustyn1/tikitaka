@@ -89,8 +89,13 @@ describe("group + memory routes", () => {
       url: "/api/groups",
       headers: { "content-type": "application/json" },
       payload: JSON.stringify({
+        // A4 - role-bound membership: exactly three members, one per role.
         name: "Upload Feature Team",
-        memberAgentIds: [randomUUID()],
+        members: [
+          { agentId: randomUUID(), role: "backend" },
+          { agentId: randomUUID(), role: "frontend" },
+          { agentId: randomUUID(), role: "security" },
+        ],
       }),
     });
     // Zod accepted the body; the stub service reports not-implemented.
