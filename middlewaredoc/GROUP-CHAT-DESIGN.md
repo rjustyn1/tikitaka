@@ -1,5 +1,27 @@
 # Group Chat Mechanism
 
+> ⚠️ **SCOPE BANNER - read before building from this document.**
+>
+> This is the full design, including the branch-and-join DAG. **V1 is a
+> hardcoded five-node SEQUENTIAL chain** (see A4 in
+> `DECISIONS.md`). Treat as **STRETCH**, and do not build yet:
+>
+> ```text
+> branch nodes, join nodes, join-owner selection
+> parallel phases and parallel-set validation
+> runtime-lock COLLISION VALIDATION (lock RECORDS are still v1)
+> contextSnapshotSeq / allowedPlanNodeIds sibling-leak prevention
+>   (keep the fields and the lastSeenSeq dedupe - both are v1)
+> ```
+>
+> Two corrections to this document that are **not** optional:
+>
+> ```text
+> AgentGroup.memberAgentIds is replaced by members: [{agentId, role}] (A4)
+> the ./code symlink is LOCAL-PROCESS ONLY. Container runtime uses a nested
+>   bind mount at /workspace/code - a symlink is BROKEN there (A2, verified)
+> ```
+
 > Locked rough design.
 > This document keeps one direction only: app-owned group chat, private Agent
 > roots, shared group code, separate Codex group threads per Agent, and a
@@ -607,7 +629,7 @@ workspaces/
 Codex still runs with cwd set to the Agent's private root. The Agent edits the
 shared project under `./code`.
 
-This is the chosen model because it matches `latestdoc/`: memory security stays
+This is the chosen model because it matches `ARCHITECTURE.md`: memory security stays
 based on file placement into each Agent's private workspace, while the group
 still collaborates on one code artifact.
 
@@ -829,7 +851,7 @@ interface AgentGroup {
   id: string;
   name: string;
   description: string;
-  memberAgentIds: string[];
+  members: GroupMember[];   // A4: {agentId, role}, replaces memberAgentIds
   createdAt: string;
   updatedAt: string;
 }

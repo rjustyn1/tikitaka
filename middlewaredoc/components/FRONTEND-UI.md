@@ -44,11 +44,19 @@ Grant Ledger
 Extend `apps/web/src/types.ts` with DTOs mirroring server types:
 
 ```ts
+export type GroupRole = "backend" | "frontend" | "security";
+
+export interface GroupMember {
+  agentId: string;
+  role: GroupRole;
+}
+
 export interface AgentGroup {
   id: string;
   name: string;
   description: string;
-  memberAgentIds: string[];
+  members: GroupMember[];   // A4: replaces memberAgentIds
+
   activeTaskId: string | null;
   createdAt: string;
   updatedAt: string;
@@ -245,3 +253,87 @@ Frontend needs DTOs for:
 - context packet viewer shows injected/withheld messages;
 - review action updates note state;
 - revoked note disappears from active memory view.
+
+---
+
+## Additions From The A1-A5 Review
+
+### api.ts - fix `request()` before copying any snippet above
+
+`apps/web/src/api.ts` currently takes a **pre-stringified** body:
+
+```ts
+body: JSON.stringify(body)
+```
+
+Every snippet in this document passes a raw object, which would POST the string
+`"[object Object]"`. Fix `request()` to stringify objects once, then all the
+snippets above are correct as written:
+
+```ts
+async function request<T>(url: string, options?: RequestInit & { body?: unknown }) {
+  const body = options?.body === undefined ? undefined
+    : typeof options.body === "string" ? options.body
+    : JSON.stringify(options.body);
+  // ...
+}
+```
+
+Do this first. It is a five-minute change and it unblocks every other call.
+
+### A4 - group modal with roles
+
+```text
+Agent toggles PLUS a role selector per selected Agent.
+Roles: backend | frontend | security. Exactly one Agent each.
+Submit disabled until all three roles are filled.
+Nothing selected by default.
+Render the resulting chain above the composer:
+  Backend -> Frontend -> Security -> Backend -> Frontend
+```
+
+### A5 - the proof beat (Person 4 owns this)
+
+The demo's payoff, driven from the landed-memory view. Two buttons:
+
+```text
+POSITIVE  fresh-thread solo run on the TARGET Agent
+          api.sendMessage(targetAgentId, prompt, { freshThread: true })
+          prompt invokes the skill explicitly by $skill-name
+          the Agent answers using the landed memory
+
+NEGATIVE  same prompt, same moment, on a WITHHELD Agent
+          that workspace has no such file
+          the Agent cannot answer, and the ledger names the withholding reason
+```
+
+`freshThread: true` is required. A resumed thread may not re-read a changed
+`AGENTS.md`, so a normal solo run can silently fail to show the memory.
+
+### Polling - one endpoint
+
+Poll `GET /api/groups/:id/tasks/:taskId` only. `/timeline` and
+`/context-injections` are debugging projections of that same response; polling
+them separately invites drift.
+
+### Labelling correction for the context packet viewer
+
+In a sequential chain, `withheldMessageIds` means **already seen by this Agent**
+(lastSeenSeq dedupe), *not* **denied by policy**. Label it "already seen" in the
+UI. The governance withholding story lives in the grant ledger, where
+`decision: "withheld"` carries a real reason. Do not conflate them on stage.
+
+### Sequential v1 - what NOT to promise
+
+```text
+The DAG/node panel shows a five-node CHAIN in v1, not a branch diagram.
+"branch context does not leak sibling output" does not exist - no siblings.
+Runtime locks are displayed as records (which node held which paths),
+  not as collision prevention.
+```
+
+### Make the ledger readable
+
+`MemoryNote` and `GrantRecord` carry only UUIDs. Ask Person 1 to resolve Agent
+and group names into the response DTOs, or build a local `agentId -> name` map
+from `listAgents()`. A ledger of raw hex is unreadable on stage.

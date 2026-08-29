@@ -1,14 +1,28 @@
-# Implementation Direction
+# Plan — Workstreams, Bridges, And Build Order
+
+> **The one question this answers: who builds what, in what order.**
+> Rationale lives in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
+> Contracts live in [`SPEC.md`](./SPEC.md).
+> Decisions and their evidence live in [`DECISIONS.md`](./DECISIONS.md).
+> Module internals live in [`components/`](./components/).
 
 ## Goal
 
 Split the remaining implementation into four balanced workstreams for a
 four-person team.
 
+> ⚠️ **Read "Resolved Blockers (A1-A5)" and "Ownership Corrections" at the end of
+> this file before starting.** They were added after a design review and they
+> **supersede** anything above that contradicts them — most importantly the group
+> membership contract (`memberAgentIds: string[]` is replaced by
+> `members: [{agentId, role}]`, and the seven-node DAG is now STRETCH scope --
+> v1 is a hardcoded sequential chain, see A4) and the file ownership of
+> `workspace.ts` and `app.test.ts`.
+
 The implementation should follow the component TDs in this folder, especially:
 
-- `TYPES-AND-STORE.md`
-- `GROUPCHAT.md`
+- `SPEC.md`
+- `GROUP-CHAT-DESIGN.md`
 - `GROUP-RUNNER.md`
 - `WORKSPACE-EXTENSIONS.md`
 - `TASK-BUFFER.md`
@@ -17,7 +31,7 @@ The implementation should follow the component TDs in this folder, especially:
 - `LANDING.md`
 - `REVIEW.md`
 - `LEDGER.md`
-- `API-ROUTES.md`
+- `SPEC.md`
 - `FRONTEND-UI.md`
 
 Core architecture:
@@ -26,7 +40,7 @@ Core architecture:
 private Agent roots
 + shared group code under ./code
 + app-owned group transcript
-+ branch-and-join group DAG
++ hardcoded sequential chain (branch-and-join DAG is STRETCH - see A4)
 + governed memory landing into private Agent workspaces
 ```
 
@@ -46,8 +60,7 @@ apps/server/src/store.ts
 apps/server/src/app.ts
 apps/web/src/types.ts
 apps/web/src/api.ts
-technical-dev-docs/TYPES-AND-STORE.md
-technical-dev-docs/API-ROUTES.md
+SPEC.md
 ```
 
 ### Build Scope
@@ -89,6 +102,7 @@ Add route schemas and route stubs for:
 ```text
 GET /api/groups
 POST /api/groups
+GET /api/groups/:id
 PATCH /api/groups/:id
 POST /api/groups/:id/tasks
 GET /api/groups/:id/tasks/:taskId
@@ -130,7 +144,7 @@ Person 3 finish their modules.
 
 ---
 
-## Person 2 - Group Runner, DAG, And Shared Code Setup
+## Person 2 - Group Runner, Sequential Chain, And Shared Code Setup
 
 ### Ownership
 
@@ -143,10 +157,10 @@ apps/server/src/memory/group-runner.ts
 apps/server/src/memory/flush-trigger.ts
 apps/server/src/workspace.ts
 apps/server/src/agent-service.ts
-technical-dev-docs/GROUPCHAT.md
-technical-dev-docs/GROUP-RUNNER.md
-technical-dev-docs/FLUSH-TRIGGER.md
-technical-dev-docs/WORKSPACE-EXTENSIONS.md
+GROUP-CHAT-DESIGN.md
+components/GROUP-RUNNER.md
+components/FLUSH-TRIGGER.md
+components/WORKSPACE-EXTENSIONS.md
 ```
 
 ### Build Scope
@@ -165,44 +179,44 @@ Implement shared code setup:
 
 ```text
 workspaces/shared-code/<groupTaskId>
-<agent.workspacePath>/code -> shared-code/<groupTaskId>
+<agent.workspacePath>/code  (A2: symlink for local-process,
+                             bind-mount target dir for container)
 ```
 
 Implement planner-written group-task sections in each selected Agent's private
 `AGENTS.md`.
 
-Implement the preseeded demo DAG:
+Implement the sequential chain (**v1 - see A4; the DAG below is STRETCH**):
 
 ```text
-backend-contract
-  -> frontend-plan
-  -> security-review
-join-plan
-  -> backend-impl
-  -> frontend-impl
-final-join
+one GroupPlanNode per member, in member-list order
+node[0].dependsOn = []
+node[i].dependsOn = [node[i-1].id]
+the last node is the single sink
 ```
 
-Implement DAG validation:
-
 ```text
-no duplicate Agent in one parallel phase
-no overlapping write paths
-no duplicate runtime locks
-join nodes depend on all branches they integrate
+STRETCH - do not build until the sequential demo runs end to end:
+  backend-contract -> frontend-plan / security-review -> join-plan
+    -> backend-impl / frontend-impl -> final-join
+  no duplicate Agent in one parallel phase
+  no overlapping write paths
+  no duplicate runtime locks
+  join nodes depend on all branches they integrate
 ```
 
-Implement execution:
+Implement execution (a plain `for` loop over the chain in v1):
 
 ```text
-find runnable nodes
+acquire the A3 Agent lease
 build prompt
 call AgentRunner with participant.groupThreadId
+  pass sharedCodePath so the runner mounts/--add-dirs shared code (A2)
 persist groupThreadId back to participant state
 save node output
 save group message
-release locks in finally
-finish at final join
+release the lease in finally
+finish at the last node
 call flush trigger
 ```
 
@@ -225,11 +239,12 @@ completion, call a placeholder memory pipeline hook that Person 3 can replace.
 
 ### Done When
 
-- A group task can run through the preseeded DAG with a fake runner.
+- A group task can run through the sequential chain with a fake runner.
 - Group messages appear in order.
 - Group thread IDs are separate from solo `codexThreadId`.
 - Shared `./code` exists for every selected Agent.
-- Duplicate Agent/path/runtime-lock parallel plans are rejected before launch.
+- Solo and group runs never collide on the same Agent (A3 lease).
+- Shared ./code is writable from inside a real Codex run in BOTH runtimes (A2).
 
 ---
 
@@ -249,14 +264,14 @@ apps/server/src/memory/safety.ts
 apps/server/src/memory/landing.ts
 apps/server/src/memory/review.ts
 apps/server/src/memory/ledger.ts
-apps/server/src/workspace.ts
-technical-dev-docs/TASK-BUFFER.md
-technical-dev-docs/EXTRACTOR-CLIENT.md
-technical-dev-docs/CONSOLIDATOR.md
-technical-dev-docs/SAFETY.md
-technical-dev-docs/LANDING.md
-technical-dev-docs/REVIEW.md
-technical-dev-docs/LEDGER.md
+apps/server/src/memory/workspace-memory.ts   # NOT workspace.ts (Person 2 owns that)
+components/TASK-BUFFER.md
+components/EXTRACTOR-CLIENT.md
+components/CONSOLIDATOR.md
+components/SAFETY.md
+components/LANDING.md
+components/REVIEW.md
+components/LEDGER.md
 ```
 
 ### Build Scope
@@ -363,10 +378,11 @@ apps/web/src/App.tsx
 apps/web/src/api.ts
 apps/web/src/types.ts
 apps/web/src/styles.css
-apps/server/src/app.test.ts
-technical-dev-docs/FRONTEND-UI.md
-technical-dev-docs/API-ROUTES.md
-technical-dev-docs/BUILD-SEQUENCE.md
+apps/web/src/mock.ts
+apps/server/src/app.groups.test.ts   # app.test.ts belongs to Person 1
+components/FRONTEND-UI.md
+SPEC.md
+PLAN.md
 ```
 
 ### Build Scope
@@ -443,8 +459,8 @@ The demo should visibly prove:
 only selected Agents joined
 each Agent has separate groupThreadId
 all Agents edit shared ./code
-branch context does not leak sibling output
-join owner receives branch outputs
+branch context does not leak sibling output   (STRETCH - no branches in v1, see A4)
+join owner receives branch outputs            (STRETCH - see A4)
 memory lands only in target private Agent workspace
 withheld records exist for non-target Agents
 ```
@@ -457,6 +473,9 @@ withheld records exist for non-target Agents
 - Context packet viewer shows injected and withheld messages.
 - Review queue supports approve/edit/reject/revoke.
 - Grant ledger clearly shows who received or did not receive memory.
+- The proof beat runs from the landed-memory view: a fresh-thread solo run on
+  the target Agent answers using the landed memory, and the same prompt on a
+  withheld Agent cannot. See A5.
 
 ---
 
@@ -1112,3 +1131,215 @@ apps/web/src/App.tsx
 
 Coordinate changes to these files before parallel coding. Everything under
 `apps/server/src/memory/` can be split by component with lower conflict risk.
+
+---
+
+# Ownership Corrections
+
+The original split left real work unassigned and double-assigned one file.
+
+## Newly Assigned
+
+```text
+config.ts                     -> Person 1
+  MEMORY_EXTRACTOR, MEMORY_EXTRACT_TIMEOUT_MS, REVIEW_ALL_SKILLS
+  (referenced by the TDs, previously in nobody's file list)
+
+codex-runner.ts --add-dir     -> Person 2  (A2)
+agent lease seam              -> Person 1 defines, Person 2 calls  (A3)
+freshThread flag              -> Person 1  (A5)
+
+deleteAgent() cascade         -> Person 1
+  currently purges runs/spans/messages only; must also handle
+  groups, groupParticipants, notes, grants, landedMemoryFiles
+
+cancel a running group task   -> Person 1 route, Person 2 impl, Person 4 UI
+  CODEX_TIMEOUT_MS is 600s and the demo DAG has seven nodes
+
+restart recovery for groups   -> Person 1/2
+  initialize() resets stale runs and busy Agents but not
+  GroupTask.status=running, group.activeTaskId, or unreleased runtimeLocks
+```
+
+## Deconflicted
+
+```text
+workspace.ts    Person 2 OWNS the file (shared code + group-task sections).
+                Person 3 does NOT edit it. Memory file writes go in a new
+                apps/server/src/memory/workspace-memory.ts that Person 3 owns.
+                Both call the same replaceManagedBlock/removeManagedBlock
+                helpers, which Person 2 lands first.
+
+app.test.ts     Person 1 keeps app.test.ts for route validation.
+                Person 4 adds app.groups.test.ts for the group/memory flows.
+```
+
+---
+
+# Day-0 Checklist
+
+```text
+[ ] Renew ARK_API_KEY. The current .env key returns
+    401 "The API key doesn't exist". It is gitignored and untracked, so this is
+    an expiry, not a leak. Nothing can run end to end until it is replaced.
+
+[ ] Do one real codex exec run that writes a file. The database currently holds
+    one run and ZERO spans, so no one has yet exercised a Codex run that does
+    file work. Every span-consuming component (TASK-BUFFER, the trace UI) is so
+    far built against assumptions.
+
+[ ] Confirm the A1 skill result on your own machine:
+    codex app-server, initialize, then skills/list with a workspace cwd.
+
+[ ] Agree the frozen GroupTaskResponse DTO. It is Person 4's only hard
+    dependency and the most likely source of integration pain.
+
+[ ] Lower CODEX_TIMEOUT_MS for demo builds. Seven nodes at 600s is 70 minutes
+    of worst-case wall clock.
+```
+
+---
+
+# Build Order
+
+Dependency order across the component TDs. This prevents anyone starting in
+the middle and building a module before its contracts exist.
+
+This section governs **what may be built when**; the workstream sections above
+govern **who builds it**. Where the two appear to differ, dependency order wins
+on sequencing, the workstream sections win on ownership.
+
+## Sequence
+
+```text
+1. TYPES-AND-STORE
+2. WORKSPACE-EXTENSIONS
+3. FLUSH-TRIGGER
+4. GROUP-RUNNER
+5. TASK-BUFFER
+6. EXTRACTOR-CLIENT
+7. CONSOLIDATOR
+8. SAFETY
+9. LEDGER
+10. LANDING
+11. REVIEW
+12. API-ROUTES
+13. FRONTEND-UI
+```
+
+## Why This Order
+
+`TYPES-AND-STORE` comes first because every other component imports the same
+contracts and store arrays.
+
+`WORKSPACE-EXTENSIONS` comes before group execution because group tasks need
+private Agent roots and shared `./code` prepared before Codex runs.
+
+### Hard ordering constraint — WORKSPACE-EXTENSIONS blocks LANDING
+
+`WORKSPACE-EXTENSIONS` (#2) must land its **managed-block-preserving
+`writeInstructions()`** before `LANDING` (#10) writes any governed memory.
+
+```text
+Today writeInstructions() regenerates AGENTS.md from scratch
+  (workspace.ts:38), and updateAgent() calls it on every Agent edit
+  (agent-service.ts:129).
+
+If LANDING runs first, editing an Agent silently WIPES the
+  <!-- memory:<noteId> --> block, and the demo shows memory vanishing
+  for no visible reason.
+```
+
+This crosses a person boundary: Person 2 owns `workspace.ts` and must land the
+`replaceManagedBlock()` / `removeManagedBlock()` helpers before Person 3 builds
+`LANDING` on top of them. Person 3 imports those helpers rather than
+reimplementing them. See `WORKSPACE-EXTENSIONS.md`.
+
+`GROUP-RUNNER` can be built with a fake memory pipeline first. That gives the
+demo its group chat, DAG execution, and context injection path before the memory
+extractor is complete.
+
+`TASK-BUFFER`, `EXTRACTOR-CLIENT`, `CONSOLIDATOR`, and `SAFETY` form the memory
+candidate pipeline.
+
+`LEDGER`, `LANDING`, and `REVIEW` form the governance and enforcement pipeline.
+
+`API-ROUTES` and `FRONTEND-UI` come last because they expose the already-defined
+service methods.
+
+## Choke Points
+
+Only these modules should write workspace files:
+
+```text
+WORKSPACE-EXTENSIONS:
+  shared code setup
+  group-task AGENTS.md sections
+
+LANDING:
+  governed memory entries
+  governed memory skills
+  revoke/delete landed memory
+```
+
+Only these modules should call Codex:
+
+```text
+existing AgentService:
+  solo Agent runs
+
+GROUP-RUNNER:
+  group DAG node runs
+```
+
+Only these modules should decide memory activation:
+
+```text
+SAFETY:
+  redaction/quarantine signals
+
+REVIEW:
+  auto-activate vs human review
+  approve/edit/reject/revoke
+```
+
+## Demo Slice
+
+The smallest useful demo slice is:
+
+```text
+SPEC (Part 1)
+WORKSPACE-EXTENSIONS
+GROUP-RUNNER with preseeded DAG
+API-ROUTES for groups/tasks
+FRONTEND-UI group creation + task timeline
+TASK-BUFFER with fake data
+CONSOLIDATOR with fake extractor
+SAFETY
+LANDING
+LEDGER
+REVIEW UI
+```
+
+The demo can use `FakeExtractorClient` first. Real Ark extraction can be swapped
+in after the end-to-end path works.
+
+## Testing Seams
+
+Cross-cutting testing strategy. Per-component test lists live in each component
+TD's own `## Tests` section.
+
+- **Extractor behind an interface** → `FakeExtractorClient` feeds canned notes;
+  no network in `npm run check`.
+- **`safety.ts` is pure** → fixture-driven. A fake key must never survive into a
+  landed file; prompt-injection shapes must quarantine.
+- **`landing.ts` asserts on the filesystem** → file presence in the target Agent
+  workspace and absence in every other. This is the security boundary, so test it
+  directly rather than through a service return value.
+- **A fake runner** is needed for group-runner tests. One exists today only as a
+  local class inside `agent-service.test.ts`; Person 2 should extract it to a
+  shared test helper rather than writing a second one.
+- **Skill discovery** can be verified with no API key via
+  `scripts/verify-codex-skills.sh` (the `codex app-server` `skills/list` RPC).
+- **One optional live smoke test** against real Ark + real Codex, excluded from
+  `npm run check`.

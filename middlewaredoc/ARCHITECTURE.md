@@ -4,7 +4,7 @@
 > It does not carry the buildable spec (consolidator schema, validation ladder,
 > exact field lists) — that is deferred to a later `SPEC.md`, and several items
 > are still open (see §11). Where this file disagrees with anything in
-> [`../outdated/`](../outdated/), this file wins.
+> [`./archive/`](./archive/), this file wins.
 
 ---
 
@@ -162,6 +162,18 @@ design does not invent any mechanism.
   cwd** (`<cwd>/.agents/skills`), so a skill written into an agent's workspace is
   available to **that agent only.** → **normal path.**
 
+  > ✅ **Verified on the pinned runtime** (`@openai/codex@0.111.0`, via the
+  > `skills/list` app-server RPC). Both `<cwd>/.agents/skills/<name>/SKILL.md`
+  > and `<cwd>/.codex/skills/<name>/SKILL.md` are discovered and reported with
+  > `scope: "repo"`. A workspace with no skill files sees **zero** repo-scoped
+  > skills — no cross-workspace leakage. **A git repo is not required.** We use
+  > `.agents/skills`.
+  >
+  > ⛔ **`$CODEX_HOME/skills` is `scope: "user"` — global to every agent.** This
+  > deployment shares one `codex-home` across all agents, so anything landed
+  > there reaches everyone and would silently void the §3 security claim.
+  > Governed memory is **never** written to `$CODEX_HOME`.
+
 - **Reuse of the tracing capture.** `parseCodexEventLine` already parses the Codex
   event stream into typed, ordered, causally-linked spans and flushes them to the
   store at run terminal. We consume those spans; we do **not** modify the runner.
@@ -185,20 +197,21 @@ The consolidator assigns each note a severity, and severity maps to a mechanism:
 Always-on rules go where they can't be skipped; situational references go where
 they load only when needed.
 
-### Side note — shared code workspaces (optional)
+### Shared code workspaces — required, not optional
 
-*Considered, in case the team wants it.* Agents work in **isolated** workspaces
-today, and that isolation is what makes placement-based security work (§3). If a
-task ever needs agents to **co-edit one codebase**, the two axes decouple — keep
-memory per-agent, share only the code:
+Agents keep **isolated** workspace roots, and that isolation is what makes
+placement-based security work (§3). But a group task needs the agents to
+**co-edit one codebase**, so the two axes decouple: memory stays per-agent, only
+the code is shared. Every group task creates a shared code directory and exposes
+it as `./code` inside each participating agent's private root.
 
 ```
 workspaces/
-├── shared-code/            ← the one codebase, edited by all agents
+├── shared-code/<groupTaskId>/   ← the one codebase, edited by all agents
 ├── backend/
-│   ├── AGENTS.md           ← per-agent memory   (isolated)
-│   ├── .agents/skills/     ← per-agent skills   (isolated)
-│   └── code → ../shared-code   (symlink)
+│   ├── AGENTS.md                ← per-agent memory   (isolated)
+│   ├── .agents/skills/          ← per-agent skills   (isolated)
+│   └── code → shared-code/<groupTaskId>
 ├── frontend/  … (same shape)
 └── security/  … (same shape)
 ```
@@ -209,13 +222,21 @@ land in the **shared** directory. The governance layer is untouched — the secu
 boundary was never "the agent's directory," it was "the memory files the agent
 reads," and those stay per-agent.
 
-Sequential works as-is; a parallel DAG inherits the ordinary shared-codebase
+**The mechanism differs by runtime** (verified — see the A2 decision record):
+
+| Runtime | `./code` is | Sandbox |
+|---|---|---|
+| `container` (`npm run poc`) | a **nested bind mount** of the shared dir onto `<workspace>/code` | inside cwd, so `workspace-write` permits it natively |
+| `local-process` (Compose/ECS) | a **symlink** to `shared-code/<groupTaskId>` | outside cwd, so the run needs `codex exec --add-dir` |
+
+A symlink is **broken** under the container runtime — the target resolves outside
+the mounted workspace. Do not use one there.
+
+**Never** place `AGENTS.md` or `.agents/skills/` inside `shared-code/`: the link
+points *from* each private workspace *to* shared code, never the reverse, or
+isolation breaks. A parallel DAG would inherit the ordinary shared-codebase
 concurrency problem (git worktrees per agent, or a lock) — a *code* problem, not a
-*memory* one. **Never** place `AGENTS.md` or `.agents/skills/` inside
-`shared-code/`: the symlink points *from* each private workspace *to* shared code,
-never the reverse, or isolation breaks. Treat this as an optional collaboration
-upgrade — the memory story works fine with isolated workspaces bridged by chain
-context + governed memory.
+*memory* one; the v1 sequential chain avoids it entirely.
 
 ---
 
@@ -317,6 +338,17 @@ across these — we swap the trigger, not the pipeline.
 4. **The store is a single JSON file**, inherited from the starter kit.
 5. **Redaction is pattern-based** and cannot catch every shape of secret; the
    quarantine heuristic is recall-tuned and backed by HITL, not perfect precision.
+6. **OS-level write isolation between agents comes from the container, not from
+   Codex.** All agents run as one process tree inside a single hardened container
+   (`cap_drop: ALL`, `no-new-privileges`, pid/memory limits), and Codex's Linux
+   Landlock sandbox is **unavailable on Docker Desktop for Mac** (the linuxkit
+   kernel ships landlock syscalls as unimplemented weak symbols). A
+   prompt-injected agent could therefore, in principle, write into a sibling
+   agent's workspace directory. This does **not** weaken the governance claim in
+   §3 — that claim is about which memory files *we* place in each workspace, and
+   it is enforced by the landing service, audited at write time, and inspectable
+   as file presence. It does mean we should not claim OS-enforced agent
+   sandboxing. State it this way if asked.
 
 ---
 
@@ -335,9 +367,36 @@ Design shape is settled; the buildable contract is not. Still open:
 - **Demo beats** re-mapped onto this design (the "empty workspace can't leak" beat;
   explicit `$skill-name` invocation).
 
-**Build-time verifications** (mechanism is certain; these are version details):
+**Build-time verifications — both now CLOSED** (`@openai/codex@0.111.0`):
 
-- Exact skills directory on the pinned Codex version (`.agents/skills` per current
-  docs; some 2026 sources say `.codex/skills` — confirm with `codex --help`).
-- Whether skill discovery works from a non-git-repo cwd (we pass
-  `--skip-git-repo-check`).
+- ~~Exact skills directory~~ → **`.agents/skills` confirmed working** (`scope: "repo"`).
+  `.codex/skills` works identically; either is valid. See §5.
+- ~~Skill discovery from a non-git-repo cwd~~ → **confirmed working.** Agent
+  workspaces are not git repos and repo-scoped skills are still discovered.
+
+**Residual live-fire check** (one run, once a valid `ARK_API_KEY` exists): that
+`codex exec` *fires* a discovered skill, not merely that it discovers one.
+`skills/list` proves discovery; the model choosing it is the soft half (§3).
+Fold this into the first end-to-end integration run and use explicit
+`$skill-name` invocation on stage.
+
+---
+
+## 12. What we build on (reuse, do not rebuild)
+
+The existing platform already provides the capture layer. We consume it; we do
+not modify the runner.
+
+| File | What it gives us | Our change |
+|---|---|---|
+| `apps/server/src/codex-runner.ts` | `parseCodexEventLine` — parses the Codex event stream into ordered, linked spans; buffers per run; flushes to store at run terminal | **extend** — thread `sharedCodePath` through to `--add-dir` (§6) |
+| `apps/server/src/container-codex-runner.ts` | per-turn disposable container; bind-mounts the agent workspace and `codex-home` | **extend** — nested bind mount for shared code (§6) |
+| `apps/server/src/workspace.ts` | `WorkspaceManager` — creates each agent's workspace dir and writes its `AGENTS.md` | **extend** — shared-code setup, group-task sections, managed-block helpers |
+| `apps/server/src/store.ts` | single-JSON store, atomic whole-file writes, defensive array init | **extend** — add new arrays |
+| `apps/server/src/types.ts` | `Agent`, `Run`, `TraceSpan`, runner interfaces | **extend** — add group + memory types |
+| `apps/server/src/agent-service.ts` | `executeRun`, `sendMessage` | **extend** — the agent lease; trigger consolidation at task terminal |
+| `apps/server/src/app.ts` | Fastify routes | **extend** — add new routes |
+
+Governed memory files are **not** written by `workspace.ts`. They are written by
+the landing service, which is the single enforcement point (§3, §4 stage 7).
+`workspace.ts` owns shared code and the group-task charter; landing owns memory.
