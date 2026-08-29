@@ -197,20 +197,21 @@ The consolidator assigns each note a severity, and severity maps to a mechanism:
 Always-on rules go where they can't be skipped; situational references go where
 they load only when needed.
 
-### Side note — shared code workspaces (optional)
+### Shared code workspaces — required, not optional
 
-*Considered, in case the team wants it.* Agents work in **isolated** workspaces
-today, and that isolation is what makes placement-based security work (§3). If a
-task ever needs agents to **co-edit one codebase**, the two axes decouple — keep
-memory per-agent, share only the code:
+Agents keep **isolated** workspace roots, and that isolation is what makes
+placement-based security work (§3). But a group task needs the agents to
+**co-edit one codebase**, so the two axes decouple: memory stays per-agent, only
+the code is shared. Every group task creates a shared code directory and exposes
+it as `./code` inside each participating agent's private root.
 
 ```
 workspaces/
-├── shared-code/            ← the one codebase, edited by all agents
+├── shared-code/<groupTaskId>/   ← the one codebase, edited by all agents
 ├── backend/
-│   ├── AGENTS.md           ← per-agent memory   (isolated)
-│   ├── .agents/skills/     ← per-agent skills   (isolated)
-│   └── code → ../shared-code   (symlink)
+│   ├── AGENTS.md                ← per-agent memory   (isolated)
+│   ├── .agents/skills/          ← per-agent skills   (isolated)
+│   └── code → shared-code/<groupTaskId>
 ├── frontend/  … (same shape)
 └── security/  … (same shape)
 ```
@@ -221,13 +222,21 @@ land in the **shared** directory. The governance layer is untouched — the secu
 boundary was never "the agent's directory," it was "the memory files the agent
 reads," and those stay per-agent.
 
-Sequential works as-is; a parallel DAG inherits the ordinary shared-codebase
+**The mechanism differs by runtime** (verified — see the A2 decision record):
+
+| Runtime | `./code` is | Sandbox |
+|---|---|---|
+| `container` (`npm run poc`) | a **nested bind mount** of the shared dir onto `<workspace>/code` | inside cwd, so `workspace-write` permits it natively |
+| `local-process` (Compose/ECS) | a **symlink** to `shared-code/<groupTaskId>` | outside cwd, so the run needs `codex exec --add-dir` |
+
+A symlink is **broken** under the container runtime — the target resolves outside
+the mounted workspace. Do not use one there.
+
+**Never** place `AGENTS.md` or `.agents/skills/` inside `shared-code/`: the link
+points *from* each private workspace *to* shared code, never the reverse, or
+isolation breaks. A parallel DAG would inherit the ordinary shared-codebase
 concurrency problem (git worktrees per agent, or a lock) — a *code* problem, not a
-*memory* one. **Never** place `AGENTS.md` or `.agents/skills/` inside
-`shared-code/`: the symlink points *from* each private workspace *to* shared code,
-never the reverse, or isolation breaks. Treat this as an optional collaboration
-upgrade — the memory story works fine with isolated workspaces bridged by chain
-context + governed memory.
+*memory* one; the v1 sequential chain avoids it entirely.
 
 ---
 

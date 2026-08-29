@@ -7,6 +7,11 @@ Define the recommended implementation order across the component TDs.
 This prevents future sessions from starting in the middle and accidentally
 building modules before their contracts exist.
 
+**This document is the authority on build order.** It is dependency order across
+components. `PLAN.md` carries the staffing order (who works when); where the two
+appear to differ, this file governs what may be built, `PLAN.md` governs who
+builds it.
+
 ## Sequence
 
 ```text
@@ -32,6 +37,26 @@ contracts and store arrays.
 
 `WORKSPACE-EXTENSIONS` comes before group execution because group tasks need
 private Agent roots and shared `./code` prepared before Codex runs.
+
+### Hard ordering constraint — WORKSPACE-EXTENSIONS blocks LANDING
+
+`WORKSPACE-EXTENSIONS` (#2) must land its **managed-block-preserving
+`writeInstructions()`** before `LANDING` (#10) writes any governed memory.
+
+```text
+Today writeInstructions() regenerates AGENTS.md from scratch
+  (workspace.ts:38), and updateAgent() calls it on every Agent edit
+  (agent-service.ts:129).
+
+If LANDING runs first, editing an Agent silently WIPES the
+  <!-- memory:<noteId> --> block, and the demo shows memory vanishing
+  for no visible reason.
+```
+
+This crosses a person boundary: Person 2 owns `workspace.ts` and must land the
+`replaceManagedBlock()` / `removeManagedBlock()` helpers before Person 3 builds
+`LANDING` on top of them. Person 3 imports those helpers rather than
+reimplementing them. See `WORKSPACE-EXTENSIONS.md`.
 
 `GROUP-RUNNER` can be built with a fake memory pipeline first. That gives the
 demo its group chat, DAG execution, and context injection path before the memory
