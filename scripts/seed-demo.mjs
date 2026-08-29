@@ -117,8 +117,26 @@ function span(runId, agentId, seq, type, payload, at) {
   };
 }
 
+/**
+ * Resolve the store the way start-local-poc.sh does.
+ *
+ * loadConfig only reads APP_DATA_DIR; LOCAL_POC_DATA_ROOT is a poc-script
+ * concept. Without this, seeding "for the poc" silently writes to the repo's
+ * .data/ instead and the app shows an empty Teams screen.
+ */
+function pocEnv(env) {
+  const root = env.LOCAL_POC_DATA_ROOT;
+  if (!root) return env;
+  return {
+    ...env,
+    APP_DATA_DIR: env.APP_DATA_DIR ?? path.join(root, "data"),
+    AGENT_WORKSPACE_ROOT: env.AGENT_WORKSPACE_ROOT ?? path.join(root, "workspaces"),
+    CODEX_HOME: env.CODEX_HOME ?? path.join(root, "codex-home"),
+  };
+}
+
 async function main() {
-  const config = loadConfig(process.env);
+  const config = loadConfig(pocEnv(process.env));
   await mkdir(config.dataDirectory, { recursive: true });
   const store = new JsonStore(path.join(config.dataDirectory, "launchpad.json"));
   const workspaces = new WorkspaceManager(
@@ -210,6 +228,9 @@ async function main() {
   // claims file ownership per node. Expose ./code the way the runner does and
   // leave behind what the chain says it produced.
   for (const key of ["backend", "frontend", "security"]) {
+    // Each reseed makes a new taskId, and prepareSharedCode rightly refuses to
+    // repoint an existing ./code link (409). Release the old one first.
+    await workspaces.releaseSharedCode(byKey[key]).catch(() => undefined);
     await workspaces.prepareSharedCode(byKey[key], sharedCodePath);
   }
   await mkdir(path.join(sharedCodePath, "apps/server/src/routes"), { recursive: true });
