@@ -8,8 +8,8 @@ They are kept for history only. **Do not cite or build from them.**
 
 The current design lives in [`../latestdoc/`](../latestdoc/):
 
-- `ARCHITECTURE.md` — the current design, the problem it solves, the full pipeline
-- `PROJECT_STRUCTURE.md` — where it plugs into the codebase and the build map
+- `ARCHITECTURE.md` — the current design, the problem it solves, the full
+  pipeline, and where it plugs into the existing codebase (§12)
 
 Key things that changed:
 

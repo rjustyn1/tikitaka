@@ -329,3 +329,21 @@ release any stale Agent leases
 
 Without this, a server restart mid-task leaves the group permanently unable to
 start another task.
+
+---
+
+## Configuration Keys
+
+Owned by Person 1, in `apps/server/src/config.ts`. None of these exist yet; the
+file was in no workstream's scope until the A1-A5 review.
+
+| Key | Values | Purpose |
+|---|---|---|
+| `MEMORY_ENABLED` | `true` \| `false` | master switch; `false` restores exact baseline behaviour with no group/memory features |
+| `MEMORY_EXTRACTOR` | `ark` \| `fake` \| `off` | extractor backend. `fake` is the deterministic offline demo path and is required for tests |
+| `MEMORY_EXTRACT_TIMEOUT_MS` | number | consolidator call timeout |
+| `REVIEW_ALL_SKILLS` | `true` \| `false` | force every skill through HITL, for a high-security posture |
+| `SKILLS_DIR` | `.agents/skills` | **verified** against `@openai/codex@0.111.0` — discovered with `scope: "repo"`, no git repo required. `.codex/skills` also works. Never `$CODEX_HOME/skills`, which is `scope: "user"` and global to every Agent |
+
+`MEMORY_EXTRACTOR=fake` must be the default in tests so `npm run check` never
+touches the network. See `EXTRACTOR-CLIENT.md` for the client implementations.

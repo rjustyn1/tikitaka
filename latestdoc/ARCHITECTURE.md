@@ -379,3 +379,24 @@ Design shape is settled; the buildable contract is not. Still open:
 `skills/list` proves discovery; the model choosing it is the soft half (§3).
 Fold this into the first end-to-end integration run and use explicit
 `$skill-name` invocation on stage.
+
+---
+
+## 12. What we build on (reuse, do not rebuild)
+
+The existing platform already provides the capture layer. We consume it; we do
+not modify the runner.
+
+| File | What it gives us | Our change |
+|---|---|---|
+| `apps/server/src/codex-runner.ts` | `parseCodexEventLine` — parses the Codex event stream into ordered, linked spans; buffers per run; flushes to store at run terminal | **extend** — thread `sharedCodePath` through to `--add-dir` (§6) |
+| `apps/server/src/container-codex-runner.ts` | per-turn disposable container; bind-mounts the agent workspace and `codex-home` | **extend** — nested bind mount for shared code (§6) |
+| `apps/server/src/workspace.ts` | `WorkspaceManager` — creates each agent's workspace dir and writes its `AGENTS.md` | **extend** — shared-code setup, group-task sections, managed-block helpers |
+| `apps/server/src/store.ts` | single-JSON store, atomic whole-file writes, defensive array init | **extend** — add new arrays |
+| `apps/server/src/types.ts` | `Agent`, `Run`, `TraceSpan`, runner interfaces | **extend** — add group + memory types |
+| `apps/server/src/agent-service.ts` | `executeRun`, `sendMessage` | **extend** — the agent lease; trigger consolidation at task terminal |
+| `apps/server/src/app.ts` | Fastify routes | **extend** — add new routes |
+
+Governed memory files are **not** written by `workspace.ts`. They are written by
+the landing service, which is the single enforcement point (§3, §4 stage 7).
+`workspace.ts` owns shared code and the group-task charter; landing owns memory.

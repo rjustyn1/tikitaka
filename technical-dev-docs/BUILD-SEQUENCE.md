@@ -126,3 +126,23 @@ REVIEW UI
 
 The demo can use `FakeExtractorClient` first. Real Ark extraction can be swapped
 in after the end-to-end path works.
+
+## Testing Seams
+
+Cross-cutting testing strategy. Per-component test lists live in each component
+TD's own `## Tests` section.
+
+- **Extractor behind an interface** → `FakeExtractorClient` feeds canned notes;
+  no network in `npm run check`.
+- **`safety.ts` is pure** → fixture-driven. A fake key must never survive into a
+  landed file; prompt-injection shapes must quarantine.
+- **`landing.ts` asserts on the filesystem** → file presence in the target Agent
+  workspace and absence in every other. This is the security boundary, so test it
+  directly rather than through a service return value.
+- **A fake runner** is needed for group-runner tests. One exists today only as a
+  local class inside `agent-service.test.ts`; Person 2 should extract it to a
+  shared test helper rather than writing a second one.
+- **Skill discovery** can be verified with no API key via
+  `scripts/verify-codex-skills.sh` (the `codex app-server` `skills/list` RPC).
+- **One optional live smoke test** against real Ark + real Codex, excluded from
+  `npm run check`.
