@@ -9,6 +9,7 @@ import {
   parseCodexEventLine,
 } from "./codex-runner.js";
 import { RunCancelledError } from "./errors.js";
+import type { GroupRunnerRequest } from "./memory/pending-contracts.js";
 import type {
   AgentRunner,
   RunnerRequest,
@@ -34,7 +35,7 @@ export function containerName(agentId: string, instanceId = "default"): string {
 }
 
 export function buildContainerRunArgs(
-  request: RunnerRequest,
+  request: GroupRunnerRequest,
   config: AppConfig,
 ): string[] {
   const name = containerName(request.agentId, config.runtimeInstanceId);
@@ -76,13 +77,29 @@ export function buildContainerRunArgs(
     "NO_COLOR=1",
     "--mount",
     "type=bind,src=" + request.workspacePath + ",dst=/workspace",
+    // A2 - shared group code, NESTED inside the workspace mount. This makes
+    // ./code a real directory in the container rather than a dangling symlink,
+    // and because /workspace/code sits inside the cwd, workspace-write permits
+    // writes natively. Must stay ordered after the workspace mount.
+    ...(request.sharedCodePath
+      ? [
+          "--mount",
+          "type=bind,src=" + request.sharedCodePath + ",dst=/workspace/code",
+        ]
+      : []),
     "--mount",
     "type=bind,src=" + config.codexHome + ",dst=/codex-home",
     "--workdir",
     "/workspace",
     config.containerRuntimeImage,
     "codex",
-    ...buildCodexArgs(request, config.codexSandboxMode, "/workspace"),
+    // sharedCodePath is cleared deliberately: the bind mount above already put
+    // shared code inside the cwd, so --add-dir would be redundant here.
+    ...buildCodexArgs(
+      { ...request, sharedCodePath: undefined },
+      config.codexSandboxMode,
+      "/workspace",
+    ),
   ];
 }
 

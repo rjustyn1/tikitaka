@@ -5,24 +5,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { AgentService } from "./agent-service.js";
 import { loadConfig } from "./config.js";
 import { JsonStore } from "./store.js";
-import type { AgentRunner, RunnerRequest, RunnerResult } from "./types.js";
+import { FakeRunner } from "./test-helpers.js";
+import type { AgentRunner } from "./types.js";
 import { WorkspaceManager } from "./workspace.js";
-
-class FakeRunner implements AgentRunner {
-  async run(request: RunnerRequest): Promise<RunnerResult> {
-    return {
-      output: "Completed: " + request.prompt,
-      threadId: request.threadId ?? "fake-thread",
-      usage: { inputTokens: 12, outputTokens: 5 },
-    };
-  }
-  async cancel(): Promise<boolean> {
-    return false;
-  }
-  async isAvailable(): Promise<boolean> {
-    return true;
-  }
-}
 
 const temporaryDirectories: string[] = [];
 

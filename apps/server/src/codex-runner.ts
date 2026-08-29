@@ -6,6 +6,7 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { AppConfig } from "./config.js";
 import { RunCancelledError } from "./errors.js";
+import type { GroupRunnerRequest } from "./memory/pending-contracts.js";
 import type {
   AgentRunner,
   RunUsage,
@@ -232,7 +233,7 @@ function itemStatus(
 }
 
 export function buildCodexArgs(
-  request: RunnerRequest,
+  request: GroupRunnerRequest,
   sandboxMode: AppConfig["codexSandboxMode"],
   workspacePath = request.workspacePath,
 ): string[] {
@@ -245,6 +246,14 @@ export function buildCodexArgs(
     "-C",
     workspacePath,
   ];
+  // A2 - local-process runtime only. Here ./code is a link whose target
+  // resolves OUTSIDE the cwd, so the sandbox needs it granted explicitly.
+  // The container runtime bind-mounts shared code at /workspace/code, which is
+  // inside the cwd and therefore already covered by workspace-write; it clears
+  // sharedCodePath before calling this (see buildContainerRunArgs).
+  if (request.sharedCodePath) {
+    args.push("--add-dir", request.sharedCodePath);
+  }
   if (request.threadId) {
     args.push("resume", request.threadId, request.prompt);
   } else {

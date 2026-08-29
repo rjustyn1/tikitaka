@@ -36,7 +36,15 @@ const taskIdParams = z.object({ id: z.string().uuid() });
 const createGroupBody = z.object({
   name: z.string().trim().min(1).max(80),
   description: z.string().trim().max(500).optional(),
-  memberAgentIds: z.array(z.string().uuid()).min(1),
+  // A4 - exactly three members, one per role. Replaces memberAgentIds.
+  members: z
+    .array(
+      z.object({
+        agentId: z.string().uuid(),
+        role: z.enum(["backend", "frontend", "security"]),
+      }),
+    )
+    .length(3),
 });
 
 const updateGroupBody = createGroupBody
@@ -237,6 +245,12 @@ export async function createApp(
   app.get("/api/groups/:id/tasks/:taskId", async (request) => {
     const { taskId } = groupTaskParams.parse(request.params);
     return service.getGroupTask(taskId);
+  });
+
+  app.post("/api/groups/:id/tasks/:taskId/cancel", async (request, reply) => {
+    const { taskId } = groupTaskParams.parse(request.params);
+    const task = await service.cancelGroupTask(taskId);
+    return reply.code(202).send({ task });
   });
 
   app.get("/api/groups/:id/tasks/:taskId/timeline", async (request) => {

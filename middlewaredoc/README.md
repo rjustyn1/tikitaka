@@ -23,6 +23,8 @@ Each document answers **one** question. Read the one that matches your question.
 | [`GROUP-CHAT-DESIGN.md`](./GROUP-CHAT-DESIGN.md) | Why this group/thread model? | buildable contracts |
 | [`DEMO.md`](./DEMO.md) | Which beats, in what order, under 3:00? | design rationale, interfaces |
 | [`MIDDLEWARE.md`](./MIDDLEWARE.md) | *(for reviewers)* What is the problem, the trust boundary, the enforcement point? | internal planning |
+| [`integrationManifestTask2.md`](./integrationManifestTask2.md) | *(for QA)* How do the four workstreams become one green build? | design, contracts |
+| [`MILESTONE_PERSON_2.md`](./MILESTONE_PERSON_2.md) | **Has** Person 2 built it, and is it verified? | design, contracts |
 | [`components/`](./components/) | **How** does this one module work internally? | anything outside that module |
 | [`archive/`](./archive/) | history — a superseded design | anything to build from |
 
