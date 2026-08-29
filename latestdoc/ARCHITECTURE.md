@@ -162,6 +162,18 @@ design does not invent any mechanism.
   cwd** (`<cwd>/.agents/skills`), so a skill written into an agent's workspace is
   available to **that agent only.** → **normal path.**
 
+  > ✅ **Verified on the pinned runtime** (`@openai/codex@0.111.0`, via the
+  > `skills/list` app-server RPC). Both `<cwd>/.agents/skills/<name>/SKILL.md`
+  > and `<cwd>/.codex/skills/<name>/SKILL.md` are discovered and reported with
+  > `scope: "repo"`. A workspace with no skill files sees **zero** repo-scoped
+  > skills — no cross-workspace leakage. **A git repo is not required.** We use
+  > `.agents/skills`.
+  >
+  > ⛔ **`$CODEX_HOME/skills` is `scope: "user"` — global to every agent.** This
+  > deployment shares one `codex-home` across all agents, so anything landed
+  > there reaches everyone and would silently void the §3 security claim.
+  > Governed memory is **never** written to `$CODEX_HOME`.
+
 - **Reuse of the tracing capture.** `parseCodexEventLine` already parses the Codex
   event stream into typed, ordered, causally-linked spans and flushes them to the
   store at run terminal. We consume those spans; we do **not** modify the runner.
@@ -317,6 +329,17 @@ across these — we swap the trigger, not the pipeline.
 4. **The store is a single JSON file**, inherited from the starter kit.
 5. **Redaction is pattern-based** and cannot catch every shape of secret; the
    quarantine heuristic is recall-tuned and backed by HITL, not perfect precision.
+6. **OS-level write isolation between agents comes from the container, not from
+   Codex.** All agents run as one process tree inside a single hardened container
+   (`cap_drop: ALL`, `no-new-privileges`, pid/memory limits), and Codex's Linux
+   Landlock sandbox is **unavailable on Docker Desktop for Mac** (the linuxkit
+   kernel ships landlock syscalls as unimplemented weak symbols). A
+   prompt-injected agent could therefore, in principle, write into a sibling
+   agent's workspace directory. This does **not** weaken the governance claim in
+   §3 — that claim is about which memory files *we* place in each workspace, and
+   it is enforced by the landing service, audited at write time, and inspectable
+   as file presence. It does mean we should not claim OS-enforced agent
+   sandboxing. State it this way if asked.
 
 ---
 
@@ -335,9 +358,15 @@ Design shape is settled; the buildable contract is not. Still open:
 - **Demo beats** re-mapped onto this design (the "empty workspace can't leak" beat;
   explicit `$skill-name` invocation).
 
-**Build-time verifications** (mechanism is certain; these are version details):
+**Build-time verifications — both now CLOSED** (`@openai/codex@0.111.0`):
 
-- Exact skills directory on the pinned Codex version (`.agents/skills` per current
-  docs; some 2026 sources say `.codex/skills` — confirm with `codex --help`).
-- Whether skill discovery works from a non-git-repo cwd (we pass
-  `--skip-git-repo-check`).
+- ~~Exact skills directory~~ → **`.agents/skills` confirmed working** (`scope: "repo"`).
+  `.codex/skills` works identically; either is valid. See §5.
+- ~~Skill discovery from a non-git-repo cwd~~ → **confirmed working.** Agent
+  workspaces are not git repos and repo-scoped skills are still discovered.
+
+**Residual live-fire check** (one run, once a valid `ARK_API_KEY` exists): that
+`codex exec` *fires* a discovered skill, not merely that it discovers one.
+`skills/list` proves discovery; the model choosing it is the soft half (§3).
+Fold this into the first end-to-end integration run and use explicit
+`$skill-name` invocation on stage.

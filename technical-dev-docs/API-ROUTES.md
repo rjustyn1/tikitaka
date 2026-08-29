@@ -45,7 +45,11 @@ const taskIdParams = z.object({ id: z.string().uuid() });
 const createGroupBody = z.object({
   name: z.string().trim().min(1).max(80),
   description: z.string().trim().max(500).optional(),
-  memberAgentIds: z.array(z.string().uuid()).min(1),
+  // A4: exactly three members, one per role. Replaces memberAgentIds.
+  members: z.array(z.object({
+    agentId: z.string().uuid(),
+    role: z.enum(["backend", "frontend", "security"]),
+  })).length(3),
 });
 
 const updateGroupBody = createGroupBody.partial().refine(
@@ -148,3 +152,78 @@ interface GroupTaskResponse {
 - review note;
 - revoke note;
 - auth hook still protects new API routes.
+
+---
+
+## Additions From The A1-A5 Review
+
+### A5 - freshThread on the existing solo message route
+
+The proof beat reuses `POST /api/agents/:id/messages`. One optional field:
+
+```ts
+const messageBody = z.object({
+  content: z.string().trim().min(1).max(50_000),
+  // A5: start a NEW Codex thread so AGENTS.md and .agents/skills are re-read.
+  freshThread: z.boolean().default(false),
+});
+```
+
+No new route. `AgentService.sendMessage()` passes `threadId: null` when set.
+
+### A4 - membership validation
+
+```text
+POST /api/groups          400 unless exactly three members, one per role
+PATCH /api/groups/:id     409 while group.activeTaskId is set
+POST /api/groups/:id/tasks 409 if a role is missing:
+  "This plan needs one backend, one frontend, and one security member."
+```
+
+### A3 - lease-aware error codes
+
+```text
+409 agent already busy       solo run attempted while a group node holds the lease
+409 agent held by group task include the groupTaskId in the message
+```
+
+Routes must surface these as 409, never as a 500. Today a solo message sent
+during a group run reaches `CodexRunner` and throws
+`"Agent already has an active Codex process"` as an unhandled error.
+
+### Alias routes - must not drift
+
+`/timeline` and `/context-injections` return data already present in
+`GroupTaskResponse`. Keep them, but implement both as **thin projections of the
+same service call**, never as independent queries:
+
+```ts
+const full = service.getGroupTask(taskId);
+
+app.get("/api/groups/:id/tasks/:taskId/timeline", async (request) =>
+  ({ messages: full.messages }));
+
+app.get("/api/groups/:id/tasks/:taskId/context-injections", async (request) =>
+  ({ contextInjections: full.contextInjections }));
+```
+
+Person 4 should poll `GET /api/groups/:id/tasks/:taskId` only. The aliases exist
+for debugging and for narrating the demo, not for the polling loop.
+
+### Route list correction
+
+`GET /api/groups/:id` is specified in this document but was missing from
+Person 1's build scope in `IMPLEMENTATION_DIRECTION.md`. It is in scope.
+
+### Cancel a running group task
+
+Not previously specified anywhere, and needed: `CODEX_TIMEOUT_MS` defaults to
+600s and the v1 chain has five nodes.
+
+```text
+POST /api/groups/:id/tasks/:taskId/cancel   -> 202
+  marks the task cancelled
+  cancels the in-flight node run
+  releases the Agent lease and any runtime lock rows
+  remaining nodes are marked cancelled, never started
+```

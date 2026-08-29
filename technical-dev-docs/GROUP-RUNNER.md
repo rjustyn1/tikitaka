@@ -6,6 +6,13 @@
 
 ## Purpose
 
+> ⚠️ **V1 IS A SEQUENTIAL CHAIN, NOT A DAG.** See A4 in
+> `IMPLEMENTATION_DIRECTION.md`. Everything in this document describing parallel
+> phases, branch nodes, join nodes, join-owner selection, or parallel-set
+> validation is **STRETCH scope** - build it only after the sequential demo runs
+> end to end. The v1 chain, the runner call, and the failure behaviour below are
+> current and correct.
+
 Execute a group task across selected Agents using the branch-and-join DAG from
 `GROUPCHAT.md`.
 
@@ -47,6 +54,10 @@ runner.run({
   workspacePath: participant.agentWorkspacePath,
   threadId: participant.groupThreadId,
   prompt: groupNodePrompt,
+  // A2: REQUIRED for group nodes. container -> extra bind mount at
+  // /workspace/code; local-process -> codex exec --add-dir. Without this the
+  // Agent cannot write to shared code at all.
+  sharedCodePath: task.sharedCodePath,
 });
 ```
 
@@ -82,13 +93,13 @@ Request types:
 interface CreateGroupInput {
   name: string;
   description?: string;
-  memberAgentIds: string[];
+  members: GroupMember[];    // A4: {agentId, role}, exactly three
 }
 
 interface UpdateGroupInput {
   name?: string;
   description?: string;
-  memberAgentIds?: string[];
+  members?: GroupMember[];   // frozen while activeTaskId is set
 }
 
 interface GroupTaskResponse {
@@ -105,7 +116,8 @@ interface GroupTaskResponse {
 async function startGroupTask(groupId: string, prompt: string) {
   // 1. read group and selected agents
   // 2. reject if group has activeTaskId
-  // 3. reject if group has fewer than two members
+  // 3. A4: reject unless exactly three members, one per role
+  //    409 "This plan needs one backend, one frontend, and one security member."
   // 4. create GroupTask with status queued
   // 5. create sharedCodePath
   // 6. create/update GroupParticipantState for each member
@@ -120,11 +132,18 @@ async function startGroupTask(groupId: string, prompt: string) {
 `executeGroupTask()` should:
 
 ```ts
-while (task has runnable nodes) {
-  const runnable = findRunnableNodes(task, nodes);
-  validateParallelSet(runnable);
-  await Promise.all(runnable.map((node) => runPlanNode(node.id)));
+// V1: plain sequential loop over the chain.
+for (const node of chainInOrder) {
+  await runPlanNode(node.id);
+  if (node.status === "failed") break;   // partial consolidation still allowed
 }
+
+// STRETCH: parallel form, build with the DAG.
+// while (task has runnable nodes) {
+//   const runnable = findRunnableNodes(task, nodes);
+//   validateParallelSet(runnable);
+//   await Promise.all(runnable.map((node) => runPlanNode(node.id)));
+// }
 
 const decision = decideFlush({ groupTask, planNodes });
 if (decision.shouldFlush) {
@@ -136,22 +155,41 @@ if (decision.shouldFlush) {
 `runPlanNode()` should:
 
 ```ts
+// A3: acquire the Agent lease FIRST - this is what stops a solo run and a
+// group node colliding on CodexRunner.active and on the container --name.
+// await lease.acquireAgent(node.agentId, { kind: "group", groupTaskId, planNodeId });
 // Store transition: queued -> running
 // Build context packet and persist GroupContextInjection before Codex runs.
-// Acquire locks in store.
+// Write GroupRuntimeLock rows for this node (records only in v1 - collision
+// validation is STRETCH, it cannot fire while one node runs at a time).
 // Call runner.run() with participant.groupThreadId.
 // Persist captured thread id back to GroupParticipantState.groupThreadId.
 // Save output to GroupPlanNode.output and GroupMessage.
 // Store transition: running -> completed/failed/cancelled.
-// Release locks in finally.
+// Release the Agent lease AND the runtime lock rows in finally.
 ```
 
 Use `GroupParticipantState.groupThreadId`, not `Agent.codexThreadId`. The solo
 thread must stay untouched by group tasks.
 
-## Preseeded Demo DAG
+## Preseeded Chain (V1) And DAG (STRETCH)
 
-For the first demo, create this deterministic DAG:
+**V1 - build this.** A fixed five-node sequential chain, bound by ROLE so any
+three Agents can play it:
+
+```text
+1  backend-contract   role: backend    owns code/apps/server/**
+2  frontend-plan      role: frontend   readOnly, dependsOn backend-contract
+3  security-review    role: security   readOnly, dependsOn frontend-plan
+4  backend-impl       role: backend    owns code/apps/server/**, dependsOn security-review
+5  frontend-impl      role: frontend   owns code/apps/web/**,   dependsOn backend-impl
+```
+
+Backend and Frontend each take two turns, so the demo shows plan-then-implement.
+Sequential means node 4 starts only after node 3 completes - no overlap, so the
+A3 lease needs no re-entrancy.
+
+**STRETCH - do not build yet.** The branch-and-join DAG:
 
 ```text
 backend-contract
@@ -194,7 +232,9 @@ final-join
   dependsOn: backend-impl, frontend-impl
 ```
 
-## Parallel Safety
+## Parallel Safety (STRETCH)
+
+Not applicable to the v1 chain - one node runs at a time. Build with the DAG.
 
 Before launching a parallel set:
 
@@ -214,8 +254,11 @@ If validation fails, serialize or fail the task before launching Codex.
 
 ## Tests
 
-- runs a preseeded DAG in dependency order;
-- prevents duplicate Agent in one parallel set;
-- prevents overlapping runtime locks;
+- runs the five-node sequential chain in order;
+- an Agent taking two turns (Backend, Frontend) works without lease deadlock;
+- a solo message during a group task returns 409, not 500 (A3);
+- shared ./code is writable from a real Codex run in BOTH runtimes (A2);
+- STRETCH: prevents duplicate Agent in one parallel set;
+- STRETCH: prevents overlapping runtime locks;
 - stores groupThreadId separately from solo codexThreadId;
 - calls flush-trigger after final join.

@@ -40,11 +40,19 @@ export interface Database {
 ## Group Types
 
 ```ts
+export type GroupRole = "backend" | "frontend" | "security";
+
+export interface GroupMember {
+  agentId: string;
+  role: GroupRole;
+}
+
 export interface AgentGroup {
   id: string;
   name: string;
   description: string;
-  memberAgentIds: string[];
+  // A4: replaces memberAgentIds. Exactly three, one per role.
+  members: GroupMember[];
   activeTaskId: string | null;
   createdAt: string;
   updatedAt: string;
@@ -234,3 +242,90 @@ should prefer one mutation per state transition.
 - preserves existing agents/runs/messages/spans;
 - serializes concurrent mutations;
 - stores and returns group task objects without losing nested arrays.
+
+---
+
+## Additions From The A1-A5 Review
+
+These three contracts are owned by Person 1 and unblock Person 2 and Person 4.
+See "Resolved Blockers (A1-A5)" in `IMPLEMENTATION_DIRECTION.md` for rationale.
+
+### A2 - shared code on the runner request
+
+`RunnerRequest` gains one optional field. It is the only change the runners need:
+
+```ts
+export interface RunnerRequest {
+  agentId: string;
+  runId: string;
+  workspacePath: string;
+  prompt: string;
+  threadId: string | null;
+  /**
+   * A2. Absolute host path of the group task's shared code directory.
+   * container runtime  -> extra bind mount at /workspace/code
+   * local-process      -> codex exec --add-dir <path>
+   * Omitted for solo runs.
+   */
+  sharedCodePath?: string;
+  onSpan?: (span: TraceSpan) => void;
+  onThreadId?: (id: string) => void;
+}
+```
+
+### A3 - the Agent lease
+
+One lease shared by solo runs and group nodes. This is the fix for
+`CodexRunner.active` and `containerName()` both being keyed by `agentId`.
+
+```ts
+export type AgentLeaseHolder =
+  | { kind: "solo"; runId: string }
+  | { kind: "group"; groupTaskId: string; planNodeId: string };
+
+export interface AgentLease {
+  acquireAgent(agentId: string, holder: AgentLeaseHolder): Promise<Agent>;
+  releaseAgent(agentId: string, holder: AgentLeaseHolder): Promise<void>;
+}
+```
+
+```text
+acquireAgent flips status to busy inside ONE store.mutate() and throws 409 if held.
+The existing sendMessage() busy check becomes a call to acquireAgent.
+releaseAgent runs in a finally block on both paths.
+No re-entrancy needed: the v1 chain is sequential, so an Agent taking two turns
+  acquires and releases twice with no overlap.
+initialize() clears stale leases on restart, next to the existing run reset.
+```
+
+### A5 - fresh-thread solo runs
+
+```ts
+export interface SendMessageInput {
+  content: string;
+  /**
+   * A5. Start a NEW Codex thread instead of resuming Agent.codexThreadId,
+   * so AGENTS.md and .agents/skills are re-read from disk. This is what makes
+   * landed governed memory observable in the demo.
+   */
+  freshThread?: boolean;
+}
+```
+
+`AgentService.sendMessage()` passes `threadId: null` when `freshThread` is true.
+`Agent.codexThreadId` is still updated from the result.
+
+### Group task restart recovery
+
+`initialize()` currently resets stale runs and busy Agents. It must also:
+
+```text
+GroupTask.status running/queued -> cancelled
+group.activeTaskId -> null
+GroupPlanNode status running/queued -> cancelled
+GroupRuntimeLock.releasedAt -> now() where null
+release any stale Agent leases
+```
+
+Without this, a server restart mid-task leaves the group permanently unable to
+start another task.

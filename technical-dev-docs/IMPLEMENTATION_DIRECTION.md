@@ -5,6 +5,14 @@
 Split the remaining implementation into four balanced workstreams for a
 four-person team.
 
+> ⚠️ **Read "Resolved Blockers (A1-A5)" and "Ownership Corrections" at the end of
+> this file before starting.** They were added after a design review and they
+> **supersede** anything above that contradicts them — most importantly the group
+> membership contract (`memberAgentIds: string[]` is replaced by
+> `members: [{agentId, role}]`, and the seven-node DAG is now STRETCH scope --
+> v1 is a hardcoded sequential chain, see A4) and the file ownership of
+> `workspace.ts` and `app.test.ts`.
+
 The implementation should follow the component TDs in this folder, especially:
 
 - `TYPES-AND-STORE.md`
@@ -26,7 +34,7 @@ Core architecture:
 private Agent roots
 + shared group code under ./code
 + app-owned group transcript
-+ branch-and-join group DAG
++ hardcoded sequential chain (branch-and-join DAG is STRETCH - see A4)
 + governed memory landing into private Agent workspaces
 ```
 
@@ -89,6 +97,7 @@ Add route schemas and route stubs for:
 ```text
 GET /api/groups
 POST /api/groups
+GET /api/groups/:id
 PATCH /api/groups/:id
 POST /api/groups/:id/tasks
 GET /api/groups/:id/tasks/:taskId
@@ -130,7 +139,7 @@ Person 3 finish their modules.
 
 ---
 
-## Person 2 - Group Runner, DAG, And Shared Code Setup
+## Person 2 - Group Runner, Sequential Chain, And Shared Code Setup
 
 ### Ownership
 
@@ -165,44 +174,44 @@ Implement shared code setup:
 
 ```text
 workspaces/shared-code/<groupTaskId>
-<agent.workspacePath>/code -> shared-code/<groupTaskId>
+<agent.workspacePath>/code  (A2: symlink for local-process,
+                             bind-mount target dir for container)
 ```
 
 Implement planner-written group-task sections in each selected Agent's private
 `AGENTS.md`.
 
-Implement the preseeded demo DAG:
+Implement the sequential chain (**v1 - see A4; the DAG below is STRETCH**):
 
 ```text
-backend-contract
-  -> frontend-plan
-  -> security-review
-join-plan
-  -> backend-impl
-  -> frontend-impl
-final-join
+one GroupPlanNode per member, in member-list order
+node[0].dependsOn = []
+node[i].dependsOn = [node[i-1].id]
+the last node is the single sink
 ```
 
-Implement DAG validation:
-
 ```text
-no duplicate Agent in one parallel phase
-no overlapping write paths
-no duplicate runtime locks
-join nodes depend on all branches they integrate
+STRETCH - do not build until the sequential demo runs end to end:
+  backend-contract -> frontend-plan / security-review -> join-plan
+    -> backend-impl / frontend-impl -> final-join
+  no duplicate Agent in one parallel phase
+  no overlapping write paths
+  no duplicate runtime locks
+  join nodes depend on all branches they integrate
 ```
 
-Implement execution:
+Implement execution (a plain `for` loop over the chain in v1):
 
 ```text
-find runnable nodes
+acquire the A3 Agent lease
 build prompt
 call AgentRunner with participant.groupThreadId
+  pass sharedCodePath so the runner mounts/--add-dirs shared code (A2)
 persist groupThreadId back to participant state
 save node output
 save group message
-release locks in finally
-finish at final join
+release the lease in finally
+finish at the last node
 call flush trigger
 ```
 
@@ -225,11 +234,12 @@ completion, call a placeholder memory pipeline hook that Person 3 can replace.
 
 ### Done When
 
-- A group task can run through the preseeded DAG with a fake runner.
+- A group task can run through the sequential chain with a fake runner.
 - Group messages appear in order.
 - Group thread IDs are separate from solo `codexThreadId`.
 - Shared `./code` exists for every selected Agent.
-- Duplicate Agent/path/runtime-lock parallel plans are rejected before launch.
+- Solo and group runs never collide on the same Agent (A3 lease).
+- Shared ./code is writable from inside a real Codex run in BOTH runtimes (A2).
 
 ---
 
@@ -249,7 +259,7 @@ apps/server/src/memory/safety.ts
 apps/server/src/memory/landing.ts
 apps/server/src/memory/review.ts
 apps/server/src/memory/ledger.ts
-apps/server/src/workspace.ts
+apps/server/src/memory/workspace-memory.ts   # NOT workspace.ts (Person 2 owns that)
 technical-dev-docs/TASK-BUFFER.md
 technical-dev-docs/EXTRACTOR-CLIENT.md
 technical-dev-docs/CONSOLIDATOR.md
@@ -363,7 +373,8 @@ apps/web/src/App.tsx
 apps/web/src/api.ts
 apps/web/src/types.ts
 apps/web/src/styles.css
-apps/server/src/app.test.ts
+apps/web/src/mock.ts
+apps/server/src/app.groups.test.ts   # app.test.ts belongs to Person 1
 technical-dev-docs/FRONTEND-UI.md
 technical-dev-docs/API-ROUTES.md
 technical-dev-docs/BUILD-SEQUENCE.md
@@ -443,8 +454,8 @@ The demo should visibly prove:
 only selected Agents joined
 each Agent has separate groupThreadId
 all Agents edit shared ./code
-branch context does not leak sibling output
-join owner receives branch outputs
+branch context does not leak sibling output   (STRETCH - no branches in v1, see A4)
+join owner receives branch outputs            (STRETCH - see A4)
 memory lands only in target private Agent workspace
 withheld records exist for non-target Agents
 ```
@@ -457,6 +468,9 @@ withheld records exist for non-target Agents
 - Context packet viewer shows injected and withheld messages.
 - Review queue supports approve/edit/reject/revoke.
 - Grant ledger clearly shows who received or did not receive memory.
+- The proof beat runs from the landed-memory view: a fresh-thread solo run on
+  the target Agent answers using the landed memory, and the same prompt on a
+  withheld Agent cannot. See A5.
 
 ---
 
@@ -1112,3 +1126,434 @@ apps/web/src/App.tsx
 
 Coordinate changes to these files before parallel coding. Everything under
 `apps/server/src/memory/` can be split by component with lower conflict risk.
+
+---
+
+# Resolved Blockers (A1-A5)
+
+Design review found five cross-cutting items that were unowned or unverified.
+All five are now closed. A1 and A2 were settled empirically against the pinned
+runtime (`@openai/codex@0.111.0` inside `volc-agent-launchpad:local`); A3-A5 are
+decisions recorded here. Read this section before starting your workstream.
+
+## A1 - Skill Placement: VERIFIED WORKING
+
+Method: `codex app-server` + `skills/list` RPC across three prepared workspaces.
+No model call required, so anyone can re-run this check.
+
+Results:
+
+```text
+<cwd>/.agents/skills/<name>/SKILL.md   -> discovered, scope "repo"   USE THIS
+<cwd>/.codex/skills/<name>/SKILL.md    -> discovered, scope "repo"   also valid
+$CODEX_HOME/skills/<name>/SKILL.md     -> discovered, scope "user"   GLOBAL - NEVER USE
+empty workspace                        -> zero repo skills           no leakage
+non-git-repo cwd                       -> repo skills still found    no git needed
+```
+
+Consequences:
+
+```text
+Placement-based security works as designed. Keep .agents/skills.
+The "empty workspace cannot leak" demo beat is real and reproducible.
+```
+
+Hard rule for Person 3 (LandingService):
+
+```text
+Governed memory is NEVER written under $CODEX_HOME.
+This deployment shares one codex-home volume across every Agent, so a skill
+landed there is visible to all Agents and silently voids the security claim.
+Add a startup assertion that $CODEX_HOME/skills contains no governed memory.
+```
+
+Residual check, folded into the first end-to-end run: `skills/list` proves
+discovery, not that `codex exec` *fires* the skill. Verify once a valid API key
+exists. Use explicit `$skill-name` invocation for the demo.
+
+## A2 - Shared Code Writability: RESOLVED
+
+**Both runtimes matter.** `npm run poc` runs `scripts/start-local-poc.sh`, which
+exports `RUNTIME_PROVIDER=container`, so `ContainerCodexRunner` is the runner for
+local dev and the demo. The committed `.env` says `local-process`, which is the
+ECS/Compose deployment path. Solve both; the container path is the one you will
+actually use day to day.
+
+### Container runtime - use a nested bind mount, no symlink
+
+`buildContainerRunArgs()` currently mounts only the Agent workspace and
+`codex-home`. A `code -> ../shared-code/<taskId>` symlink therefore **dangles
+inside the container** - verified: `cannot create code/y.txt: Directory
+nonexistent`. Add one mount, nested inside the workspace mount:
+
+```ts
+// container-codex-runner.ts, buildContainerRunArgs()
+"--mount", "type=bind,src=" + request.workspacePath + ",dst=/workspace",
+...(request.sharedCodePath
+  ? ["--mount", "type=bind,src=" + request.sharedCodePath + ",dst=/workspace/code"]
+  : []),
+"--mount", "type=bind,src=" + config.codexHome + ",dst=/codex-home",
+```
+
+Verified behaviour of this layout:
+
+```text
+./code inside the container is a REAL directory, not a symlink
+reads and writes both work; writes land on the host
+nothing leaks into the private Agent workspace
+Docker creates the mountpoint if <workspace>/code does not exist
+two Agents mounting the same shared-code concurrently is fine
+```
+
+The decisive advantage: `/workspace/code` is **inside** the cwd, so Codex's
+`workspace-write` sandbox permits it natively and **no `--add-dir` is needed in
+container mode.** One contiguous writable tree, no path-resolution footguns.
+
+### Local-process runtime - symlink plus `--add-dir`
+
+Bind mounts need root, so this path keeps the symlink. Here `./code` resolves
+outside the cwd, so it does need `--add-dir` (present in 0.111.0 and accepted by
+`codex exec`):
+
+```ts
+// types.ts
+interface RunnerRequest {
+  // ...existing fields
+  sharedCodePath?: string;   // container: extra mount; local-process: --add-dir
+}
+
+// codex-runner.ts buildCodexArgs() - after the -C flag
+if (request.sharedCodePath) args.push("--add-dir", request.sharedCodePath);
+```
+
+`WorkspaceManager.prepareSharedCode(agent, sharedCodePath)` branches once on
+`config.runtimeProvider`: create the symlink for `local-process`, create an empty
+mountpoint directory for `container`. That is the only place the two runtimes
+differ. Solo runs pass no `sharedCodePath` and are unaffected.
+
+### Also fix in container mode
+
+`containerName()` is keyed by `agentId`, and `docker run --name` fails on a
+duplicate. This is a second instance of the A3 collision: a solo run and a group
+node for the same Agent will collide on the container name, not just on
+`CodexRunner.active`. The A3 lease fixes both; do not add a second mechanism.
+
+### Sandbox posture
+
+Codex's Linux Landlock sandbox is unavailable on Docker Desktop for Mac (the
+linuxkit kernel exposes landlock syscalls as unimplemented weak symbols;
+`codex sandbox linux` fails with `Sandbox(LandlockRestrict)` even when
+privileged). `docs/LOCAL_POC.md` already documents the degradation: startup warns
+and disables the inner Codex sandbox while the outer container limits remain.
+
+```text
+The outer container is the real boundary: cap_drop ALL, no-new-privileges,
+cpu/memory/pids limits, and a per-turn disposable container.
+Do not claim OS-enforced per-Agent sandboxing. See ARCHITECTURE.md 10.6.
+```
+
+Minor known quirk: files written by the container come back to the host with
+gid 0 rather than the host gid (Docker Desktop virtiofs). The uid matches, so
+they stay host-writable. Not blocking.
+
+## A3 - Agent Concurrency Lease: RESOLVED
+
+Problem: `CodexRunner.active` is keyed by `agentId` and throws
+`"Agent already has an active Codex process"` on a second concurrent run.
+`cancel(agentId)` is agent-keyed too. Nothing in the group design set
+`agent.status = "busy"`, so a solo message sent during a group task bypassed the
+existing 409 guard and surfaced as a raw 500, and `stopAgent()` would kill a
+running group node.
+
+Decision: one shared lease, owned by `AgentService`, used by both paths.
+
+Person 1 adds the seam:
+
+```ts
+interface AgentLease {
+  acquireAgent(agentId: string, holder: AgentLeaseHolder): Promise<Agent>;
+  releaseAgent(agentId: string, holder: AgentLeaseHolder): Promise<void>;
+}
+
+type AgentLeaseHolder =
+  | { kind: "solo"; runId: string }
+  | { kind: "group"; groupTaskId: string; planNodeId: string };
+```
+
+Rules:
+
+```text
+acquireAgent sets status busy inside one store.mutate() and throws 409 if held.
+The existing sendMessage() busy check becomes a call to acquireAgent.
+releaseAgent runs in a finally block on both paths.
+stopAgent on a group-held Agent returns 409 naming the group task.
+Cancelling a group task releases every lease it holds.
+initialize() clears stale leases on restart, alongside the existing run reset.
+```
+
+Person 2 calls `acquireAgent`/`releaseAgent` in `runPlanNode()`. Person 2 does
+not touch `CodexRunner.active` directly.
+
+## A4 - Sequential v1 With A Fixed 5-Node Chain: RESOLVED
+
+First, a contradiction that had to be settled before anyone codes.
+
+```text
+ARCHITECTURE.md section 9 : "Today that's a hardcoded sequential chain
+                             (backend -> frontend -> security); later it can
+                             be a dependency-graph (DAG) planner."
+
+GROUPCHAT.md              : branch-and-join DAG as the FIRST demo
+GROUP-RUNNER.md           : seven-node preseeded DAG, parallel-set validation
+```
+
+**Decision: ARCHITECTURE.md wins. v1 is a hardcoded sequential chain.**
+Branch-and-join is stretch scope, built only if the sequential demo ships first.
+
+### The v1 chain
+
+A fixed five-node template. Backend and Frontend each take two turns, so the
+demo still tells the plan-then-implement story:
+
+```text
+1  backend-contract   Backend    propose endpoint contract and storage flow
+2  frontend-plan      Frontend   plan UI/API integration from that contract
+3  security-review    Security   review auth, validation, secret boundaries
+4  backend-impl       Backend    implement backend changes under code/apps/server
+5  frontend-impl      Frontend   implement frontend changes under code/apps/web
+```
+
+Built as a degenerate DAG so the data model and the whole downstream pipeline
+are unchanged:
+
+```text
+node[0].dependsOn = []
+node[i].dependsOn = [node[i-1].id]
+node[4] is the single sink
+```
+
+`decideFlush()` in `FLUSH-TRIGGER.md` already handles this and needs no edit.
+TASK-BUFFER's topological sort over a chain is just the chain. Upgrading to a
+real DAG later is a **planner** change, not a pipeline change - which is exactly
+the claim ARCHITECTURE.md section 9 makes.
+
+### Membership contract - role-bound
+
+The template references **roles**, never Agent names or list order, so any three
+Agents can play the demo:
+
+```ts
+type GroupRole = "backend" | "frontend" | "security";
+
+interface GroupMemberInput {
+  agentId: string;
+  role: GroupRole;
+}
+
+interface CreateGroupInput {
+  name: string;
+  description?: string;
+  members: GroupMemberInput[];   // replaces memberAgentIds: string[]
+}
+```
+
+```ts
+const createGroupBody = z.object({
+  name: z.string().trim().min(1).max(80),
+  description: z.string().trim().max(500).optional(),
+  members: z.array(z.object({
+    agentId: z.string().uuid(),
+    role: z.enum(["backend", "frontend", "security"]),
+  })).length(3),
+});
+```
+
+Rules:
+
+```text
+Exactly three members, one per role, each Agent used once.
+Chain nodes bind to role, so node 1 and node 4 both resolve to the backend member.
+role feeds GroupParticipantState.role and the per-turn identity prompt.
+startGroupTask rejects a group missing a role with 409:
+  "This plan needs one backend, one frontend, and one security member."
+```
+
+Person 4's group modal: Agent toggles plus a role selector per selected Agent,
+submit blocked until all three roles are filled exactly once. Render the
+resulting chain above the composer so the order is never a surprise.
+
+### Interaction with A3
+
+An Agent taking two turns is safe under the A3 lease **without re-entrancy**,
+because the chain is sequential: node 1 acquires and releases the backend lease,
+then node 4 acquires it again later. There is never an overlap. Do not build a
+re-entrant lease.
+
+### Scope split
+
+```text
+V1 - BUILD NOW
+  the five-node chain above, executed by a plain for-loop
+  GroupRuntimeLock ROWS written per node (see below)
+  membershipEpoch / removedAt / fresh groupThreadId on re-add
+  context injection records with injectedMessageIds / withheldMessageIds
+  lastSeenSeq dedupe - it does real work here, since Backend runs twice
+
+STRETCH - only after the sequential demo runs end to end
+  branch and join nodes, join-owner selection rule
+  parallel-set validation (no Agent twice in a phase, no write-path overlap)
+  runtime-lock COLLISION VALIDATION
+  Promise.all over runnable node sets
+```
+
+Two notes on what was kept:
+
+```text
+Runtime locks: keep writing GroupRuntimeLock rows per node. A node declaring it
+held code/apps/server/** is legible evidence in the UI. Skip only the collision
+validation, which cannot fire while one node runs at a time.
+
+Context injections: keep the records and the lastSeenSeq logic. But in a chain,
+"withheld" means ALREADY SEEN, not DENIED BY POLICY. Label it that way in the UI
+and in the demo script. Calling dedupe "governance" would misrepresent the
+system on stage.
+```
+
+> Demo narrative note: the "branch context does not leak sibling output" beat
+> **does not exist in a sequential chain** - there are no siblings. Do not
+> promise it. The v1 governance story is the memory grant/denial pair (A5),
+> which is the actual contribution and does not depend on the DAG at all.
+
+## A5 - The Proof Beat: RESOLVED
+
+Problem: the demo's payoff is "memory landed, and a later run uses it", but a
+resumed Codex thread may not re-read a changed `AGENTS.md` (see `GROUPCHAT.md`
+and ARCHITECTURE.md section 10.2). No workstream owned this, so the demo had no
+verified closing beat.
+
+Decision: the proof run is a **fresh-thread solo run** against the target Agent.
+
+Person 1 adds one optional field to the existing solo message route:
+
+```ts
+const messageBody = z.object({
+  content: z.string().trim().min(1).max(50_000),
+  freshThread: z.boolean().default(false),
+});
+```
+
+`AgentService.sendMessage()` passes `threadId: null` when `freshThread` is true,
+so Codex starts a new thread and reads `AGENTS.md` plus `.agents/skills` from
+disk. Nothing else changes; `Agent.codexThreadId` is still updated from the
+result.
+
+Person 4 builds the beat as two clicks from the landed-memory view:
+
+```text
+positive: fresh-thread run on the TARGET Agent
+          prompt invokes the skill explicitly by $skill-name
+          Agent answers using the landed memory
+
+negative: same prompt, same moment, on a WITHHELD Agent
+          that workspace has no such file
+          Agent cannot answer, and the ledger says why it was withheld
+```
+
+Run both beats back to back. That pair is the whole contribution in fifteen
+seconds: a grant, a denial, and a named reason.
+
+---
+
+# Ownership Corrections
+
+The original split left real work unassigned and double-assigned one file.
+
+## Newly Assigned
+
+```text
+config.ts                     -> Person 1
+  MEMORY_EXTRACTOR, MEMORY_EXTRACT_TIMEOUT_MS, REVIEW_ALL_SKILLS
+  (referenced by the TDs, previously in nobody's file list)
+
+codex-runner.ts --add-dir     -> Person 2  (A2)
+agent lease seam              -> Person 1 defines, Person 2 calls  (A3)
+freshThread flag              -> Person 1  (A5)
+
+deleteAgent() cascade         -> Person 1
+  currently purges runs/spans/messages only; must also handle
+  groups, groupParticipants, notes, grants, landedMemoryFiles
+
+cancel a running group task   -> Person 1 route, Person 2 impl, Person 4 UI
+  CODEX_TIMEOUT_MS is 600s and the demo DAG has seven nodes
+
+restart recovery for groups   -> Person 1/2
+  initialize() resets stale runs and busy Agents but not
+  GroupTask.status=running, group.activeTaskId, or unreleased runtimeLocks
+```
+
+## Deconflicted
+
+```text
+workspace.ts    Person 2 OWNS the file (shared code + group-task sections).
+                Person 3 does NOT edit it. Memory file writes go in a new
+                apps/server/src/memory/workspace-memory.ts that Person 3 owns.
+                Both call the same replaceManagedBlock/removeManagedBlock
+                helpers, which Person 2 lands first.
+
+app.test.ts     Person 1 keeps app.test.ts for route validation.
+                Person 4 adds app.groups.test.ts for the group/memory flows.
+```
+
+## Corrections To Component TDs
+
+```text
+CONSOLIDATOR.md
+  Do not ask the extractor to echo UUIDs. z.string().uuid() on sourceSpanIds
+  will reject nearly every real response. Give the extractor short integer
+  indices into TaskBuffer.entries and map back to run/span IDs server-side.
+
+SAFETY.md
+  generic_api_key /\b[A-Za-z0-9_-]{32,}\b/g matches every UUID, including the
+  agent, run, and span IDs a note legitimately cites. env_assignment matches
+  ordinary prose like "MAX_SIZE = 10MB". As written, redactionFired trips on
+  almost every note and everything routes to review. Either narrow the patterns
+  or make this behaviour a deliberate, documented demo choice.
+
+API-ROUTES.md
+  Drop /timeline and /context-injections. GroupTaskResponse already carries
+  messages and contextInjections; three polling endpoints is drift waiting to
+  happen.
+
+FRONTEND-UI.md
+  api.ts request() takes a pre-stringified body. Every snippet in that TD passes
+  a raw object, which would POST "[object Object]". Fix request() to stringify
+  objects once, then the snippets are correct.
+
+LEDGER.md / FRONTEND-UI.md
+  Notes and grants carry only UUIDs. Resolve Agent and group names into the
+  response DTOs, or the ledger view is an unreadable wall of hex on stage.
+```
+
+---
+
+# Day-0 Checklist
+
+```text
+[ ] Renew ARK_API_KEY. The current .env key returns
+    401 "The API key doesn't exist". It is gitignored and untracked, so this is
+    an expiry, not a leak. Nothing can run end to end until it is replaced.
+
+[ ] Do one real codex exec run that writes a file. The database currently holds
+    one run and ZERO spans, so no one has yet exercised a Codex run that does
+    file work. Every span-consuming component (TASK-BUFFER, the trace UI) is so
+    far built against assumptions.
+
+[ ] Confirm the A1 skill result on your own machine:
+    codex app-server, initialize, then skills/list with a workspace cwd.
+
+[ ] Agree the frozen GroupTaskResponse DTO. It is Person 4's only hard
+    dependency and the most likely source of integration pain.
+
+[ ] Lower CODEX_TIMEOUT_MS for demo builds. Seven nodes at 600s is 70 minutes
+    of worst-case wall clock.
+```
