@@ -1,0 +1,198 @@
+import { access, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { JsonStore } from "../store.js";
+import type { Agent, GroupPlanNode, GroupTask, TraceSpan } from "../types.js";
+import { FakeExtractorClient, type ExtractorClient } from "./extractor-client.js";
+import { RealMemoryPipeline } from "./pipeline.js";
+
+const temporaryDirectories: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryDirectories.splice(0).map((directory) =>
+      rm(directory, { recursive: true, force: true }),
+    ),
+  );
+});
+
+const AGENT_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const AGENT_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const RUN_A = "11111111-1111-4111-8111-111111111111";
+const RUN_B = "33333333-3333-4333-8333-333333333333";
+const SPAN_A = "22222222-2222-4222-8222-222222222222";
+const SPAN_B = "44444444-4444-4444-8444-444444444444";
+
+async function seededStore() {
+  const root = await mkdtemp(path.join(tmpdir(), "launchpad-pipeline-test-"));
+  temporaryDirectories.push(root);
+  const agentA = agentAt(AGENT_A, path.join(root, "a"));
+  const agentB = agentAt(AGENT_B, path.join(root, "b"));
+  for (const agent of [agentA, agentB]) {
+    await mkdir(agent.workspacePath, { recursive: true });
+  }
+
+  const store = new JsonStore(path.join(root, "db.json"));
+  await store.initialize();
+  await store.mutate((db) => {
+    db.agents.push(agentA, agentB);
+    db.groups.push({
+      id: "group-1",
+      name: "Upload Team",
+      description: "",
+      memberAgentIds: [AGENT_A, AGENT_B],
+      activeTaskId: "task-1",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    db.groupTasks.push(task());
+    db.groupPlanNodes.push(
+      planNode("n1", AGENT_A, RUN_A),
+      planNode("n2", AGENT_B, RUN_B),
+    );
+    db.spans.push(
+      messageSpan(SPAN_A, RUN_A, AGENT_A),
+      messageSpan(SPAN_B, RUN_B, AGENT_B),
+    );
+  });
+  return { store, root };
+}
+
+function task(): GroupTask {
+  return {
+    id: "task-1",
+    groupId: "group-1",
+    prompt: "Build the upload feature.",
+    sharedCodePath: "/ws/shared/task-1",
+    status: "completed",
+    currentNodeId: null,
+    nodeRunIds: [],
+    flushedAt: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    startedAt: "2026-01-01T00:00:00.000Z",
+    completedAt: "2026-01-01T00:05:00.000Z",
+  };
+}
+
+function agentAt(id: string, workspacePath: string): Agent {
+  return {
+    id,
+    name: id === AGENT_A ? "Backend" : "Frontend",
+    description: "",
+    instructions: "",
+    status: "ready",
+    workspacePath,
+    codexThreadId: null,
+    lastError: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+}
+
+function planNode(id: string, agentId: string, runId: string): GroupPlanNode {
+  return {
+    id,
+    groupTaskId: "task-1",
+    agentId,
+    kind: "work",
+    nodeRole: agentId === AGENT_A ? "backend" : "frontend",
+    dependsOn: id === "n2" ? ["n1"] : [],
+    contextSnapshotSeq: 0,
+    allowedPlanNodeIds: [],
+    status: "completed",
+    runId,
+    output: "did the work",
+    error: null,
+    readOnly: false,
+    fileOwnershipHints: [],
+    runtimeLocks: [],
+    expectedOutput: "",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    startedAt: "2026-01-01T00:00:00.000Z",
+    completedAt: id === "n1" ? "2026-01-01T00:03:00.000Z" : "2026-01-01T00:05:00.000Z",
+  };
+}
+
+function messageSpan(id: string, runId: string, agentId: string): TraceSpan {
+  return {
+    id,
+    runId,
+    agentId,
+    seq: 1,
+    type: "agent_message",
+    parentId: null,
+    status: "completed",
+    startedAt: "2026-01-01T00:00:00.000Z",
+    completedAt: "2026-01-01T00:00:01.000Z",
+    durationMs: 1000,
+    payload: { kind: "agent_message", text: "the endpoint caps uploads at 10MB" },
+    itemId: null,
+  };
+}
+
+describe("RealMemoryPipeline", () => {
+  it("runs end to end: fake notes are created, a clean note lands, ledger records grants", async () => {
+    const { store } = await seededStore();
+    const pipeline = new RealMemoryPipeline(store, new FakeExtractorClient());
+
+    await pipeline.runMemoryPipeline("task-1", ["n2"]);
+
+    const db = store.snapshot();
+    // Fake emits one severe (parked pending) + one normal (auto-active).
+    expect(db.notes.length).toBeGreaterThanOrEqual(2);
+    expect(db.notes.some((n) => n.status === "active")).toBe(true);
+    expect(db.notes.some((n) => n.status === "pending")).toBe(true);
+
+    // At least one file landed, and the task was flushed.
+    const active = db.landedMemoryFiles.filter((f) => f.removedAt === null);
+    expect(active.length).toBeGreaterThanOrEqual(1);
+    expect(await exists(active[0]!.path)).toBe(true);
+    expect(db.grants.some((g) => g.decision === "granted")).toBe(true);
+    expect(db.grants.some((g) => g.decision === "withheld")).toBe(true);
+    expect(db.groupTasks[0]!.flushedAt).not.toBeNull();
+  });
+
+  it("never throws or fails the task when the extractor blows up", async () => {
+    const { store } = await seededStore();
+    const throwing: ExtractorClient = {
+      async extract() {
+        throw new Error("boom");
+      },
+    };
+    const errors: string[] = [];
+    const pipeline = new RealMemoryPipeline(store, throwing, {
+      onError: (message) => errors.push(message),
+    });
+
+    await expect(
+      pipeline.runMemoryPipeline("task-1", ["n2"]),
+    ).resolves.toBeUndefined();
+
+    // Consolidator swallows the extractor error itself, so zero notes and no
+    // pipeline-level error — the task is untouched, never failed.
+    expect(store.snapshot().notes).toHaveLength(0);
+    expect(store.snapshot().groupTasks[0]!.status).toBe("completed");
+  });
+
+  it("logs and swallows when the task cannot be found", async () => {
+    const { store } = await seededStore();
+    const errors: string[] = [];
+    const pipeline = new RealMemoryPipeline(store, new FakeExtractorClient(), {
+      onError: (message) => errors.push(message),
+    });
+
+    await pipeline.runMemoryPipeline("does-not-exist", []);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("does-not-exist");
+  });
+});
+
+async function exists(target: string): Promise<boolean> {
+  try {
+    await access(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
