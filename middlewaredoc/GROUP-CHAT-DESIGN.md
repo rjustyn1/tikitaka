@@ -4,7 +4,7 @@
 >
 > This is the full design, including the branch-and-join DAG. **V1 is a
 > hardcoded five-node SEQUENTIAL chain** (see A4 in
-> `IMPLEMENTATION_DIRECTION.md`). Treat as **STRETCH**, and do not build yet:
+> `DECISIONS.md`). Treat as **STRETCH**, and do not build yet:
 >
 > ```text
 > branch nodes, join nodes, join-owner selection

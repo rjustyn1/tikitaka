@@ -7,7 +7,7 @@
 ## Purpose
 
 > ⚠️ **V1 IS A SEQUENTIAL CHAIN, NOT A DAG.** See A4 in
-> `../IMPLEMENTATION_DIRECTION.md`. Everything in this document describing parallel
+> `../DECISIONS.md`. Everything in this document describing parallel
 > phases, branch nodes, join nodes, join-owner selection, or parallel-set
 > validation is **STRETCH scope** - build it only after the sequential demo runs
 > end to end. The v1 chain, the runner call, and the failure behaviour below are
