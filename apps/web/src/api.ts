@@ -134,6 +134,13 @@ export const api = {
     request<GroupTaskResponse>(
       "/api/groups/" + groupId + "/tasks/" + taskId,
     ),
+  // The route exists (SPEC Part 2) but had no client method. Needed for QA and
+  // the demo: the v1 chain is five nodes at up to CODEX_TIMEOUT_MS each.
+  cancelGroupTask: (groupId: string, taskId: string) =>
+    request<{ task: GroupTask }>(
+      "/api/groups/" + groupId + "/tasks/" + taskId + "/cancel",
+      { method: "POST" },
+    ),
   notes: (params?: { agentId?: string; status?: MemoryStatus }) => {
     const qs = new URLSearchParams();
     if (params?.agentId) qs.set("agentId", params.agentId);
