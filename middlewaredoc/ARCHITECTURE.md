@@ -4,7 +4,7 @@
 > It does not carry the buildable spec (consolidator schema, validation ladder,
 > exact field lists) — that is deferred to a later `SPEC.md`, and several items
 > are still open (see §11). Where this file disagrees with anything in
-> [`../outdated/`](../outdated/), this file wins.
+> [`./archive/`](./archive/), this file wins.
 
 ---
 

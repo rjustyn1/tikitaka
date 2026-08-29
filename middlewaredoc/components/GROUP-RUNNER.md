@@ -7,14 +7,14 @@
 ## Purpose
 
 > ⚠️ **V1 IS A SEQUENTIAL CHAIN, NOT A DAG.** See A4 in
-> `IMPLEMENTATION_DIRECTION.md`. Everything in this document describing parallel
+> `../IMPLEMENTATION_DIRECTION.md`. Everything in this document describing parallel
 > phases, branch nodes, join nodes, join-owner selection, or parallel-set
 > validation is **STRETCH scope** - build it only after the sequential demo runs
 > end to end. The v1 chain, the runner call, and the failure behaviour below are
 > current and correct.
 
 Execute a group task across selected Agents using the branch-and-join DAG from
-`GROUPCHAT.md`.
+`../GROUP-CHAT-DESIGN.md`.
 
 The group runner owns task execution, context packets, node status, run IDs, and
 group timeline messages. It does not extract or land memory directly.

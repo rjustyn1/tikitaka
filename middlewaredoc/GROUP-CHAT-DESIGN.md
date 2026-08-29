@@ -629,7 +629,7 @@ workspaces/
 Codex still runs with cwd set to the Agent's private root. The Agent edits the
 shared project under `./code`.
 
-This is the chosen model because it matches `latestdoc/`: memory security stays
+This is the chosen model because it matches `ARCHITECTURE.md`: memory security stays
 based on file placement into each Agent's private workspace, while the group
 still collaborates on one code artifact.
 

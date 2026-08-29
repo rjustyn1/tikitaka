@@ -16,7 +16,7 @@ four-person team.
 The implementation should follow the component TDs in this folder, especially:
 
 - `TYPES-AND-STORE.md`
-- `GROUPCHAT.md`
+- `GROUP-CHAT-DESIGN.md`
 - `GROUP-RUNNER.md`
 - `WORKSPACE-EXTENSIONS.md`
 - `TASK-BUFFER.md`
@@ -54,8 +54,8 @@ apps/server/src/store.ts
 apps/server/src/app.ts
 apps/web/src/types.ts
 apps/web/src/api.ts
-technical-dev-docs/TYPES-AND-STORE.md
-technical-dev-docs/API-ROUTES.md
+TYPES-AND-STORE.md
+API-ROUTES.md
 ```
 
 ### Build Scope
@@ -152,10 +152,10 @@ apps/server/src/memory/group-runner.ts
 apps/server/src/memory/flush-trigger.ts
 apps/server/src/workspace.ts
 apps/server/src/agent-service.ts
-technical-dev-docs/GROUPCHAT.md
-technical-dev-docs/GROUP-RUNNER.md
-technical-dev-docs/FLUSH-TRIGGER.md
-technical-dev-docs/WORKSPACE-EXTENSIONS.md
+GROUP-CHAT-DESIGN.md
+components/GROUP-RUNNER.md
+components/FLUSH-TRIGGER.md
+components/WORKSPACE-EXTENSIONS.md
 ```
 
 ### Build Scope
@@ -260,13 +260,13 @@ apps/server/src/memory/landing.ts
 apps/server/src/memory/review.ts
 apps/server/src/memory/ledger.ts
 apps/server/src/memory/workspace-memory.ts   # NOT workspace.ts (Person 2 owns that)
-technical-dev-docs/TASK-BUFFER.md
-technical-dev-docs/EXTRACTOR-CLIENT.md
-technical-dev-docs/CONSOLIDATOR.md
-technical-dev-docs/SAFETY.md
-technical-dev-docs/LANDING.md
-technical-dev-docs/REVIEW.md
-technical-dev-docs/LEDGER.md
+components/TASK-BUFFER.md
+components/EXTRACTOR-CLIENT.md
+components/CONSOLIDATOR.md
+components/SAFETY.md
+components/LANDING.md
+components/REVIEW.md
+components/LEDGER.md
 ```
 
 ### Build Scope
@@ -375,9 +375,9 @@ apps/web/src/types.ts
 apps/web/src/styles.css
 apps/web/src/mock.ts
 apps/server/src/app.groups.test.ts   # app.test.ts belongs to Person 1
-technical-dev-docs/FRONTEND-UI.md
-technical-dev-docs/API-ROUTES.md
-technical-dev-docs/BUILD-SEQUENCE.md
+components/FRONTEND-UI.md
+API-ROUTES.md
+BUILD-SEQUENCE.md
 ```
 
 ### Build Scope
@@ -1303,7 +1303,7 @@ ARCHITECTURE.md section 9 : "Today that's a hardcoded sequential chain
                              (backend -> frontend -> security); later it can
                              be a dependency-graph (DAG) planner."
 
-GROUPCHAT.md              : branch-and-join DAG as the FIRST demo
+GROUP-CHAT-DESIGN.md      : branch-and-join DAG as the FIRST demo
 GROUP-RUNNER.md           : seven-node preseeded DAG, parallel-set validation
 ```
 
@@ -1427,7 +1427,7 @@ system on stage.
 ## A5 - The Proof Beat: RESOLVED
 
 Problem: the demo's payoff is "memory landed, and a later run uses it", but a
-resumed Codex thread may not re-read a changed `AGENTS.md` (see `GROUPCHAT.md`
+resumed Codex thread may not re-read a changed `AGENTS.md` (see `GROUP-CHAT-DESIGN.md`
 and ARCHITECTURE.md section 10.2). No workstream owned this, so the demo had no
 verified closing beat.
 
