@@ -18,7 +18,8 @@
     "check": "npm run typecheck && npm run test && npm run build",
     "poc": "./scripts/start-local-poc.sh",
     "start": "npm run start -w @launchpad/server",
-    "seed": "npm run build && node scripts/seed-demo.mjs"
+    "seed": "npm run build && node scripts/seed-demo.mjs",
+    "verify:live": "npm run build && node scripts/verify-live.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.1",

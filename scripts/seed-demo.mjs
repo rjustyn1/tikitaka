@@ -19,7 +19,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
@@ -205,6 +205,43 @@ async function main() {
   const taskId = randomUUID();
   const sharedCodePath = path.join(config.workspaceRoot, "shared-code", taskId);
   await mkdir(sharedCodePath, { recursive: true });
+
+  // A completed task that wrote no code would be incoherent, and the Plan tab
+  // claims file ownership per node. Expose ./code the way the runner does and
+  // leave behind what the chain says it produced.
+  for (const key of ["backend", "frontend", "security"]) {
+    await workspaces.prepareSharedCode(byKey[key], sharedCodePath);
+  }
+  await mkdir(path.join(sharedCodePath, "apps/server/src/routes"), { recursive: true });
+  await mkdir(path.join(sharedCodePath, "apps/web/src"), { recursive: true });
+  await writeFile(
+    path.join(sharedCodePath, "apps/server/src/routes/uploads.ts"),
+    [
+      "// Written by Backend Agent during backend-impl.",
+      "export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;",
+      "",
+      "export function rejectOversize(size: number) {",
+      "  if (size > MAX_UPLOAD_BYTES) {",
+      "    return { status: 413, body: { error: \"That file is larger than 10MB.\" } };",
+      "  }",
+      "  return null;",
+      "}",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  await writeFile(
+    path.join(sharedCodePath, "apps/web/src/UploadWidget.tsx"),
+    [
+      "// Written by Frontend Agent during frontend-impl.",
+      "// Consumes fileId and url only. Storage credentials never reach here.",
+      "export function UploadWidget() {",
+      "  return null;",
+      "}",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
 
   const nodes = [];
   const runs = [];
