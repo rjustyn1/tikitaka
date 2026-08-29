@@ -105,6 +105,59 @@ confirmed to fail on the old code.
 
 ---
 
+### M6 — Live QA and diagnostics
+
+- [x] The full governance loop exercised against a **running server**, not a
+      unit test: `POST /notes/:id/review {approve}` moved a severe note
+      `pending → active` and wrote a real `<!-- memory:… -->` block into BOTH
+      target workspaces; `POST /notes/:id/revoke` removed it from disk; the
+      ledger kept every record (`granted 4, withheld 9, revoked 2`)
+- [x] Non-targets stayed empty throughout — Security 0 files, Ops 0 files
+- [x] `scripts/verify-live.mjs` (`npm run verify:live`), a read-only diagnostic
+      for a real task
+
+**Why the diagnostic exists:** three of the four things a live run should prove
+fail *silently*. A node reports `completed` while the Agent never wrote to
+shared code; an empty Review tab looks identical whether the consolidator
+rejected every note or never received a span. Without this the likely outcome is
+concluding the memory pipeline is broken when the cause is a span-shape
+mismatch.
+
+It runs the **real** `shouldIncludeSpan` imported from `task-buffer.ts`, so the
+diagnosis cannot drift from the pipeline. Verified by **fault injection**, not by
+inspection — four faults were injected into a healthy store and each produced the
+correct diagnosis:
+
+```text
+reasoning spans without terminal:true  names the filter, the counts (0/10),
+                                       and the file to fix
+no spans at all                        "the runner never called onSpan"
+empty shared-code                      "A2 is unproven", plus whether the
+                                       ./code link exists at all
+a skill under CODEX_HOME               "that path is GLOBAL to every Agent"
+```
+
+### M7 — Three bugs the tooling found in itself
+
+Each was found by pointing a tool at real state rather than a scratch directory,
+and each would have surfaced on demo morning.
+
+- [x] **The seed described work it never did.** It claimed five nodes that wrote
+      code while `shared-code/` stayed empty and no `./code` link existed. It now
+      calls the real `prepareSharedCode` and leaves the artefacts the chain says
+      it produced. Found by `verify-live`.
+- [x] **The seed wrote to the wrong store.** `loadConfig` only reads
+      `APP_DATA_DIR`; `LOCAL_POC_DATA_ROOT` is a `start-local-poc.sh` concept. So
+      the command both this file and `DEMO.md` recommend wrote to the repo's
+      `.data/` while the poc served `~/.volc-agent-launchpad`, and the app showed
+      an empty Teams screen with no error.
+- [x] **Reseeding threw 409.** Each reseed mints a new taskId and
+      `prepareSharedCode` rightly refuses to repoint a live `./code` link. The
+      guard is correct; the seed now calls `releaseSharedCode` first. Only
+      visible once the previous bug was fixed.
+
+---
+
 ## Verified vs. not verified
 
 Ticking a box means something asserts it. What is not verified says so.
@@ -117,7 +170,8 @@ Ticking a box means something asserts it. What is not verified says so.
 | Real Codex **discovers** a seeded skill in the granted workspace and nothing in the withheld one | **verified** against `@openai/codex@0.111.0` via `skills/list` |
 | Nothing lands under `$CODEX_HOME` or `shared-code/` | **verified** |
 | Production returns 400, not 500, for an invalid body | **verified**, and the regression test fails on the old code |
-| The Teams UI renders correctly **in a browser** | **NOT verified.** The tests assert behaviour and text, not layout. Nobody has looked at it yet |
+| Approve writes real files; revoke removes them; the ledger stays append-only | **verified** against a running server |
+| The Teams UI renders correctly **in a browser** | **verified by eye** — the surface was opened and read. Layout is not asserted by any test |
 | The five-node chain against **real Codex** | **NOT verified.** Needs `npm run poc` |
 | Shared `./code` writable from a **real** `codex exec` | **NOT verified.** Still open from Person 2's list |
 | Real Codex spans satisfy the consolidator's validation | **NOT verified.** The fix made the *fake* runner emit spans; the real stream is unexamined |

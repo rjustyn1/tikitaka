@@ -47,6 +47,65 @@ looking for directories that do not exist on a Mac.
 
 ---
 
+## Tomorrow, in order
+
+The poc store is already seeded, so the app has data the moment it boots.
+
+```bash
+# 1. start it  (image is built; Landlock falls back to danger-full-access -- expected)
+export $(grep -E '^ARK_(API_KEY|MODEL|BASE_URL)=' .env | xargs)
+npm run poc                       # -> http://localhost:3000
+
+# 2. look at it.  Teams -> Upload Feature Team.  Every tab has data.
+
+# 3. run ONE real task through the UI, then diagnose it
+LOCAL_POC_DATA_ROOT=$HOME/.volc-agent-launchpad npm run verify:live
+```
+
+Export only those three variables. `.env` also carries container paths
+(`/app/data`, `/app/workspaces`, `/app/codex-home`) that would send the poc
+looking for directories that do not exist on the host.
+
+### What a healthy real run looks like
+
+```text
+✓ chain           5/5 nodes completed
+✓ shared code     N file(s) under <taskId>
+✓ spans → notes   N note(s) from N/N usable spans
+✓ ledger          N decisions (N withheld)
+✓ landed files    N file(s) present on disk
+✓ isolation       no governed memory under CODEX_HOME or shared-code
+? skill fires     not checkable from here — run the Proof tab
+```
+
+### The four things only a real run can settle
+
+Three of them fail **silently**, which is why `verify:live` exists.
+
+| # | Claim | If it fails |
+|---|---|---|
+| 1 | The five-node chain runs against real Codex | Obvious — red in the Plan tab |
+| 2 | Shared `./code` is writable from a real `codex exec` | **Silent.** The node still says `completed`; only `shared-code/` is empty |
+| 3 | Real Codex spans satisfy the consolidator | **Silent.** Review is just empty, exactly as if the feature were broken |
+| 4 | `codex exec` *fires* a landed skill | **Silent.** The Agent answers without the constraint and you blame the prompt |
+
+**#3 is the one to watch.** `shouldIncludeSpan` keeps only `agent_message`,
+`file_write`, `error`, **terminal** `reasoning`, and **failed** `command_exec`.
+If real Codex emits reasoning spans without `terminal: true`, everything is
+filtered out, the buffer has no spans, and you get zero notes with no error
+anywhere. `verify:live` names exactly this case, with the counts and the file to
+edit.
+
+**#4 is the only claim nothing can check for you.** Codex emits no
+skill-invocation event. Run the Proof tab and read the answer.
+
+### If the real run disappoints
+
+Fall back to the seeded task — `npm run seed` — and present that. Every
+governance beat below works on it. Say it was seeded if asked.
+
+---
+
 ## Cast and setup
 
 **Backend**, **Frontend** and **Security** in a team called `Upload Feature
