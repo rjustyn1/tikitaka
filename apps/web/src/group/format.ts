@@ -120,6 +120,10 @@ export function grantTone(
  */
 export function withheldReason(reason: string): string {
   switch (reason) {
+    case "granted":
+      // The ledger stores "granted" as the reason on a grant row. Echoing it
+      // into the Reason column reads as "granted / granted".
+      return "routed to this Agent by the note";
     case "out_of_group":
       return "not a member of this group";
     case "not_targeted":

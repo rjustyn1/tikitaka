@@ -227,3 +227,11 @@ describe("LandedMemoryPanel", () => {
     expect(screen.queryByText(/upload-contract/)).not.toBeInTheDocument();
   });
 });
+
+describe("ledger reason wording", () => {
+  it("does not echo the decision back as its own reason", async () => {
+    const { withheldReason } = await import("./format");
+    expect(withheldReason("granted")).not.toBe("granted");
+    expect(withheldReason("granted")).toContain("routed");
+  });
+});
