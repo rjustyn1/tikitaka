@@ -10,6 +10,7 @@
  * typechecked by `npm run typecheck`.
  */
 
+import { randomUUID } from "node:crypto";
 import { RunCancelledError } from "./errors.js";
 import type { AgentRunner, RunnerRequest, RunnerResult } from "./types.js";
 import type { MemoryPipeline } from "./memory/pipeline.js";
@@ -85,9 +86,50 @@ export class FakeRunner implements AgentRunner {
       throw new Error(failure);
     }
 
+    const output =
+      this.options.outputFor?.(groupRequest) ?? "Completed: " + request.prompt;
+
+    // Emit spans the way the real runner does. Without these the trace UI has
+    // nothing to show and, more importantly, the consolidator cannot cite
+    // sourceSpanIds -- so the memory pipeline silently yields zero notes.
+    // Mirrors what parseCodexEventLine produces for a simple turn.
+    const startedAt = new Date().toISOString();
+    request.onSpan?.({
+      id: randomUUID(),
+      runId: request.runId,
+      agentId: request.agentId,
+      seq: 1,
+      type: "reasoning",
+      parentId: null,
+      status: "completed",
+      startedAt,
+      completedAt: startedAt,
+      durationMs: 1,
+      payload: {
+        kind: "reasoning",
+        text: "Considering: " + request.prompt.slice(0, 120),
+        truncated: false,
+        terminal: true,
+      },
+      itemId: null,
+    });
+    request.onSpan?.({
+      id: randomUUID(),
+      runId: request.runId,
+      agentId: request.agentId,
+      seq: 2,
+      type: "agent_message",
+      parentId: null,
+      status: "completed",
+      startedAt,
+      completedAt: new Date().toISOString(),
+      durationMs: 1,
+      payload: { kind: "agent_message", text: output },
+      itemId: null,
+    });
+
     return {
-      output:
-        this.options.outputFor?.(groupRequest) ?? "Completed: " + request.prompt,
+      output,
       threadId:
         this.options.threadIdFor?.(groupRequest) ??
         request.threadId ??
