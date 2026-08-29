@@ -138,3 +138,53 @@ describe("Codex runner protocol", () => {
   // then commit the output from .data/raw-events/ as apps/server/src/fixtures/codex-events.jsonl
   // to ground all parser tests in a real event stream.
 });
+
+describe("A2 - shared group code (local-process)", () => {
+  const base = {
+    agentId: "agent",
+    runId: "run",
+    workspacePath: "/tmp/workspace",
+    prompt: "implement the upload endpoint",
+    threadId: null,
+  };
+
+  it("grants the shared code directory with --add-dir, after -C", () => {
+    const args = buildCodexArgs(
+      { ...base, sharedCodePath: "/tmp/workspaces/shared-code/task-1" },
+      "workspace-write",
+    );
+    expect(args).toEqual([
+      "exec",
+      "--json",
+      "--sandbox",
+      "workspace-write",
+      "--skip-git-repo-check",
+      "-C",
+      "/tmp/workspace",
+      "--add-dir",
+      "/tmp/workspaces/shared-code/task-1",
+      "implement the upload endpoint",
+    ]);
+  });
+
+  it("keeps --add-dir ahead of resume so it is parsed as an exec flag", () => {
+    const args = buildCodexArgs(
+      {
+        ...base,
+        threadId: "thread-123",
+        sharedCodePath: "/tmp/shared",
+      },
+      "workspace-write",
+    );
+    expect(args.indexOf("--add-dir")).toBeLessThan(args.indexOf("resume"));
+    expect(args.slice(-3)).toEqual([
+      "resume",
+      "thread-123",
+      "implement the upload endpoint",
+    ]);
+  });
+
+  it("leaves a solo run byte-identical to before", () => {
+    expect(buildCodexArgs(base, "workspace-write")).not.toContain("--add-dir");
+  });
+});

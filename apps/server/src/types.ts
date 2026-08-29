@@ -351,7 +351,7 @@ export interface RunnerRequest {
   workspacePath: string;
   prompt: string;
   threadId: string | null;
-  sharedCodePath?: string;
+  sharedCodePath?: string | undefined;
   onSpan?: (span: TraceSpan) => void;
   onThreadId?: (id: string) => void;
 }

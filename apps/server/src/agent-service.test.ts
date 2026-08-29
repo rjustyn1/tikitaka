@@ -187,11 +187,14 @@ describe("Agent lifecycle", () => {
     await service.acquireAgent(agent.id, holder);
     await expect(service.sendMessage(agent.id, "solo")).rejects.toMatchObject({
       statusCode: 409,
-      message: "Agent is held by group task " + holder.groupTaskId,
+      message: "This Agent is running group task " + holder.groupTaskId,
     });
     await expect(service.stopAgent(agent.id)).rejects.toMatchObject({
       statusCode: 409,
-      message: "Agent is held by group task " + holder.groupTaskId,
+      message:
+        "This Agent is running group task " +
+        holder.groupTaskId +
+        ". Cancel the group task first.",
     });
 
     await service.releaseAgent(agent.id, holder);

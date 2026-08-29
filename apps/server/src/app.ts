@@ -64,6 +64,7 @@ const groupMembersBody = z
 const createGroupBody = z.object({
   name: z.string().trim().min(1).max(80),
   description: z.string().trim().max(500).optional(),
+  // A4 - exactly three members, one per role. Replaces memberAgentIds.
   members: groupMembersBody,
 });
 
@@ -268,10 +269,9 @@ export async function createApp(
   });
 
   app.post("/api/groups/:id/tasks/:taskId/cancel", async (request, reply) => {
-    const { id, taskId } = groupTaskParams.parse(request.params);
-    return reply
-      .code(202)
-      .send({ task: await service.cancelGroupTask(id, taskId) });
+    const { taskId } = groupTaskParams.parse(request.params);
+    const task = await service.cancelGroupTask(taskId);
+    return reply.code(202).send({ task });
   });
 
   app.get("/api/groups/:id/tasks/:taskId/timeline", async (request) => {
