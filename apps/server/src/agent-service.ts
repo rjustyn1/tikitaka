@@ -5,13 +5,24 @@ import { HttpError, RunCancelledError } from "./errors.js";
 import { JsonStore } from "./store.js";
 import type {
   Agent,
+  AgentGroup,
   AgentRun,
   AgentRunner,
   CreateAgentInput,
+  CreateGroupInput,
+  GrantRecord,
+  GroupTask,
+  GroupTaskResponse,
+  LandedMemoryFile,
+  ListNotesQuery,
   Message,
+  MemoryNote,
+  ReviewNoteInput,
+  RevokeNoteInput,
   RunTraceSummary,
   TraceSpan,
   UpdateAgentInput,
+  UpdateGroupInput,
 } from "./types.js";
 import { WorkspaceManager } from "./workspace.js";
 
@@ -392,5 +403,102 @@ export class AgentService {
     } finally {
       this.cancellationRequests.delete(agentId);
     }
+  }
+
+  // --------------------------------------------------------------------------
+  // Group + governed-memory stubs (Person 1 contract layer).
+  //
+  // These satisfy the API-ROUTES contract and unblock frontend/pipeline work.
+  // Read methods are backed by the store and return live data as soon as it is
+  // populated. Mutating methods throw 501 until:
+  //   - Person 2's GroupRunner lands createGroup/updateGroup/startGroupTask
+  //   - Person 3's memory services land reviewNote/revokeNote
+  // Person 2/3: replace the bodies below by delegating to your services.
+  // --------------------------------------------------------------------------
+
+  listGroups(): AgentGroup[] {
+    return this.store
+      .snapshot()
+      .groups.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  }
+
+  getGroup(id: string): AgentGroup {
+    const group = this.store.snapshot().groups.find((item) => item.id === id);
+    if (!group) {
+      throw new HttpError(404, "Group not found");
+    }
+    return group;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async createGroup(_input: CreateGroupInput): Promise<AgentGroup> {
+    throw new HttpError(501, "Group creation is not implemented yet");
+  }
+
+  async updateGroup(
+    _id: string,
+    _input: UpdateGroupInput,
+  ): Promise<AgentGroup> {
+    throw new HttpError(501, "Group update is not implemented yet");
+  }
+
+  async startGroupTask(_groupId: string, _prompt: string): Promise<GroupTask> {
+    throw new HttpError(501, "Group task execution is not implemented yet");
+  }
+
+  getGroupTask(taskId: string): GroupTaskResponse {
+    const database = this.store.snapshot();
+    const task = database.groupTasks.find((item) => item.id === taskId);
+    if (!task) {
+      throw new HttpError(404, "Group task not found");
+    }
+    return {
+      task,
+      nodes: database.groupPlanNodes
+        .filter((node) => node.groupTaskId === taskId)
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
+      messages: database.groupMessages
+        .filter((message) => message.groupTaskId === taskId)
+        .sort((left, right) => left.seq - right.seq),
+      contextInjections: database.contextInjections.filter(
+        (injection) => injection.groupTaskId === taskId,
+      ),
+    };
+  }
+
+  listNotes(query: ListNotesQuery): MemoryNote[] {
+    let notes = this.store.snapshot().notes;
+    if (query.agentId) {
+      notes = notes.filter((note) => note.targetAgentIds.includes(query.agentId!));
+    }
+    if (query.status) {
+      notes = notes.filter((note) => note.status === query.status);
+    }
+    return notes.sort((left, right) =>
+      right.createdAt.localeCompare(left.createdAt),
+    );
+  }
+
+  async reviewNote(_id: string, _input: ReviewNoteInput): Promise<MemoryNote> {
+    throw new HttpError(501, "Note review is not implemented yet");
+  }
+
+  async revokeNote(_id: string, _input: RevokeNoteInput): Promise<MemoryNote> {
+    throw new HttpError(501, "Note revocation is not implemented yet");
+  }
+
+  listAgentMemory(agentId: string): LandedMemoryFile[] {
+    return this.store
+      .snapshot()
+      .landedMemoryFiles.filter(
+        (file) => file.agentId === agentId && file.removedAt === null,
+      );
+  }
+
+  listTaskGrants(taskId: string): GrantRecord[] {
+    return this.store
+      .snapshot()
+      .grants.filter((grant) => grant.groupTaskId === taskId)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   }
 }

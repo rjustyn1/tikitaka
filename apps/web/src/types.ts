@@ -89,3 +89,162 @@ export interface SystemInfo {
   containerEngine: string | null;
   runtime: string;
 }
+
+// ---------------------------------------------------------------------------
+// Group chat + governed-memory response DTOs (mirror apps/server/src/types.ts)
+// ---------------------------------------------------------------------------
+
+export type GroupTaskStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "partial"
+  | "cancelled"
+  | "failed";
+
+export type GroupPlanNodeKind = "work" | "join";
+export type MemorySeverity = "normal" | "severe";
+export type MemoryStatus =
+  | "candidate"
+  | "pending"
+  | "quarantined"
+  | "active"
+  | "rejected"
+  | "revoked";
+
+export interface AgentGroup {
+  id: string;
+  name: string;
+  description: string;
+  memberAgentIds: string[];
+  activeTaskId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GroupTask {
+  id: string;
+  groupId: string;
+  prompt: string;
+  sharedCodePath: string;
+  status: GroupTaskStatus;
+  currentNodeId: string | null;
+  nodeRunIds: string[];
+  flushedAt: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+export interface GroupMessage {
+  id: string;
+  groupId: string;
+  seq: number;
+  speakerType: "human" | "agent";
+  speakerAgentId: string | null;
+  groupTaskId: string | null;
+  planNodeId: string | null;
+  content: string;
+  createdAt: string;
+}
+
+export interface GroupPlanNode {
+  id: string;
+  groupTaskId: string;
+  agentId: string;
+  kind: GroupPlanNodeKind;
+  nodeRole: string;
+  dependsOn: string[];
+  contextSnapshotSeq: number;
+  allowedPlanNodeIds: string[];
+  status: GroupTaskStatus;
+  runId: string | null;
+  output: string | null;
+  error: string | null;
+  readOnly: boolean;
+  fileOwnershipHints: string[];
+  runtimeLocks: string[];
+  expectedOutput: string;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+export interface GroupContextInjection {
+  id: string;
+  groupTaskId: string;
+  planNodeId: string;
+  agentId: string;
+  fromSeqExclusive: number;
+  toSeqInclusive: number;
+  injectedMessageIds: string[];
+  injectedDependencyNodeIds: string[];
+  withheldMessageIds: string[];
+  createdAt: string;
+}
+
+export interface GroupTaskResponse {
+  task: GroupTask;
+  nodes: GroupPlanNode[];
+  messages: GroupMessage[];
+  contextInjections: GroupContextInjection[];
+}
+
+export interface MemoryNote {
+  id: string;
+  groupTaskId: string;
+  groupId: string;
+  content: string;
+  severity: MemorySeverity;
+  status: MemoryStatus;
+  targetAgentIds: string[];
+  description: string;
+  sourceRunIds: string[];
+  sourceSpanIds: string[];
+  rationale: string;
+  redactionFired: boolean;
+  quarantineHit: boolean;
+  safetyReasons: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LandedMemoryFile {
+  id: string;
+  noteId: string;
+  agentId: string;
+  kind: "agents_md" | "skill";
+  path: string;
+  createdAt: string;
+  removedAt: string | null;
+}
+
+export interface GrantRecord {
+  id: string;
+  groupTaskId: string;
+  noteId: string;
+  agentId: string;
+  decision: "granted" | "withheld" | "rejected" | "revoked";
+  reason: string;
+  filePath: string | null;
+  reviewerName: string | null;
+  createdAt: string;
+}
+
+export type ReviewNoteInput =
+  | { type: "approve"; reviewerName: string }
+  | {
+      type: "edit";
+      reviewerName: string;
+      content?: string;
+      severity?: MemorySeverity;
+      targetAgentIds?: string[];
+      description?: string;
+      approveAfterEdit?: boolean;
+    }
+  | { type: "reject"; reviewerName: string; reason: string };
+
+export interface RevokeNoteInput {
+  reviewerName: string;
+  reason: string;
+}
