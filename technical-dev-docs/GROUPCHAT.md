@@ -1,8 +1,9 @@
 # Group Chat Mechanism
 
 > Locked rough design.
-> This document keeps one direction only: app-owned group chat, shared group
-> workspace, separate Codex group threads per Agent, and a branch-and-join DAG.
+> This document keeps one direction only: app-owned group chat, private Agent
+> roots, shared group code, separate Codex group threads per Agent, and a
+> branch-and-join DAG.
 
 ---
 
@@ -10,7 +11,7 @@
 
 Allow a user to create a group containing selected Agents, send one prompt-like
 task to that group, and see the Agents collaborate in a shared chat while
-working inside one shared project workspace.
+working on one shared code artifact.
 
 Example:
 
@@ -44,15 +45,16 @@ which Agents join the group.
 
 ## Core Decision
 
-Use an app-level shared group chat, one shared group workspace, and separate
-Codex execution contexts per Agent.
+Use an app-level shared group chat, private Agent workspace roots, one shared
+group code directory, and separate Codex execution contexts per Agent.
 
 ```text
 App database:
   one shared group chat timeline
 
-Workspace:
-  one shared group workspace for the group task
+Workspaces:
+  each Agent keeps a private root for AGENTS.md, skills, and memory
+  the group task creates one shared code directory mounted or linked as ./code
 
 Codex:
   Agent A has its own group thread
@@ -66,7 +68,8 @@ whole conversation. A Backend Agent, Frontend Agent, and Security Agent should
 not all become roleplay inside one Backend-flavored thread.
 
 The group chat is shared because our app stores and replays the transcript. The
-workspace is shared because the Agents are building the same artifact. The
+code is shared because the Agents are building the same artifact. Agent memory
+stays private because each Agent still runs from its own workspace root. The
 Codex thread is not shared.
 
 The orchestration model is a branch-and-join DAG. For demo feasibility, the
@@ -78,7 +81,7 @@ sync.
 
 ## Mental Model
 
-There are two layers:
+There are four layers:
 
 ```text
 Shared group chat history
@@ -87,13 +90,26 @@ Shared group chat history
   - labelled by speaker
   - used to build each Agent's turn prompt
 
+Shared group code directory
+  - the actual project files for this group task
+  - edited through ./code from each selected Agent's private root
+  - contains code only, not governed memory files
+
+Private Agent workspace root
+  - contains that Agent's AGENTS.md
+  - contains that Agent's .agents/skills
+  - is the Codex cwd for that Agent's runs
+  - is the memory placement boundary
+
 Private Agent execution history
   - stored by Codex
   - resumed through that Agent's thread ID
   - not shared directly with other Agents
 ```
 
-So the group chat is real, but the sharedness is controlled by the app.
+So the collaboration is real, but the sharedness is deliberate: chat is shared
+by the app, code is shared through `./code`, and memory remains private by file
+placement.
 
 ---
 
@@ -120,7 +136,8 @@ The correct model is:
 
 ```text
 Group chat timeline is shared by the app.
-Group workspace is shared by the Agents.
+Group code directory is shared by the Agents.
+Agent workspace roots stay private.
 Codex threads stay separate per Agent.
 The app decides what each Agent sees each turn.
 ```
@@ -423,7 +440,7 @@ DAG.
 The first demo uses a preseeded/template-generated DAG result. That is not
 a separate product direction. The planner result is mocked, but the group runner
 still executes the same real mechanism: DAG nodes, dependency edges, transcript
-deltas, Agent runs, shared workspace writes, and final consolidation.
+deltas, Agent runs, shared code writes, and final consolidation.
 
 ```text
                     -> Frontend Agent -
@@ -555,58 +572,92 @@ to be a new fourth Agent.
 ```
 
 The contribution is not an advanced planner. The contribution is controlled
-shared context, Agent identity preservation, shared workspace coordination, and
-later memory governance.
+shared context, Agent identity preservation, shared code coordination, and later
+memory governance.
 
 ---
 
-## Shared Workspace
+## Workspace Model
 
-All selected Agents work in one group workspace.
+All selected Agents keep private workspace roots, but edit one shared group code
+directory.
 
 ```text
-Group workspace
-  Backend writes server/API files
-  Frontend edits web/UI files
-  Security reviews code and policy boundaries
-  Planner assigns join nodes to the most relevant selected Agent
+workspaces/
+  shared-code/<groupTaskId>/
+    apps/server/**
+    apps/web/**
+
+  backend-agent/
+    AGENTS.md
+    .agents/skills/
+    code -> ../shared-code/<groupTaskId>
+
+  frontend-agent/
+    AGENTS.md
+    .agents/skills/
+    code -> ../shared-code/<groupTaskId>
+
+  security-agent/
+    AGENTS.md
+    .agents/skills/
+    code -> ../shared-code/<groupTaskId>
 ```
 
-This is the chosen model because the group is building the same website, app, or
-code artifact. File integration happens during the group run instead of through
-a separate merge step after the fact.
+Codex still runs with cwd set to the Agent's private root. The Agent edits the
+shared project under `./code`.
+
+This is the chosen model because it matches `latestdoc/`: memory security stays
+based on file placement into each Agent's private workspace, while the group
+still collaborates on one code artifact.
+
+Runtime note:
+
+```text
+local-process runtime:
+  ./code can be a symlink from each private Agent root to shared-code/<taskId>
+
+container runtime:
+  ./code must be visible inside the container mount
+  either mount shared-code/<taskId> explicitly, or place shared-code under a
+  parent directory that is mounted into the container
+```
+
+Do not rely on a symlink that points outside the mounted Agent root in container
+mode, because the container may see a broken path.
 
 What gets easier:
 
 - Backend can create API files and Frontend can inspect them later.
 - Frontend can add UI files and Security can review the same files.
 - The final artifact exists in one place.
-- The demo is easier to understand: one group, one task, one workspace.
+- The demo is easier to understand: one group, one task, one shared codebase.
+- Memory grants and denials remain inspectable per Agent workspace.
 
 What must be controlled:
 
 - Two Agents must not write the same file at the same time.
 - A failed branch can leave partial files for later branches.
 - One Agent can accidentally overwrite another Agent's work.
-- `AGENTS.md` is shared, so it must represent the group workspace contract
-  instead of one specific Agent identity.
+- `AGENTS.md` and `.agents/skills` must stay in the private Agent roots, not in
+  shared code.
 - Secrets and dependency outputs need redaction before entering other Agents'
   threads.
 - Once an Agent sees a transcript delta in its Codex group thread, that context
   may persist in that Agent's group thread.
 
-The DAG planner helps with file conflicts, but it does not remove the need for
-workspace discipline. Parallel branches are safe only when their file ownership
-is separated.
+The DAG planner helps with code conflicts, but it does not remove the need for
+shared-code discipline. Parallel branches are safe only when their file
+ownership is separated.
 
 Example safe branch:
 
 ```text
 Backend Agent:
-  owns apps/server/**
+  owns code/apps/server/**
 
 Frontend Agent:
-  owns apps/web/**
+  owns code/apps/web/**
 
 Security Agent:
   read-only review during the branch
@@ -615,7 +666,7 @@ Security Agent:
 Example unsafe branch:
 
 ```text
-Backend Agent and Frontend Agent both edit package.json at the same time.
+Backend Agent and Frontend Agent both edit code/package.json at the same time.
 ```
 
 Conflict rule:
@@ -665,14 +716,14 @@ Setup, dependency installation, final test runs, and dev-server checks happen in
 single-owner setup or join nodes.
 ```
 
-This keeps the shared workspace realistic without letting unrelated runtime
+This keeps the shared code model realistic without letting unrelated runtime
 collisions break the parallel branch demo.
 
 ### Planner-Written AGENTS.md
 
-The DAG planner can create or update the shared workspace `AGENTS.md` before the
-group task starts. This is useful because `AGENTS.md` becomes the workspace
-charter for the whole group task.
+The DAG planner can create or update a group-task section inside each selected
+Agent's private `AGENTS.md` before the group task starts. This is useful because
+each Agent gets the same group charter while memory placement remains private.
 
 It should include:
 
@@ -689,7 +740,9 @@ Secret-handling rules
 Example:
 
 ```text
-This is a shared group workspace for the Upload Feature Team.
+This Agent is participating in the Upload Feature Team group task.
+
+Shared code lives under ./code.
 
 Members:
   Backend Agent - owns backend API and storage changes.
@@ -703,34 +756,52 @@ Rules:
   Do not expose secrets across Agent boundaries.
 ```
 
-The planner-written `AGENTS.md` should not say:
+The planner should write this charter into each selected Agent's private
+workspace root:
 
 ```text
-You are Backend Agent.
+backend-agent/AGENTS.md
+frontend-agent/AGENTS.md
+security-agent/AGENTS.md
 ```
 
-That would make the shared workspace biased toward one Agent. The file should
-describe the group contract. The active identity still belongs in the per-turn
-prompt.
+The planner should not write governed memory into:
+
+```text
+shared-code/<groupTaskId>/AGENTS.md
+shared-code/<groupTaskId>/.agents/skills/
+```
+
+The planner-written section should not replace stable identity with a different
+Agent identity. For example, Backend Agent's private `AGENTS.md` should not say:
+
+```text
+You are Frontend Agent.
+```
+
+That would corrupt the Agent identity. The file should preserve the stable
+Agent identity, then add the group contract. The active DAG node role still
+belongs in the per-turn prompt.
 
 One important runtime detail: if `AGENTS.md` changes after an Agent's group
 thread already exists, do not assume the resumed Codex thread will receive the
 new file as fresh system context. The app should still inject the current role,
-DAG node, file ownership, and relevant workspace charter details in the
-per-turn prompt.
+DAG node, file ownership, and relevant group charter details in the per-turn
+prompt.
 
 ### Per-Turn Identity
 
-Using the same workspace but different Codex threads is acceptable, as long as
-identity is injected per turn.
+Using private Agent roots with shared `./code` is acceptable, as long as the
+active DAG node role is injected per turn.
 
 The design should be:
 
 ```text
-same workspace
+private Agent root as cwd
+shared code directory at ./code
 different groupThreadId per Agent per group
 per-turn identity prompt
-planner-written shared AGENTS.md
+planner-written group-task section in private AGENTS.md
 ```
 
 Each run prompt supplies the active identity:
@@ -739,12 +810,13 @@ Each run prompt supplies the active identity:
 [Your identity for this turn]
 You are Backend Agent.
 Role: backend implementation.
-You own backend API files for this turn.
+You own code/apps/server/** for this turn.
 ```
 
 This avoids the shared-thread identity problem. Each Agent has its own Codex
 group thread, so Backend's session framing does not become Frontend's session
-framing. The shared workspace only shares files, not Codex conversation state.
+framing. The shared code directory only shares project files, not Codex
+conversation state or governed memory files.
 
 ---
 
@@ -758,7 +830,6 @@ interface AgentGroup {
   name: string;
   description: string;
   memberAgentIds: string[];
-  workspacePath: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -780,6 +851,7 @@ interface GroupParticipantState {
   agentId: string;
   membershipEpoch: number;
   role: string;
+  agentWorkspacePath: string;
   groupThreadId: string | null;
   lastSeenSeq: number;
   removedAt: string | null;
@@ -799,6 +871,7 @@ interface GroupTask {
   id: string;
   groupId: string;
   prompt: string;
+  sharedCodePath: string;
   status: GroupTaskStatus;
   currentNodeId: string | null;
   nodeRunIds: string[];
@@ -855,7 +928,8 @@ This can be simplified during implementation. The most important fields are:
 - `GroupParticipantState.lastSeenSeq`
 - `GroupParticipantState.membershipEpoch`
 - `GroupParticipantState.removedAt`
-- `AgentGroup.workspacePath`
+- `GroupParticipantState.agentWorkspacePath`
+- `GroupTask.sharedCodePath`
 - `GroupPlanNode.kind`
 - `GroupPlanNode.nodeRole`
 - `GroupPlanNode.dependsOn`
@@ -928,7 +1002,8 @@ Demo path:
 1. Create Backend, Frontend, and Security Agents.
 2. Create Upload Feature Team group by toggling those three Agents on.
 3. Send group task: "Plan an upload feature."
-4. The app creates or loads one shared group workspace.
+4. The app creates one shared code directory and links or mounts it as `./code`
+   inside each selected Agent's private workspace root.
 5. The app creates a branch-and-join DAG for the task.
 6. The app validates the DAG before launch:
    distinct Agents per parallel phase, non-overlapping write paths, and no
@@ -953,7 +1028,7 @@ What this proves:
 - Agents do not share one Codex thread;
 - the group chat history is shared through the app;
 - each Agent receives only the transcript delta it has not seen;
-- Agents work against one shared workspace artifact;
+- Agents work against one shared code artifact while memory stays private;
 - branch-and-join orchestration controls parallelism and integration;
 - the planner prevents duplicate Agents inside the same parallel phase;
 - runtime locks prevent non-file collisions during parallel work;
@@ -968,14 +1043,14 @@ The group chat idea now has these fixed choices:
 ```text
 membership: explicit Agent toggles, frozen while a task is running
 re-add policy: new membership epoch and fresh groupThreadId
-workspace: shared group workspace
+workspace: private Agent roots plus shared group code directory
 threading: separate groupThreadId per Agent per group
 transcript: app-owned group timeline
 history injection: branch-aware context packet, with lastSeenSeq as dedupe only
 orchestration: branch-and-join DAG
 demo planner: preseeded/template-generated DAG result
 join ownership: planner assigns join nodes to the most relevant selected Agent
-identity: planner-written AGENTS.md plus per-turn Agent identity prompt
+identity: planner-written per-Agent AGENTS.md task section plus per-turn identity prompt
 parallel safety: distinct Agents, non-overlapping file ownership hints, and no duplicate runtime locks
 termination: final join node completes the group task
 memory: reviewed carryover after task completion
@@ -998,7 +1073,7 @@ The first version does not need:
 
 ## One-Sentence Summary
 
-Group chat is a selected set of Agents working in one shared workspace through
-separate group-scoped Codex threads, coordinated by an app-owned transcript and
-a branch-and-join DAG that controls who sees what, who writes where, and what
-knowledge can become memory afterward.
+Group chat is a selected set of Agents working on one shared code directory
+through private Agent roots and separate group-scoped Codex threads, coordinated
+by an app-owned transcript and a branch-and-join DAG that controls who sees
+what, who writes where, and what knowledge can become memory afterward.
