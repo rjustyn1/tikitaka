@@ -7,6 +7,7 @@ import type { AgentService } from "./agent-service.js";
 
 const service = {
   listAgents: () => [],
+  sendMessage: async (_id: string, body: unknown) => ({ body }),
   systemInfo: async () => ({}),
 } as unknown as AgentService;
 
@@ -84,17 +85,66 @@ describe("group + memory routes", () => {
 
   it("passes a valid create-group body through to the (stubbed) service", async () => {
     const app = await createApp(loadConfig({ NODE_ENV: "test" }), groupService);
+    const [backendId, frontendId, securityId] = [
+      randomUUID(),
+      randomUUID(),
+      randomUUID(),
+    ];
     const created = await app.inject({
       method: "POST",
       url: "/api/groups",
       headers: { "content-type": "application/json" },
       payload: JSON.stringify({
         name: "Upload Feature Team",
-        memberAgentIds: [randomUUID()],
+        members: [
+          { agentId: backendId, role: "backend" },
+          { agentId: frontendId, role: "frontend" },
+          { agentId: securityId, role: "security" },
+        ],
       }),
     });
     // Zod accepted the body; the stub service reports not-implemented.
     expect(created.statusCode).toBe(501);
+    await app.close();
+  });
+
+  it("rejects duplicate group roles with 400", async () => {
+    const app = await createApp(loadConfig({ NODE_ENV: "test" }), groupService);
+    const rejected = await app.inject({
+      method: "POST",
+      url: "/api/groups",
+      headers: { "content-type": "application/json" },
+      payload: JSON.stringify({
+        name: "Bad Roles",
+        members: [
+          { agentId: randomUUID(), role: "backend" },
+          { agentId: randomUUID(), role: "backend" },
+          { agentId: randomUUID(), role: "security" },
+        ],
+      }),
+    });
+    expect(rejected.statusCode).toBe(400);
+    await app.close();
+  });
+
+  it("accepts freshThread on the solo message route", async () => {
+    let received: unknown;
+    const messageService = {
+      ...service,
+      sendMessage: async (_id: string, body: unknown) => {
+        received = body;
+        return { ok: true };
+      },
+    } as unknown as AgentService;
+    const app = await createApp(loadConfig({ NODE_ENV: "test" }), messageService);
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/agents/" + randomUUID() + "/messages",
+      headers: { "content-type": "application/json" },
+      payload: JSON.stringify({ content: "prove memory", freshThread: true }),
+    });
+    expect(response.statusCode).toBe(202);
+    expect(received).toEqual({ content: "prove memory", freshThread: true });
     await app.close();
   });
 

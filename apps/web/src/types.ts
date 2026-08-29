@@ -103,6 +103,7 @@ export type GroupTaskStatus =
   | "failed";
 
 export type GroupPlanNodeKind = "work" | "join";
+export type GroupRole = "backend" | "frontend" | "security";
 export type MemorySeverity = "normal" | "severe";
 export type MemoryStatus =
   | "candidate"
@@ -112,11 +113,16 @@ export type MemoryStatus =
   | "rejected"
   | "revoked";
 
+export interface GroupMember {
+  agentId: string;
+  role: GroupRole;
+}
+
 export interface AgentGroup {
   id: string;
   name: string;
   description: string;
-  memberAgentIds: string[];
+  members: GroupMember[];
   activeTaskId: string | null;
   createdAt: string;
   updatedAt: string;
@@ -247,4 +253,21 @@ export type ReviewNoteInput =
 export interface RevokeNoteInput {
   reviewerName: string;
   reason: string;
+}
+
+export interface SendMessageInput {
+  content: string;
+  freshThread?: boolean;
+}
+
+export interface CreateGroupInput {
+  name: string;
+  description?: string;
+  members: GroupMember[];
+}
+
+export interface UpdateGroupInput {
+  name?: string;
+  description?: string;
+  members?: GroupMember[];
 }

@@ -2,6 +2,7 @@ import type {
   Agent,
   AgentGroup,
   AgentRun,
+  CreateGroupInput,
   GrantRecord,
   GroupTask,
   GroupTaskResponse,
@@ -12,8 +13,10 @@ import type {
   ReviewNoteInput,
   RevokeNoteInput,
   RunTraceSummary,
+  SendMessageInput,
   SystemInfo,
   TraceSpan,
+  UpdateGroupInput,
 } from "./types";
 
 export class ApiError extends Error {
@@ -85,12 +88,17 @@ export const api = {
     request<{ messages: Message[] }>("/api/agents/" + id + "/messages"),
   runs: (id: string) =>
     request<{ runs: AgentRun[] }>("/api/agents/" + id + "/runs"),
-  sendMessage: (id: string, content: string) =>
+  sendMessage: (id: string, content: string, options?: { freshThread?: boolean }) =>
     request<{ run: AgentRun; message: Message }>(
       "/api/agents/" + id + "/messages",
       {
         method: "POST",
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({
+          content,
+          ...(options?.freshThread !== undefined && {
+            freshThread: options.freshThread,
+          }),
+        } satisfies SendMessageInput),
       },
     ),
   run: (id: string) => request<{ run: AgentRun }>("/api/runs/" + id),
@@ -107,19 +115,12 @@ export const api = {
   // --- Groups + governed memory ---------------------------------------------
   groups: () => request<{ groups: AgentGroup[] }>("/api/groups"),
   group: (id: string) => request<{ group: AgentGroup }>("/api/groups/" + id),
-  createGroup: (body: {
-    name: string;
-    description?: string;
-    memberAgentIds: string[];
-  }) =>
+  createGroup: (body: CreateGroupInput) =>
     request<{ group: AgentGroup }>("/api/groups", {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  updateGroup: (
-    id: string,
-    body: { name?: string; description?: string; memberAgentIds?: string[] },
-  ) =>
+  updateGroup: (id: string, body: UpdateGroupInput) =>
     request<{ group: AgentGroup }>("/api/groups/" + id, {
       method: "PATCH",
       body: JSON.stringify(body),

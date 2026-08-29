@@ -22,9 +22,10 @@ const updateAgentBody = createAgentBody.partial().refine(
 );
 const messageBody = z.object({
   content: z.string().trim().min(1).max(50_000),
+  freshThread: z.boolean().default(false),
 });
 
-// Group + governed-memory route schemas (see technical-dev-docs/API-ROUTES.md).
+// Group + governed-memory route schemas (see middlewaredoc/SPEC.md).
 const groupIdParams = z.object({ id: z.string().uuid() });
 const groupTaskParams = z.object({
   id: z.string().uuid(),
@@ -33,10 +34,37 @@ const groupTaskParams = z.object({
 const noteIdParams = z.object({ id: z.string().uuid() });
 const taskIdParams = z.object({ id: z.string().uuid() });
 
+const groupMemberBody = z.object({
+  agentId: z.string().uuid(),
+  role: z.enum(["backend", "frontend", "security"]),
+});
+
+const groupMembersBody = z
+  .array(groupMemberBody)
+  .length(3)
+  .superRefine((members, ctx) => {
+    const agentIds = new Set(members.map((member) => member.agentId));
+    if (agentIds.size !== members.length) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Each Agent can appear only once in a group",
+      });
+    }
+    const roles = new Set(members.map((member) => member.role));
+    for (const role of ["backend", "frontend", "security"] as const) {
+      if (!roles.has(role)) {
+        ctx.addIssue({
+          code: "custom",
+          message: "Group must include one " + role + " member",
+        });
+      }
+    }
+  });
+
 const createGroupBody = z.object({
   name: z.string().trim().min(1).max(80),
   description: z.string().trim().max(500).optional(),
-  memberAgentIds: z.array(z.string().uuid()).min(1),
+  members: groupMembersBody,
 });
 
 const updateGroupBody = createGroupBody
@@ -173,7 +201,7 @@ export async function createApp(
   app.post("/api/agents/:id/messages", async (request, reply) => {
     const { id } = agentIdParams.parse(request.params);
     const body = messageBody.parse(request.body);
-    const result = await service.sendMessage(id, body.content);
+    const result = await service.sendMessage(id, body);
     return reply.code(202).send(result);
   });
 
@@ -237,6 +265,13 @@ export async function createApp(
   app.get("/api/groups/:id/tasks/:taskId", async (request) => {
     const { taskId } = groupTaskParams.parse(request.params);
     return service.getGroupTask(taskId);
+  });
+
+  app.post("/api/groups/:id/tasks/:taskId/cancel", async (request, reply) => {
+    const { id, taskId } = groupTaskParams.parse(request.params);
+    return reply
+      .code(202)
+      .send({ task: await service.cancelGroupTask(id, taskId) });
   });
 
   app.get("/api/groups/:id/tasks/:taskId/timeline", async (request) => {

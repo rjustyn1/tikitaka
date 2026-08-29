@@ -6,6 +6,8 @@ import { JsonStore } from "./store.js";
 import type {
   Agent,
   AgentGroup,
+  AgentLease,
+  AgentLeaseHolder,
   AgentRun,
   AgentRunner,
   CreateAgentInput,
@@ -20,6 +22,7 @@ import type {
   ReviewNoteInput,
   RevokeNoteInput,
   RunTraceSummary,
+  SendMessageInput,
   TraceSpan,
   UpdateAgentInput,
   UpdateGroupInput,
@@ -40,9 +43,10 @@ function computeTraceSummary(spans: TraceSpan[], runId: string): RunTraceSummary
   };
 }
 
-export class AgentService {
+export class AgentService implements AgentLease {
   private readonly activeExecutions = new Map<string, Promise<void>>();
   private readonly cancellationRequests = new Set<string>();
+  private readonly agentLeases = new Map<string, AgentLeaseHolder>();
 
   constructor(
     private readonly config: AppConfig,
@@ -55,11 +59,12 @@ export class AgentService {
     await this.store.initialize();
     await this.workspaces.initialize();
     await this.store.mutate((database) => {
+      const restartedAt = now();
       for (const run of database.runs) {
         if (run.status === "queued" || run.status === "running") {
           run.status = "cancelled";
           run.error = "Server restarted while this run was active";
-          run.completedAt = now();
+          run.completedAt = restartedAt;
           // Mark any open spans for this run as incomplete
           for (const span of database.spans) {
             if (span.runId === run.id && span.status === "started") {
@@ -72,13 +77,36 @@ export class AgentService {
           }
         }
       }
+      for (const task of database.groupTasks) {
+        if (task.status === "queued" || task.status === "running") {
+          task.status = "cancelled";
+          task.currentNodeId = null;
+          task.completedAt = task.completedAt ?? restartedAt;
+        }
+      }
+      for (const group of database.groups) {
+        group.activeTaskId = null;
+        group.updatedAt = restartedAt;
+      }
+      for (const node of database.groupPlanNodes) {
+        if (node.status === "queued" || node.status === "running") {
+          node.status = "cancelled";
+          node.completedAt = node.completedAt ?? restartedAt;
+        }
+      }
+      for (const lock of database.runtimeLocks) {
+        if (lock.releasedAt === null) {
+          lock.releasedAt = restartedAt;
+        }
+      }
       for (const agent of database.agents) {
         if (agent.status === "busy") {
           agent.status = "ready";
-          agent.updatedAt = now();
+          agent.updatedAt = restartedAt;
         }
       }
     });
+    this.agentLeases.clear();
   }
 
   listAgents(): Agent[] {
@@ -143,13 +171,47 @@ export class AgentService {
 
   async deleteAgent(id: string): Promise<{ archivedWorkspace: string }> {
     const agent = this.getAgent(id);
+    const holder = this.agentLeases.get(id);
+    if (holder?.kind === "group") {
+      throw new HttpError(
+        409,
+        "Agent is held by group task " + holder.groupTaskId,
+      );
+    }
     await this.cancelExecution(id);
     const archivedWorkspace = await this.workspaces.archive(agent);
     await this.store.mutate((database) => {
+      const deletedAt = now();
       database.agents = database.agents.filter((item) => item.id !== id);
       database.messages = database.messages.filter((item) => item.agentId !== id);
       database.runs = database.runs.filter((item) => item.agentId !== id);
       database.spans = database.spans.filter((item) => item.agentId !== id);
+      for (const group of database.groups) {
+        const nextMembers = group.members.filter((member) => member.agentId !== id);
+        if (nextMembers.length !== group.members.length) {
+          group.members = nextMembers;
+          group.updatedAt = deletedAt;
+        }
+      }
+      for (const participant of database.groupParticipants) {
+        if (participant.agentId === id) {
+          participant.removedAt = participant.removedAt ?? deletedAt;
+          participant.updatedAt = participant.removedAt;
+        }
+      }
+      for (const note of database.notes) {
+        if (note.targetAgentIds.includes(id)) {
+          note.targetAgentIds = note.targetAgentIds.filter((agentId) => agentId !== id);
+          if (note.targetAgentIds.length === 0 && note.status === "active") {
+            note.status = "revoked";
+          }
+          note.updatedAt = deletedAt;
+        }
+      }
+      database.grants = database.grants.filter((item) => item.agentId !== id);
+      database.landedMemoryFiles = database.landedMemoryFiles.filter(
+        (item) => item.agentId !== id,
+      );
     });
     return { archivedWorkspace };
   }
@@ -160,6 +222,13 @@ export class AgentService {
 
   async stopAgent(id: string): Promise<Agent> {
     this.getAgent(id);
+    const holder = this.agentLeases.get(id);
+    if (holder?.kind === "group") {
+      throw new HttpError(
+        409,
+        "Agent is held by group task " + holder.groupTaskId,
+      );
+    }
     await this.cancelExecution(id);
     return this.setStatus(id, "stopped");
   }
@@ -199,7 +268,7 @@ export class AgentService {
 
   async sendMessage(
     agentId: string,
-    prompt: string,
+    input: string | SendMessageInput,
   ): Promise<{ run: AgentRun; message: Message }> {
     if (!isArkConfigured(this.config)) {
       throw new HttpError(
@@ -207,6 +276,8 @@ export class AgentService {
         "Ark is not configured. Set ARK_API_KEY and ARK_MODEL, then restart.",
       );
     }
+    const prompt = typeof input === "string" ? input : input.content;
+    const freshThread = typeof input === "string" ? false : input.freshThread === true;
     const timestamp = now();
     const runId = randomUUID();
     const run: AgentRun = {
@@ -230,26 +301,25 @@ export class AgentService {
       content: prompt,
       createdAt: timestamp,
     };
-    const agentAtStart = await this.store.mutate((database) => {
-      const storedAgent = database.agents.find((item) => item.id === agentId);
-      if (!storedAgent) {
-        throw new HttpError(404, "Agent not found");
-      }
-      if (storedAgent.status === "stopped") {
-        throw new HttpError(409, "Start the Agent before sending a message");
-      }
-      if (storedAgent.status === "busy") {
-        throw new HttpError(409, "This Agent is already running");
-      }
-      database.runs.push(run);
-      database.messages.push(message);
-      const snapshot = structuredClone(storedAgent);
-      storedAgent.status = "busy";
-      storedAgent.lastError = null;
-      storedAgent.updatedAt = timestamp;
-      return snapshot;
-    });
-    const execution = this.executeRun(agentAtStart, run);
+    const holder: AgentLeaseHolder = { kind: "solo", runId };
+    const agentAtStart = await this.acquireAgent(agentId, holder);
+    try {
+      await this.store.mutate((database) => {
+        const storedAgent = database.agents.find((item) => item.id === agentId);
+        if (!storedAgent) {
+          throw new HttpError(404, "Agent not found");
+        }
+        if (storedAgent.status !== "busy") {
+          throw new HttpError(409, "This Agent is no longer leased for this run");
+        }
+        database.runs.push(run);
+        database.messages.push(message);
+      });
+    } catch (error) {
+      await this.releaseAgent(agentId, holder);
+      throw error;
+    }
+    const execution = this.executeRun(agentAtStart, run, holder, freshThread);
     this.activeExecutions.set(agentId, execution);
     void execution
       .finally(() => {
@@ -259,6 +329,42 @@ export class AgentService {
       })
       .catch(() => undefined);
     return { run, message };
+  }
+
+  async acquireAgent(agentId: string, holder: AgentLeaseHolder): Promise<Agent> {
+    const leasedAgent = await this.store.mutate((database) => {
+      const agent = database.agents.find((item) => item.id === agentId);
+      if (!agent) {
+        throw new HttpError(404, "Agent not found");
+      }
+      if (agent.status === "stopped") {
+        throw new HttpError(409, "Start the Agent before sending a message");
+      }
+      if (agent.status === "busy") {
+        throw new HttpError(409, this.busyMessage(agentId));
+      }
+      agent.status = "busy";
+      agent.lastError = null;
+      agent.updatedAt = now();
+      return structuredClone(agent);
+    });
+    this.agentLeases.set(agentId, holder);
+    return leasedAgent;
+  }
+
+  async releaseAgent(agentId: string, holder: AgentLeaseHolder): Promise<void> {
+    const activeHolder = this.agentLeases.get(agentId);
+    if (!activeHolder || !sameLeaseHolder(activeHolder, holder)) {
+      return;
+    }
+    await this.store.mutate((database) => {
+      const agent = database.agents.find((item) => item.id === agentId);
+      if (agent?.status === "busy") {
+        agent.status = "ready";
+        agent.updatedAt = now();
+      }
+    });
+    this.agentLeases.delete(agentId);
   }
 
   async systemInfo(): Promise<Record<string, unknown>> {
@@ -280,7 +386,12 @@ export class AgentService {
     };
   }
 
-  private async executeRun(agentAtStart: Agent, run: AgentRun): Promise<void> {
+  private async executeRun(
+    agentAtStart: Agent,
+    run: AgentRun,
+    holder: AgentLeaseHolder,
+    freshThread: boolean,
+  ): Promise<void> {
     await this.store.mutate((database) => {
       const storedRun = database.runs.find((item) => item.id === run.id);
       if (storedRun) {
@@ -291,7 +402,8 @@ export class AgentService {
 
     // Collect spans via callback; single flush at terminal state
     const spanBuffer: TraceSpan[] = [];
-    let capturedThreadId: string | null = agentAtStart.codexThreadId;
+    const threadIdAtStart = freshThread ? null : agentAtStart.codexThreadId;
+    let capturedThreadId: string | null = threadIdAtStart;
 
     try {
       if (this.cancellationRequests.has(agentAtStart.id)) {
@@ -302,7 +414,7 @@ export class AgentService {
         runId: run.id,
         workspacePath: agentAtStart.workspacePath,
         prompt: run.prompt,
-        threadId: agentAtStart.codexThreadId,
+        threadId: threadIdAtStart,
         onThreadId: (id) => {
           capturedThreadId = id;
         },
@@ -373,6 +485,8 @@ export class AgentService {
           agent.updatedAt = completedAt;
         }
       });
+    } finally {
+      await this.releaseAgent(agentAtStart.id, holder);
     }
   }
 
@@ -405,15 +519,20 @@ export class AgentService {
     }
   }
 
+  private busyMessage(agentId: string): string {
+    const holder = this.agentLeases.get(agentId);
+    if (holder?.kind === "group") {
+      return "Agent is held by group task " + holder.groupTaskId;
+    }
+    return "This Agent is already running";
+  }
+
   // --------------------------------------------------------------------------
-  // Group + governed-memory stubs (Person 1 contract layer).
+  // Group contract layer + governed-memory stubs.
   //
   // These satisfy the API-ROUTES contract and unblock frontend/pipeline work.
-  // Read methods are backed by the store and return live data as soon as it is
-  // populated. Mutating methods throw 501 until:
-  //   - Person 2's GroupRunner lands createGroup/updateGroup/startGroupTask
-  //   - Person 3's memory services land reviewNote/revokeNote
-  // Person 2/3: replace the bodies below by delegating to your services.
+  // Group CRUD is store-backed. Group task execution/cancellation remains a
+  // Person 2 handoff; note review/revoke remains a Person 3 handoff.
   // --------------------------------------------------------------------------
 
   listGroups(): AgentGroup[] {
@@ -430,20 +549,73 @@ export class AgentService {
     return group;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async createGroup(_input: CreateGroupInput): Promise<AgentGroup> {
-    throw new HttpError(501, "Group creation is not implemented yet");
+  async createGroup(input: CreateGroupInput): Promise<AgentGroup> {
+    this.assertValidGroupMembers(input.members);
+    const timestamp = now();
+    const group: AgentGroup = {
+      id: randomUUID(),
+      name: input.name.trim(),
+      description: input.description?.trim() ?? "",
+      members: input.members,
+      activeTaskId: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    await this.store.mutate((database) => {
+      this.assertGroupMemberAgentsExist(database.agents, input.members);
+      database.groups.push(group);
+    });
+    return group;
   }
 
   async updateGroup(
-    _id: string,
-    _input: UpdateGroupInput,
+    id: string,
+    input: UpdateGroupInput,
   ): Promise<AgentGroup> {
-    throw new HttpError(501, "Group update is not implemented yet");
+    if (input.members) {
+      this.assertValidGroupMembers(input.members);
+    }
+    return this.store.mutate((database) => {
+      const group = database.groups.find((item) => item.id === id);
+      if (!group) {
+        throw new HttpError(404, "Group not found");
+      }
+      if (group.activeTaskId !== null && input.members !== undefined) {
+        throw new HttpError(409, "Membership cannot change during a running task");
+      }
+      if (input.members !== undefined) {
+        this.assertGroupMemberAgentsExist(database.agents, input.members);
+        group.members = input.members;
+      }
+      if (input.name !== undefined) group.name = input.name.trim();
+      if (input.description !== undefined)
+        group.description = input.description.trim();
+      group.updatedAt = now();
+      return structuredClone(group);
+    });
   }
 
-  async startGroupTask(_groupId: string, _prompt: string): Promise<GroupTask> {
+  async startGroupTask(groupId: string, _prompt: string): Promise<GroupTask> {
+    const group = this.getGroup(groupId);
+    if (group.activeTaskId) {
+      throw new HttpError(409, "Group task already running");
+    }
+    if (!hasRequiredGroupRoles(group)) {
+      throw new HttpError(
+        409,
+        "This plan needs one backend, one frontend, and one security member.",
+      );
+    }
     throw new HttpError(501, "Group task execution is not implemented yet");
+  }
+
+  async cancelGroupTask(groupId: string, taskId: string): Promise<GroupTask> {
+    this.getGroup(groupId);
+    const task = this.store.snapshot().groupTasks.find((item) => item.id === taskId);
+    if (!task || task.groupId !== groupId) {
+      throw new HttpError(404, "Group task not found");
+    }
+    throw new HttpError(501, "Group task cancellation is not implemented yet");
   }
 
   getGroupTask(taskId: string): GroupTaskResponse {
@@ -501,4 +673,55 @@ export class AgentService {
       .grants.filter((grant) => grant.groupTaskId === taskId)
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   }
+
+  private assertValidGroupMembers(members: CreateGroupInput["members"]): void {
+    if (members.length !== 3) {
+      throw new HttpError(400, "Group must include exactly three members");
+    }
+    const agentIds = new Set(members.map((member) => member.agentId));
+    if (agentIds.size !== members.length) {
+      throw new HttpError(400, "Each Agent can appear only once in a group");
+    }
+    const roles = new Set(members.map((member) => member.role));
+    for (const role of ["backend", "frontend", "security"] as const) {
+      if (!roles.has(role)) {
+        throw new HttpError(400, "Group must include one " + role + " member");
+      }
+    }
+  }
+
+  private assertGroupMemberAgentsExist(
+    agents: Agent[],
+    members: CreateGroupInput["members"],
+  ): void {
+    const agentIds = new Set(agents.map((agent) => agent.id));
+    const missing = members.find((member) => !agentIds.has(member.agentId));
+    if (missing) {
+      throw new HttpError(404, "Group member Agent not found");
+    }
+  }
+}
+
+function sameLeaseHolder(left: AgentLeaseHolder, right: AgentLeaseHolder): boolean {
+  if (left.kind !== right.kind) return false;
+  if (left.kind === "solo" && right.kind === "solo") {
+    return left.runId === right.runId;
+  }
+  if (left.kind === "group" && right.kind === "group") {
+    return (
+      left.groupTaskId === right.groupTaskId &&
+      left.planNodeId === right.planNodeId
+    );
+  }
+  return false;
+}
+
+function hasRequiredGroupRoles(group: AgentGroup): boolean {
+  const roles = new Set(group.members.map((member) => member.role));
+  return (
+    group.members.length === 3 &&
+    roles.has("backend") &&
+    roles.has("frontend") &&
+    roles.has("security")
+  );
 }
