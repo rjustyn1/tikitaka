@@ -1,15 +1,16 @@
 # Group Chat Mechanism
 
-> Rough idea consolidation.
-> This document is about how multiple Agents can talk to each other on one
-> shared task. The memory-governance layer can be added on top later.
+> Locked rough design.
+> This document keeps one direction only: app-owned group chat, shared group
+> workspace, separate Codex group threads per Agent, and a branch-and-join DAG.
 
 ---
 
 ## Goal
 
-Allow a user to create a group containing multiple Agents, send one prompt-like
-task to that group, and see the Agents collaborate in a shared chat.
+Allow a user to create a group containing selected Agents, send one prompt-like
+task to that group, and see the Agents collaborate in a shared chat while
+working inside one shared project workspace.
 
 Example:
 
@@ -27,9 +28,10 @@ User sends:
 
 Group chat:
   User: Plan and implement an upload feature.
-  Backend Agent: I propose POST /uploads...
-  Frontend Agent: I only need the public API contract...
-  Security Agent: Do not expose backend secrets...
+  Backend Agent: I will define POST /uploads and the storage flow.
+  Frontend Agent: I will build the upload UI against that public contract.
+  Security Agent: I will review validation, auth, and secret boundaries.
+  Backend Agent: Here is the consolidated implementation result.
 ```
 
 The group chat should feel like one shared conversation to the user, but it
@@ -42,26 +44,35 @@ which Agents join the group.
 
 ## Core Decision
 
-Use an app-level shared group chat, with separate Codex execution contexts per
-Agent.
+Use an app-level shared group chat, one shared group workspace, and separate
+Codex execution contexts per Agent.
 
 ```text
 App database:
   one shared group chat timeline
 
+Workspace:
+  one shared group workspace for the group task
+
 Codex:
-  Agent A has its own thread
-  Agent B has its own thread
-  Agent C has its own thread
+  Agent A has its own group thread
+  Agent B has its own group thread
+  Agent C has its own group thread
 ```
 
 This avoids a major identity problem. If all Agents resume the same Codex
 thread, the first Agent's instructions and session framing can dominate the
 whole conversation. A Backend Agent, Frontend Agent, and Security Agent should
-not all become roleplay inside one Backend-flavoured thread.
+not all become roleplay inside one Backend-flavored thread.
 
 The group chat is shared because our app stores and replays the transcript. The
+workspace is shared because the Agents are building the same artifact. The
 Codex thread is not shared.
+
+The orchestration model is a branch-and-join DAG. For demo feasibility, the
+first planner result can be preseeded or template-generated, but the runner
+should still execute real DAG nodes, real Agent turns, and real transcript
+sync.
 
 ---
 
@@ -105,19 +116,20 @@ Problems:
 - Revocation or selective withholding becomes weak once information is already
   inside the shared thread.
 
-Instead:
+The correct model is:
 
 ```text
-Group chat timeline is shared.
-Codex threads stay separate.
-The app decides what each Agent sees on each turn.
+Group chat timeline is shared by the app.
+Group workspace is shared by the Agents.
+Codex threads stay separate per Agent.
+The app decides what each Agent sees each turn.
 ```
 
 ---
 
 ## Thread Model
 
-Recommended model:
+Model:
 
 ```text
 Agent solo thread:
@@ -150,13 +162,6 @@ Security Agent:
   groupThreadIds["Upload Feature Team"]
 ```
 
-MVP simplification:
-
-- If separate group-scoped thread IDs are too much for the first build, use the
-  existing per-Agent `codexThreadId`.
-- But the final design should acknowledge that solo and group contexts are
-  different.
-
 ---
 
 ## Incremental Transcript Sync
@@ -166,6 +171,10 @@ every turn.
 
 Each Agent has a cursor that records the latest group message it has already
 seen.
+
+That cursor is useful, but it is not the whole context rule once branches exist.
+`lastSeenSeq` prevents duplicate transcript injection. The DAG decides which
+messages and dependency outputs are allowed for the current node.
 
 ```text
 Group messages:
@@ -208,19 +217,101 @@ Benefits:
 
 ---
 
-## Turn Execution Flow
+## Branch-Aware Context
 
-For each group turn:
+`lastSeenSeq` alone is not enough for branches.
+
+Example problem:
 
 ```text
-1. Select current Agent.
+seq 1 - User asks for upload feature
+seq 2 - Backend writes API contract
+
+Branch starts from seq 2:
+  Frontend node depends on Backend
+  Security node depends on Backend
+
+Frontend finishes first:
+seq 3 - Frontend output
+
+Security starts later.
+```
+
+If Security receives every message where `seq > lastSeenSeq`, it may see
+Frontend's branch output even though the DAG did not declare Frontend as a
+dependency. That makes branch behavior depend on wall-clock timing, not the
+plan.
+
+The chosen rule:
+
+```text
+lastSeenSeq = dedupe helper
+DAG context packet = source of truth
+```
+
+Each runnable node gets a context packet:
+
+```text
+contextSnapshotSeq:
+  transcript upper bound captured when this branch/phase becomes runnable
+
+allowedPlanNodeIds:
+  completed ancestor or dependency nodes this node may use
+
+injectedMessageIds:
+  exact group messages injected into this run
+
+injectedDependencyNodeIds:
+  exact dependency outputs injected into this run
+```
+
+For branch nodes, the app sends:
+
+```text
+messages since the Agent's last seen point
+AND messages at or before contextSnapshotSeq
+AND messages from allowed ancestor/shared nodes
+```
+
+For join nodes, the app sends:
+
+```text
+the completed dependency outputs from all joined branches
+plus the relevant transcript delta
+```
+
+After a join completes, the join output becomes the next shared checkpoint. The
+next phase should continue from that checkpoint instead of blindly replaying
+every raw sibling branch message to every Agent.
+
+This keeps branches deterministic:
+
+- branch Agents start from the same shared state;
+- sibling branch outputs are not leaked just because one branch finished first;
+- join nodes intentionally receive all dependency outputs;
+- later phases continue from the joined state.
+
+---
+
+## Turn Execution Flow
+
+For each runnable DAG node:
+
+```text
+1. Select the Agent assigned to the node.
 2. Load that Agent's group participant state.
-3. Fetch group messages where seq > lastSeenSeq.
-4. Build a group-turn prompt.
-5. Run Codex using that Agent's own group thread.
-6. Save the Agent output as a new group message.
-7. Update that Agent's lastSeenSeq.
-8. Repeat for the next Agent.
+3. Build a DAG-aware context packet for the node.
+4. Fetch completed dependency outputs for this node.
+5. Redact dependency outputs before injection.
+6. Build a group-turn prompt.
+7. Acquire the node's file/runtime locks.
+8. Run Codex using that Agent's own group thread.
+9. Save the Agent output as a new group message.
+10. Save node output and run trace.
+11. Update that Agent's lastSeenSeq.
+12. Release the node's file/runtime locks.
+13. Mark the node completed, failed, or cancelled.
+14. Unlock dependent nodes whose dependencies are complete.
 ```
 
 The prompt should contain:
@@ -229,8 +320,18 @@ The prompt should contain:
 [Group task]
 <original user task or current task summary>
 
+[DAG node]
+Node: <node id>
+Role: <node role>
+Depends on: <completed dependency node ids>
+File ownership: <paths or read-only>
+Runtime locks: <exclusive shared resources or none>
+
 [New group messages since your last turn]
 <speaker-labelled messages>
+
+[Relevant dependency outputs]
+<redacted summaries from dependency nodes>
 
 [Your identity for this turn]
 You are <Agent name>.
@@ -238,7 +339,8 @@ Role: <group role or agent description>.
 Instructions: <short role instructions>.
 
 [Your turn]
-Continue the group task from your role.
+Complete this DAG node from your role. Respect file ownership and preserve
+other Agents' work.
 ```
 
 Example:
@@ -246,6 +348,13 @@ Example:
 ```text
 [Group task]
 Plan an upload feature.
+
+[DAG node]
+Node: frontend-plan
+Role: frontend planning
+Depends on: backend-contract
+File ownership: read-only planning
+Runtime locks: none
 
 [New group messages since your last turn]
 Backend Agent:
@@ -291,140 +400,351 @@ Expected behavior:
 - non-member Agents should appear as `out_of_group` for later memory-governance
   checks;
 - editing a group can add or remove Agents before a task starts;
-- removing an Agent from a group should stop future group turns for that Agent,
-  but should not delete old timeline messages it already produced.
+- membership is frozen once a group task starts;
+- removing an Agent between tasks should stop future group turns for that Agent,
+  but should not delete old timeline messages it already produced;
+- re-adding an Agent creates a new membership epoch and a fresh
+  `groupThreadId` for future group turns.
 
 This matters because membership is a governance boundary. If the app silently
 adds every Agent to every group, then `out_of_group` denial becomes meaningless.
 
----
-
-## Orchestration Options
-
-The group chat needs a rule for who speaks next.
-
-### Option 1 - Sequential Turn Order
-
-```text
-Backend -> Frontend -> Security
-```
-
-This is the recommended MVP.
-
-Pros:
-
-- easy to build;
-- deterministic;
-- demo-friendly;
-- enough to prove Agents can talk through a shared transcript.
-
-Cons:
-
-- order matters;
-- earlier Agents do not see later messages until their next turn.
-
-### Option 2 - Simple DAG
-
-```text
-Backend
-  -> Frontend
-  -> Security
-```
-
-This is still simple, but lets the group runner express dependencies.
-
-Use this if we want a cleaner architecture story without building a dynamic
-planner.
-
-### Option 3 - Coordinator Agent
-
-```text
-Coordinator decides:
-  who should act next
-  what each Agent should do
-  when the task is finished
-```
-
-This is more flexible, but it is also less deterministic and should not be the
-MVP unless everything else is already stable.
-
-### Recommended Choice
-
-Start with a deterministic sequence or tiny DAG. The contribution is not the
-planner. The contribution is controlled shared context and later memory
-governance.
+For the demo flow, no Agent is removed or re-added during the group task. This
+keeps the thread story clean: each selected Agent has exactly one active
+group-scoped thread for the task.
 
 ---
 
-## Workspace Model
+## Branch-And-Join DAG
 
-There are two possible workspace models.
+The group chat needs a rule for who speaks next. That rule is a branch-and-join
+DAG.
 
-### Option A - Per-Agent Workspaces
-
-Each Agent keeps its own workspace.
+The first demo uses a preseeded/template-generated DAG result. That is not
+a separate product direction. The planner result is mocked, but the group runner
+still executes the same real mechanism: DAG nodes, dependency edges, transcript
+deltas, Agent runs, shared workspace writes, and final consolidation.
 
 ```text
-Backend workspace
-Frontend workspace
-Security workspace
-Shared group transcript
+                    -> Frontend Agent -
+Backend Agent setup                    -> planner-selected join owner
+                    -> Security Agent -
 ```
 
-Pros:
+The planner can branch when a task naturally has independent subproblems, then
+join again into one consolidation node before continuing. The end of each major
+phase is a single joined state.
 
-- safest;
-- matches current app;
-- each Agent keeps its own `AGENTS.md`;
-- no file conflicts.
+Example:
 
-Cons:
+```text
+User task:
+  "Plan and implement an upload feature."
 
-- less like working on one shared artifact.
+Phase 1 - shared setup
+  Backend Agent:
+    propose endpoint contract and storage flow
 
-### Option B - Shared Group Workspace
+Phase 2 - branch
+  Frontend Agent:
+    plan UI/API integration from the endpoint contract
 
-All Agents work in one group workspace.
+  Security Agent:
+    review auth, validation, and secret-sharing boundaries
+
+Phase 3 - join
+  Planner-selected join owner:
+    merge frontend and security feedback into one implementation plan
+
+Phase 4 - branch again if needed
+  Backend Agent:
+    implement backend changes
+
+  Frontend Agent:
+    implement frontend changes
+
+Phase 5 - final join
+  Planner-selected join owner:
+    consolidate final result and summarize next steps
+```
+
+The rule of thumb:
+
+```text
+branch only when there are independent workstreams;
+join after each major phase so the group returns to one shared state;
+continue from the joined result;
+repeat if the task needs another split.
+```
+
+Each DAG node declares:
+
+```text
+agentId
+node kind: work or join
+role for this node
+dependsOn
+readOnly or writeAllowed
+file ownership hints
+expected output
+```
+
+Before a phase starts, the planner validates the runnable sibling set:
+
+```text
+No selected Agent appears in more than one parallel node.
+No two parallel write nodes own the same file area.
+No two parallel nodes hold the same exclusive runtime lock.
+Every join node depends on every sibling branch it must integrate.
+```
+
+If the same Agent would be assigned to two sibling branches, the planner must
+serialize those nodes with an explicit dependency or collapse them into one
+node. It must not rely on the Codex runner to quietly block one run behind the
+other.
+
+Demo-safe parallel sets:
+
+```text
+Phase 2:
+  Frontend Agent + Security Agent
+
+Phase 4:
+  Backend Agent + Frontend Agent
+```
+
+In both phases, each parallel node uses a distinct Agent. The join node starts
+only after all sibling branches in that phase complete.
+
+Join nodes are not a hidden fourth Agent. A join node is a normal DAG node
+assigned to one of the selected group members. The assigned Agent keeps its
+stable identity, but receives a temporary node role such as "consolidation
+owner" or "final reviewer" in the turn prompt.
+
+The DAG planner chooses the join owner from the selected group members. It
+should prefer the Agent most related to the current phase or artifact being
+consolidated.
+
+Join owner selection rule:
+
+```text
+1. Prefer the Agent that owns the central artifact for this phase.
+2. Prefer the Agent that created the shared contract the branches depend on.
+3. Prefer the Agent whose role is closest to the final requested outcome.
+4. Use group order only as a deterministic tie-breaker.
+```
+
+For the three-Agent upload demo, Backend Agent can be selected as the join owner
+because it creates the initial API contract and can reconcile the implementation
+plan from the Frontend and Security outputs. For a visual redesign task,
+Frontend Agent would likely be the join owner. For a risk review task, Security
+Agent would likely be the join owner.
+
+Example join identity:
+
+```text
+[Your identity for this turn]
+You are Backend Agent.
+Stable role: backend implementation.
+Node role: consolidation owner.
+
+[Your turn]
+Merge the completed Frontend and Security dependency outputs into one shared
+implementation plan. Stay within your Backend Agent identity and do not pretend
+to be a new fourth Agent.
+```
+
+The contribution is not an advanced planner. The contribution is controlled
+shared context, Agent identity preservation, shared workspace coordination, and
+later memory governance.
+
+---
+
+## Shared Workspace
+
+All selected Agents work in one group workspace.
 
 ```text
 Group workspace
-Backend writes files
-Frontend edits files
-Security reviews files
+  Backend writes server/API files
+  Frontend edits web/UI files
+  Security reviews code and policy boundaries
+  Planner assigns join nodes to the most relevant selected Agent
 ```
 
-Pros:
+This is the chosen model because the group is building the same website, app, or
+code artifact. File integration happens during the group run instead of through
+a separate merge step after the fact.
 
-- better for demos where Agents build one artifact together;
-- feels more like real collaboration.
+What gets easier:
 
-Cons:
+- Backend can create API files and Frontend can inspect them later.
+- Frontend can add UI files and Security can review the same files.
+- The final artifact exists in one place.
+- The demo is easier to understand: one group, one task, one workspace.
 
-- one workspace has only one `AGENTS.md`;
-- per-Agent identity must be injected in the turn prompt;
-- file conflicts and sequencing matter;
-- secrets and dependency outputs need redaction before entering other Agents'
+What must be controlled:
+
+- Two Agents must not write the same file at the same time.
+- A failed branch can leave partial files for later branches.
+- One Agent can accidentally overwrite another Agent's work.
+- `AGENTS.md` is shared, so it must represent the group workspace contract
+  instead of one specific Agent identity.
+- Secrets and dependency outputs need redaction before entering other Agents'
   threads.
+- Once an Agent sees a transcript delta in its Codex group thread, that context
+  may persist in that Agent's group thread.
 
-### Recommended Choice
+The DAG planner helps with file conflicts, but it does not remove the need for
+workspace discipline. Parallel branches are safe only when their file ownership
+is separated.
 
-For the first implementation:
+Example safe branch:
 
 ```text
-shared group transcript
-separate Agent threads
-per-Agent workspaces
+Backend Agent:
+  owns apps/server/**
+
+Frontend Agent:
+  owns apps/web/**
+
+Security Agent:
+  read-only review during the branch
 ```
 
-For a stronger later demo:
+Example unsafe branch:
 
 ```text
-shared group transcript
-separate Agent group threads
-shared group workspace
+Backend Agent and Frontend Agent both edit package.json at the same time.
+```
+
+Conflict rule:
+
+```text
+Each DAG node declares file ownership hints.
+Parallel nodes should not target the same file area.
+Join nodes reconcile and review after branches finish.
+```
+
+This can stay simple. We do not need a full merge engine for the first version.
+We only need deterministic planning that avoids obvious overlap.
+
+### Runtime Locks
+
+Parallel branches share more than files. Two Codex processes in the same
+workspace can also collide on build-tool state, package-manager state, git
+state, cache directories, and ports.
+
+The planner must treat these as exclusive runtime locks:
+
+```text
+package-manager:
+  package.json, package-lock.json, pnpm-lock.yaml, yarn.lock, node_modules/**
+
+git:
+  .git/index.lock and other git write operations
+
+dev-server:
+  local ports used by npm/vite/api servers
+
+test-cache:
+  shared coverage, build, and cache directories
+
+env:
+  .env and generated local config files
+```
+
+Demo-safe rule:
+
+```text
+Parallel branch nodes do not run package installs.
+Parallel branch nodes do not start long-lived dev servers.
+Parallel branch nodes do not run git write operations.
+Parallel branch nodes do not edit .env or lockfiles.
+Setup, dependency installation, final test runs, and dev-server checks happen in
+single-owner setup or join nodes.
+```
+
+This keeps the shared workspace realistic without letting unrelated runtime
+collisions break the parallel branch demo.
+
+### Planner-Written AGENTS.md
+
+The DAG planner can create or update the shared workspace `AGENTS.md` before the
+group task starts. This is useful because `AGENTS.md` becomes the workspace
+charter for the whole group task.
+
+It should include:
+
+```text
+Group task summary
+Selected group members
+General role of each Agent
+Current file ownership map
+Shared engineering constraints
+Conflict and preservation rules
+Secret-handling rules
+```
+
+Example:
+
+```text
+This is a shared group workspace for the Upload Feature Team.
+
+Members:
+  Backend Agent - owns backend API and storage changes.
+  Frontend Agent - owns user-facing upload UI changes.
+  Security Agent - reviews auth, validation, and secret boundaries.
+
+Rules:
+  Follow the active Agent identity supplied in the turn prompt.
+  Respect the DAG node's file ownership hints.
+  Preserve other Agents' work.
+  Do not expose secrets across Agent boundaries.
+```
+
+The planner-written `AGENTS.md` should not say:
+
+```text
+You are Backend Agent.
+```
+
+That would make the shared workspace biased toward one Agent. The file should
+describe the group contract. The active identity still belongs in the per-turn
+prompt.
+
+One important runtime detail: if `AGENTS.md` changes after an Agent's group
+thread already exists, do not assume the resumed Codex thread will receive the
+new file as fresh system context. The app should still inject the current role,
+DAG node, file ownership, and relevant workspace charter details in the
+per-turn prompt.
+
+### Per-Turn Identity
+
+Using the same workspace but different Codex threads is acceptable, as long as
+identity is injected per turn.
+
+The design should be:
+
+```text
+same workspace
+different groupThreadId per Agent per group
 per-turn identity prompt
-sequential or DAG execution
+planner-written shared AGENTS.md
 ```
+
+Each run prompt supplies the active identity:
+
+```text
+[Your identity for this turn]
+You are Backend Agent.
+Role: backend implementation.
+You own backend API files for this turn.
+```
+
+This avoids the shared-thread identity problem. Each Agent has its own Codex
+group thread, so Backend's session framing does not become Frontend's session
+framing. The shared workspace only shares files, not Codex conversation state.
 
 ---
 
@@ -438,6 +758,7 @@ interface AgentGroup {
   name: string;
   description: string;
   memberAgentIds: string[];
+  workspacePath: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -448,6 +769,8 @@ interface GroupMessage {
   seq: number;
   speakerType: "human" | "agent";
   speakerAgentId: string | null;
+  groupTaskId: string | null;
+  planNodeId: string | null;
   content: string;
   createdAt: string;
 }
@@ -455,9 +778,11 @@ interface GroupMessage {
 interface GroupParticipantState {
   groupId: string;
   agentId: string;
+  membershipEpoch: number;
   role: string;
   groupThreadId: string | null;
   lastSeenSeq: number;
+  removedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -481,13 +806,45 @@ interface GroupTask {
   completedAt: string | null;
 }
 
+type GroupPlanNodeKind = "work" | "join";
+
 interface GroupPlanNode {
   id: string;
   groupTaskId: string;
   agentId: string;
+  kind: GroupPlanNodeKind;
+  nodeRole: string;
   dependsOn: string[];
+  contextSnapshotSeq: number;
+  allowedPlanNodeIds: string[];
   status: GroupTaskStatus;
   runId: string | null;
+  readOnly: boolean;
+  fileOwnershipHints: string[];
+  runtimeLocks: string[];
+  expectedOutput: string;
+}
+
+interface GroupRuntimeLock {
+  id: string;
+  groupTaskId: string;
+  lockKey: string;
+  holderPlanNodeId: string;
+  acquiredAt: string;
+  releasedAt: string | null;
+}
+
+interface GroupContextInjection {
+  id: string;
+  groupTaskId: string;
+  planNodeId: string;
+  agentId: string;
+  fromSeqExclusive: number;
+  toSeqInclusive: number;
+  injectedMessageIds: string[];
+  injectedDependencyNodeIds: string[];
+  withheldMessageIds: string[];
+  createdAt: string;
 }
 ```
 
@@ -496,6 +853,19 @@ This can be simplified during implementation. The most important fields are:
 - `GroupMessage.seq`
 - `GroupParticipantState.groupThreadId`
 - `GroupParticipantState.lastSeenSeq`
+- `GroupParticipantState.membershipEpoch`
+- `GroupParticipantState.removedAt`
+- `AgentGroup.workspacePath`
+- `GroupPlanNode.kind`
+- `GroupPlanNode.nodeRole`
+- `GroupPlanNode.dependsOn`
+- `GroupPlanNode.contextSnapshotSeq`
+- `GroupPlanNode.allowedPlanNodeIds`
+- `GroupPlanNode.fileOwnershipHints`
+- `GroupPlanNode.runtimeLocks`
+- `GroupRuntimeLock.lockKey`
+- `GroupContextInjection.injectedMessageIds`
+- `GroupContextInjection.injectedDependencyNodeIds`
 - speaker-labelled message content
 
 ---
@@ -530,60 +900,105 @@ This separation matters because not every group message deserves to become
 memory. Some messages are temporary coordination. Some are useful future
 constraints. Some are private or risky and should not leave the group.
 
+The memory middleware should not rewrite an Agent's role. It should only save
+knowledge that is relevant to that Agent or to an authorized future task.
+
+Example:
+
+```text
+Backend Agent should remember:
+  Frontend does not need backend secrets.
+  Upload API contracts should expose public fields only.
+
+Backend Agent should not remember:
+  Frontend-specific styling preferences unrelated to backend work.
+  Random group chatter.
+```
+
+This keeps each Agent on track. A Backend Agent can learn better backend
+collaboration habits from group work, but it does not become a Frontend Agent.
+
 ---
 
 ## Demo Flow
 
-Minimal demo:
+Demo path:
 
 ```text
 1. Create Backend, Frontend, and Security Agents.
-2. Create Upload Feature Team group.
+2. Create Upload Feature Team group by toggling those three Agents on.
 3. Send group task: "Plan an upload feature."
-4. Backend speaks first.
-5. Frontend receives Backend's message through transcript sync and replies.
-6. Security receives Backend + Frontend messages and replies.
-7. Backend takes another turn and receives only new messages since its last turn.
-8. UI shows one shared group timeline with speaker labels.
-9. UI or trace shows each Agent's lastSeenSeq / injected transcript delta.
+4. The app creates or loads one shared group workspace.
+5. The app creates a branch-and-join DAG for the task.
+6. The app validates the DAG before launch:
+   distinct Agents per parallel phase, non-overlapping write paths, and no
+   duplicate runtime locks.
+7. Backend runs the setup node and writes the API contract.
+8. Frontend and Security run branch nodes from Backend's output.
+9. The planner-selected join owner merges their outputs into one shared plan.
+10. Backend and Frontend run implementation nodes with non-overlapping file
+   ownership hints and no shared runtime locks.
+11. The planner-selected join owner runs the final join, including final tests
+   or dev-server checks if needed.
+12. The UI shows one group timeline with speaker labels.
+13. The trace shows each Agent's transcript delta, groupThreadId, DAG node, file
+   ownership hints, runtime locks, and withheld branch messages.
+14. Memory review shows which group learnings are proposed for carryover.
 ```
 
 What this proves:
 
 - multiple real Agents participate in one task;
+- selected membership controls who can participate;
 - Agents do not share one Codex thread;
 - the group chat history is shared through the app;
 - each Agent receives only the transcript delta it has not seen;
-- the user sees one coherent group conversation.
+- Agents work against one shared workspace artifact;
+- branch-and-join orchestration controls parallelism and integration;
+- the planner prevents duplicate Agents inside the same parallel phase;
+- runtime locks prevent non-file collisions during parallel work;
+- memory governance can promote relevant group learnings after the task.
 
 ---
 
-## Open Questions
+## Locked Decisions
 
-1. Should group tasks use per-Agent workspaces first, or a shared group
-   workspace?
-2. Should each Agent have a separate `groupThreadId` per group from day one, or
-   should MVP reuse the current `codexThreadId`?
-3. Should the first implementation be a simple sequence or a tiny DAG?
-4. Should the user be able to manually choose the next speaker?
-5. Should a group task end after one pass through all Agents, or after a fixed
-   number of rounds?
-
-Recommended first answers:
+The group chat idea now has these fixed choices:
 
 ```text
-workspace: per-Agent workspaces
-thread: separate groupThreadId per Agent per group if feasible
-orchestration: deterministic sequence
-speaker control: automatic first, manual later
-termination: one pass for MVP, configurable rounds later
+membership: explicit Agent toggles, frozen while a task is running
+re-add policy: new membership epoch and fresh groupThreadId
+workspace: shared group workspace
+threading: separate groupThreadId per Agent per group
+transcript: app-owned group timeline
+history injection: branch-aware context packet, with lastSeenSeq as dedupe only
+orchestration: branch-and-join DAG
+demo planner: preseeded/template-generated DAG result
+join ownership: planner assigns join nodes to the most relevant selected Agent
+identity: planner-written AGENTS.md plus per-turn Agent identity prompt
+parallel safety: distinct Agents, non-overlapping file ownership hints, and no duplicate runtime locks
+termination: final join node completes the group task
+memory: reviewed carryover after task completion
 ```
+
+---
+
+## First Version Boundary
+
+The first version does not need:
+
+- free-form autonomous planning;
+- manual speaker selection;
+- shared Codex threads;
+- automatic merge conflict resolution;
+- unlimited transcript replay from the beginning;
+- automatic memory writes without review.
 
 ---
 
 ## One-Sentence Summary
 
-Group chat should be implemented as a shared app-level transcript with
-speaker-labelled messages and per-Agent transcript cursors. Each Agent runs in
-its own Codex context, receives only the new messages it has not seen, and writes
-its reply back into the shared group timeline.
+Group chat is a selected set of Agents working in one shared workspace through
+separate group-scoped Codex threads, coordinated by an app-owned transcript and
+a branch-and-join DAG that controls who sees what, who writes where, and what
+knowledge can become memory afterward.
