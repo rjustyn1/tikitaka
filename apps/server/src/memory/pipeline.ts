@@ -13,6 +13,7 @@
 import type { Agent, AgentGroup } from "../types.js";
 import type { JsonStore } from "../store.js";
 import { Consolidator } from "./consolidator.js";
+import { GROUP_ROLES } from "./group-chain.js";
 import {
   createExtractorClient,
   memoryConfigFromEnv,
@@ -118,7 +119,13 @@ function syntheticGroup(groupId: string, members: Agent[]): AgentGroup {
     id: groupId,
     name: "",
     description: "",
-    memberAgentIds: members.map((agent) => agent.id),
+    // A4: roles are positional here only because this is a fallback for a
+    // missing group row. The consolidator reads no group fields (see
+    // integrationManifest3 section 5), so the roles are never consulted.
+    members: members.map((agent, index) => ({
+      agentId: agent.id,
+      role: GROUP_ROLES[index] ?? "backend",
+    })),
     activeTaskId: null,
     createdAt: now(),
     updatedAt: now(),
