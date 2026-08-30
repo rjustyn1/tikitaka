@@ -560,6 +560,24 @@ input {
   margin-top: 6px;
 }
 
+/*
+ * Checkboxes are NOT text fields. The rules above are written for text inputs,
+ * and a checkbox inherits every one of them: width:100% stretches it to fill
+ * whatever flex space the row has left, and the browser then paints the tick
+ * box centred inside that stretched width. The visible result is a giant
+ * checkbox whose position drifts row to row, because each row's leftover width
+ * differs with the label length and whether a role select is present.
+ */
+input[type="checkbox"],
+input[type="radio"] {
+  width: auto;
+  height: auto;
+  flex: none;
+  padding: 0;
+  margin-top: 0;
+  accent-color: var(--purple);
+}
+
 textarea {
   resize: vertical;
   padding: 11px 12px;

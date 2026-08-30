@@ -117,8 +117,15 @@ export function GroupEditor({ agents, group, busy, onCancel, onSubmit }: Props) 
 
           <div className="roster-head">
             <span className="eyebrow">Members</span>
-            <span className={members.length >= 3 ? "roster-ok" : "roster-missing"}>
-              {members.length} of {MAX_MEMBERS} selected
+            {/*
+              A team is valid at ONE member now, so "3" is not a threshold any
+              more -- that was the old exactly-three rule. The denominator is
+              how many Agents exist to pick from, not the cap; showing "of 12"
+              beside four Agents read as though eight were missing.
+            */}
+            <span className={members.length > 0 ? "roster-ok" : "roster-missing"}>
+              {members.length} of {agents.length} selected
+              {members.length >= MAX_MEMBERS && " (max " + MAX_MEMBERS + ")"}
             </span>
           </div>
 

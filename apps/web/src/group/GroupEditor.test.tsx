@@ -103,6 +103,35 @@ describe("GroupEditor", () => {
     const boxes = screen.getAllByRole("checkbox");
     for (const box of boxes.slice(0, 12)) fireEvent.click(box);
     expect(boxes[12]).toBeDisabled();
-    expect(screen.getByText("12 of 12 selected")).toBeInTheDocument();
+    // The denominator is the Agents available (13); the cap is called out
+    // separately, and only once it actually binds.
+    expect(screen.getByText(/12 of 13 selected/)).toBeInTheDocument();
+    expect(screen.getByText(/\(max 12\)/)).toBeInTheDocument();
+  });
+});
+
+describe("the member counter", () => {
+  it("counts against the Agents available, not the cap", () => {
+    // "3 of 12 selected" beside four Agents read as though eight were missing.
+    renderEditor();
+    fireEvent.click(screen.getAllByRole("checkbox")[0]!);
+    expect(screen.getByText(/1 of 4 selected/)).toBeInTheDocument();
+    expect(screen.queryByText(/of 12 selected/)).not.toBeInTheDocument();
+  });
+
+  it("treats a single-member team as valid, not as missing two", () => {
+    // The old exactly-three rule is gone; one member is a complete team.
+    renderEditor();
+    fireEvent.click(screen.getAllByRole("checkbox")[0]!);
+    const counter = screen.getByText(/1 of 4 selected/);
+    expect(counter.className).toContain("roster-ok");
+    expect(counter.className).not.toContain("roster-missing");
+  });
+
+  it("flags only an empty roster", () => {
+    renderEditor();
+    expect(screen.getByText(/0 of 4 selected/).className).toContain(
+      "roster-missing",
+    );
   });
 });
