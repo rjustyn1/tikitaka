@@ -122,6 +122,14 @@ export class GroupRunner {
     return group;
   }
 
+  /** All tasks for a group, newest first — powers the task history UI. */
+  listGroupTasks(groupId: string): GroupTask[] {
+    return this.store
+      .snapshot()
+      .groupTasks.filter((task) => task.groupId === groupId)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }
+
   async createGroup(input: CreateGroupInput): Promise<AgentGroup> {
     const membershipError = findMembershipError(input.members);
     if (membershipError) {
@@ -319,6 +327,10 @@ export class GroupRunner {
     // `Promise.all` over runnable sets after parallel-set validation (A4).
     for (const node of chain) {
       if (this.activeTasks.get(taskId)?.cancelled) break;
+      // Resume: a node that already completed in an earlier run is not re-run;
+      // its output is reused. On a first run every node is queued, so this is a
+      // no-op there.
+      if (node.status === "completed") continue;
       const status = await this.runPlanNode(taskId, node.id);
       if (status !== "completed") break;
     }
@@ -694,6 +706,77 @@ export class GroupRunner {
     for (const agentId of [...active.heldAgentIds]) {
       await this.runner.cancel(agentId);
     }
+    return this.getGroupTask(taskId).task;
+  }
+
+  // -------------------------------------------------------------------------
+  // Resume
+  // -------------------------------------------------------------------------
+
+  /**
+   * Continue a task that ended before completing (e.g. an Agent run ran out of
+   * tokens). Completed nodes and their outputs are kept; only the unfinished
+   * nodes are reset and re-run, reusing each Agent's existing groupThreadId and
+   * the same shared code directory. Useful after switching ARK_MODEL: restart,
+   * then resume onto the new model with prior context intact.
+   */
+  async resumeGroupTask(taskId: string): Promise<GroupTask> {
+    const database = this.store.snapshot();
+    const task = database.groupTasks.find((item) => item.id === taskId);
+    if (!task) {
+      throw new HttpError(404, "Group task not found");
+    }
+    const resumable: GroupTaskStatus[] = ["partial", "failed", "cancelled"];
+    if (!resumable.includes(task.status)) {
+      throw new HttpError(409, `A ${task.status} task cannot be resumed`);
+    }
+    const group = database.groups.find((item) => item.id === task.groupId);
+    if (!group) {
+      throw new HttpError(404, "Group not found");
+    }
+    if (group.activeTaskId && group.activeTaskId !== taskId) {
+      throw new HttpError(409, "This group already has a running task");
+    }
+    const unfinished = database.groupPlanNodes.filter(
+      (node) => node.groupTaskId === taskId && node.status !== "completed",
+    );
+    if (unfinished.length === 0) {
+      throw new HttpError(409, "This task has no unfinished nodes to resume");
+    }
+
+    // Drop the earlier partial flush's auto notes so the final flush over the
+    // full transcript is authoritative. Human-decided notes are kept.
+    await this.memoryPipeline.resetAutoNotes(taskId);
+
+    const timestamp = now();
+    await this.store.mutate((db) => {
+      for (const node of db.groupPlanNodes) {
+        if (node.groupTaskId === taskId && node.status !== "completed") {
+          node.status = "queued";
+          node.runId = null;
+          node.output = null;
+          node.error = null;
+          node.startedAt = null;
+          node.completedAt = null;
+        }
+      }
+      const storedTask = db.groupTasks.find((item) => item.id === taskId);
+      if (storedTask) {
+        storedTask.status = "queued";
+        storedTask.currentNodeId = null;
+        storedTask.completedAt = null;
+        // Allow the resumed run to consolidate again when it reaches the end.
+        storedTask.flushedAt = null;
+      }
+      const storedGroup = db.groups.find((item) => item.id === task.groupId);
+      if (storedGroup) {
+        storedGroup.activeTaskId = taskId;
+        storedGroup.updatedAt = timestamp;
+      }
+    });
+
+    this.activeTasks.set(taskId, { cancelled: false, heldAgentIds: new Set() });
+    void this.executeGroupTask(taskId).catch(() => undefined);
     return this.getGroupTask(taskId).task;
   }
 

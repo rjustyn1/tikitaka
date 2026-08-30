@@ -263,6 +263,11 @@ export async function createApp(
     return reply.code(202).send({ task });
   });
 
+  app.get("/api/groups/:id/tasks", async (request) => {
+    const { id } = groupIdParams.parse(request.params);
+    return { tasks: service.listGroupTasks(id) };
+  });
+
   app.get("/api/groups/:id/tasks/:taskId", async (request) => {
     const { taskId } = groupTaskParams.parse(request.params);
     return service.getGroupTask(taskId);
@@ -271,6 +276,12 @@ export async function createApp(
   app.post("/api/groups/:id/tasks/:taskId/cancel", async (request, reply) => {
     const { taskId } = groupTaskParams.parse(request.params);
     const task = await service.cancelGroupTask(taskId);
+    return reply.code(202).send({ task });
+  });
+
+  app.post("/api/groups/:id/tasks/:taskId/resume", async (request, reply) => {
+    const { taskId } = groupTaskParams.parse(request.params);
+    const task = await service.resumeGroupTask(taskId);
     return reply.code(202).send({ task });
   });
 

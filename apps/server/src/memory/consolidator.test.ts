@@ -130,13 +130,36 @@ describe("Consolidator", () => {
     expect(notes).toEqual([]);
   });
 
-  it("rejects notes citing source span IDs not present in the buffer", async () => {
+  it("drops unknown source span IDs but keeps the note", async () => {
     const notes = await new Consolidator(
       new StubExtractor(
         noteJson({ sourceSpanIds: ["99999999-9999-4999-8999-999999999999"] }),
       ),
     ).consolidate(input);
-    expect(notes).toEqual([]);
+    // The bad id is filtered out; the note survives (real models cite loosely).
+    expect(notes).toHaveLength(1);
+    expect(notes[0]!.sourceSpanIds).toEqual([]);
+  });
+
+  it("defaults missing severity/targets/description instead of dropping the note", async () => {
+    // A minimal note like the real Ark model returned: only content + sources.
+    const minimal = JSON.stringify({
+      notes: [
+        {
+          content: "All API datetimes are UTC; the frontend localizes for display.",
+          sourceRunIds: [RUN_A],
+          sourceSpanIds: [SPAN_A],
+        },
+      ],
+    });
+    const notes = await new Consolidator(new StubExtractor(minimal)).consolidate(
+      input,
+    );
+    expect(notes).toHaveLength(1);
+    expect(notes[0]!.severity).toBe("normal");
+    // No targets given -> defaults to the whole group.
+    expect(notes[0]!.targetAgentIds.sort()).toEqual([AGENT_A, AGENT_B].sort());
+    expect(notes[0]!.description.length).toBeGreaterThan(0);
   });
 
   it("caps the result at five notes", async () => {

@@ -584,6 +584,14 @@ export class AgentService implements AgentLease {
     return this.groupRunner.cancelGroupTask(taskId);
   }
 
+  async resumeGroupTask(taskId: string): Promise<GroupTask> {
+    return this.groupRunner.resumeGroupTask(taskId);
+  }
+
+  listGroupTasks(groupId: string): GroupTask[] {
+    return this.groupRunner.listGroupTasks(groupId);
+  }
+
   getGroupTask(taskId: string): GroupTaskResponse {
     return this.groupRunner.getGroupTask(taskId);
   }

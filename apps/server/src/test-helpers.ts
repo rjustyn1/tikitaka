@@ -162,11 +162,16 @@ export class FakeRunner implements AgentRunner {
  */
 export class RecordingMemoryPipeline implements MemoryPipeline {
   readonly calls: Array<{ groupTaskId: string; sinkNodeIds: string[] }> = [];
+  readonly resetCalls: string[] = [];
 
   async runMemoryPipeline(
     groupTaskId: string,
     sinkNodeIds: string[],
   ): Promise<void> {
     this.calls.push({ groupTaskId, sinkNodeIds });
+  }
+
+  async resetAutoNotes(groupTaskId: string): Promise<void> {
+    this.resetCalls.push(groupTaskId);
   }
 }

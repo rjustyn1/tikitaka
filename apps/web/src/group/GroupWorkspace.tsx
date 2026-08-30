@@ -12,6 +12,7 @@ import type {
   Agent,
   AgentGroup,
   GroupMember,
+  GroupTask,
   ReviewNoteInput,
 } from "../types";
 import { GroupEditor } from "./GroupEditor";
@@ -51,6 +52,7 @@ export function GroupWorkspace({
   onOpenTrace: (runId: string) => void;
 }) {
   const [groups, setGroups] = useState<AgentGroup[]>([]);
+  const [tasks, setTasks] = useState<GroupTask[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [taskId, setTaskId] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("chain");
@@ -97,6 +99,24 @@ export function GroupWorkspace({
       setError(reason instanceof Error ? reason.message : String(reason)),
     );
   }, [refreshGroups]);
+
+  const refreshTasks = useCallback(async () => {
+    if (!selectedId) {
+      setTasks([]);
+      return;
+    }
+    const { tasks: next } = await api.listGroupTasks(selectedId);
+    setTasks(next);
+  }, [selectedId]);
+
+  // Load the history when the team changes, and refresh it whenever the live
+  // task reaches a terminal status so the row reflects the outcome.
+  useEffect(() => {
+    void refreshTasks().catch(() => undefined);
+  }, [refreshTasks]);
+  useEffect(() => {
+    if (task && isTerminal(task.status)) void refreshTasks().catch(() => undefined);
+  }, [task?.status, refreshTasks]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Follow whichever task the selected group is running, so a reload or a
   // group switch lands on live state rather than an empty screen.
@@ -170,6 +190,7 @@ export function GroupWorkspace({
       setPrompt("");
       setTab("chain");
       await refreshGroups();
+      await refreshTasks();
     });
   };
 
@@ -179,7 +200,24 @@ export function GroupWorkspace({
       await api.cancelGroupTask(group.id, taskId);
       await state.refresh();
       await refreshGroups();
+      await refreshTasks();
     });
+  };
+
+  const resume = (id: string) => {
+    if (!group) return;
+    void guard(async () => {
+      await api.resumeGroupTask(group.id, id);
+      setTaskId(id);
+      setTab("chain");
+      await refreshGroups();
+      await refreshTasks();
+    });
+  };
+
+  const openTask = (id: string) => {
+    setTaskId(id);
+    setTab("chain");
   };
 
   const reviewNote = (noteId: string, input: ReviewNoteInput) => {
@@ -290,6 +328,20 @@ export function GroupWorkspace({
               Cancel task
             </button>
           )}
+          {task &&
+            !running &&
+            (task.status === "partial" ||
+              task.status === "failed" ||
+              task.status === "cancelled") && (
+              <button
+                className="button button-primary"
+                onClick={() => taskId && resume(taskId)}
+                disabled={busy}
+                title="Continue the unfinished nodes (e.g. after switching model)"
+              >
+                Resume task
+              </button>
+            )}
         </div>
       </header>
 
@@ -313,6 +365,48 @@ export function GroupWorkspace({
             Start task
           </button>
         </form>
+      )}
+
+      {group && tasks.length > 0 && (
+        <section className="task-history">
+          <h3>Task history</h3>
+          <ul>
+            {tasks.map((item) => {
+              const resumable =
+                item.status === "partial" ||
+                item.status === "failed" ||
+                item.status === "cancelled";
+              return (
+                <li
+                  key={item.id}
+                  className={item.id === taskId ? "task-history-item selected" : "task-history-item"}
+                >
+                  <button
+                    className="task-history-open"
+                    onClick={() => openTask(item.id)}
+                    title="Open this task"
+                  >
+                    <Pill tone={statusTone(item.status)}>{item.status}</Pill>
+                    <span className="task-history-prompt">{item.prompt}</span>
+                    <span className="task-history-date">
+                      {new Date(item.createdAt).toLocaleString()}
+                    </span>
+                  </button>
+                  {resumable && !running && (
+                    <button
+                      className="button button-ghost"
+                      disabled={busy}
+                      onClick={() => resume(item.id)}
+                      title="Continue the unfinished nodes on the current model"
+                    >
+                      Resume
+                    </button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
       )}
 
       {task ? (

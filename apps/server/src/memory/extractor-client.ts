@@ -17,13 +17,10 @@ export interface ExtractorResponse {
 }
 
 /**
- * STUB SEAM (Person 1 / config.ts).
- *
- * This is the narrow slice of AppConfig the extractor needs. Once Person 1 adds
- * `memoryExtractor` and `memoryExtractTimeoutMs` to AppConfig, the real config
- * object structurally satisfies this interface and can be passed directly to
- * `createExtractorClient` with no change here. Until then, use
- * `memoryConfigFromEnv()` below.
+ * The narrow slice of AppConfig the extractor needs. AppConfig is a structural
+ * superset of this, so the real config object is passed straight into
+ * `createExtractorClient` (see index.ts). Kept as its own interface so the
+ * extractor has no dependency on the full config module.
  */
 export interface MemoryConfig {
   memoryExtractor: "ark" | "fake" | "off";
@@ -34,9 +31,9 @@ export interface MemoryConfig {
 }
 
 /**
- * STUB adapter: reads the memory config straight from the environment until
- * Person 1 lands the keys on AppConfig. Delete this and pass the real AppConfig
- * once `config.memoryExtractor` / `config.memoryExtractTimeoutMs` exist.
+ * Build a MemoryConfig directly from the environment. The app passes the real
+ * AppConfig instead (index.ts); this is the fallback used by tests and any
+ * standalone caller that has no AppConfig to hand.
  */
 export function memoryConfigFromEnv(
   env: NodeJS.ProcessEnv = process.env,

@@ -536,6 +536,7 @@ describe("Bridge 4 - handover to the memory pipeline", () => {
       async runMemoryPipeline() {
         throw new Error("consolidator unavailable");
       },
+      async resetAutoNotes() {},
     };
     const harness = await makeHarness(new FakeRunner(), exploding);
     const { task } = await runToCompletion(harness);
@@ -543,5 +544,103 @@ describe("Bridge 4 - handover to the memory pipeline", () => {
 
     expect(response.task.status).toBe("completed");
     expect(response.task.flushedAt).toBeNull();
+  });
+});
+
+describe("group task resume", () => {
+  it("resumes a partial task, reusing completed nodes and re-running the rest", async () => {
+    let failSecurity = true;
+    let securityId = "";
+    const runner = new FakeRunner({
+      failFor: (request) =>
+        failSecurity && request.agentId === securityId
+          ? "the model ran out of tokens"
+          : null,
+    });
+    const pipeline = new RecordingMemoryPipeline();
+    const harness = await makeHarness(runner, pipeline);
+    securityId = harness.security.id;
+
+    const group = await harness.service.createGroup({
+      name: "Upload Feature Team",
+      members: harness.members,
+    });
+    const task = await harness.service.startGroupTask(
+      group.id,
+      "Plan an upload feature.",
+    );
+    await settle(harness, task.id);
+
+    // The chain stops at the security node: two nodes completed, task is partial.
+    const partial = harness.service.getGroupTask(task.id);
+    expect(partial.task.status).toBe("partial");
+    const completedBefore = partial.nodes.filter(
+      (node) => node.status === "completed",
+    );
+    expect(completedBefore).toHaveLength(2);
+    expect(runner.requests).toHaveLength(3); // 2 ok + 1 failed
+
+    // Switch model (simulated) and resume.
+    failSecurity = false;
+    await harness.service.resumeGroupTask(task.id);
+    await settle(harness, task.id);
+
+    const done = harness.service.getGroupTask(task.id);
+    expect(done.task.status).toBe("completed");
+    expect(done.nodes.every((node) => node.status === "completed")).toBe(true);
+    // Completed nodes were NOT re-run: 3 (first run) + 3 (resume) = 6.
+    expect(runner.requests).toHaveLength(6);
+    // The already-completed node kept its original runId.
+    const contractBefore = completedBefore.find(
+      (node) => node.nodeRole === "backend-contract",
+    )!;
+    const contractAfter = done.nodes.find(
+      (node) => node.nodeRole === "backend-contract",
+    )!;
+    expect(contractAfter.runId).toBe(contractBefore.runId);
+    // The memory pipeline was asked to reset auto notes, then flushed again.
+    expect(pipeline.resetCalls).toContain(task.id);
+    expect(pipeline.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("rejects resuming a completed task", async () => {
+    const harness = await makeHarness();
+    const { task } = await runToCompletion(harness);
+    await expect(
+      harness.service.resumeGroupTask(task.id),
+    ).rejects.toMatchObject({ statusCode: 409 });
+  });
+});
+
+describe("group task history", () => {
+  it("lists a group's tasks newest first", async () => {
+    const harness = await makeHarness();
+    const group = await harness.service.createGroup({
+      name: "Upload Feature Team",
+      members: harness.members,
+    });
+    // Seed rows directly: two real runs on one group would collide on the
+    // shared ./code link (a separate local-process constraint), which is not
+    // what this test is about.
+    await harness.store.mutate((db) => {
+      const base = {
+        groupId: group.id,
+        prompt: "p",
+        sharedCodePath: "/tmp/shared",
+        status: "completed" as const,
+        currentNodeId: null,
+        nodeRunIds: [],
+        flushedAt: null,
+        startedAt: null,
+        completedAt: null,
+      };
+      db.groupTasks.push(
+        { ...base, id: "t-old", createdAt: "2026-01-01T00:00:00.000Z" },
+        { ...base, id: "t-new", createdAt: "2026-01-02T00:00:00.000Z" },
+      );
+    });
+
+    const tasks = harness.service.listGroupTasks(group.id);
+    expect(tasks.map((task) => task.id)).toEqual(["t-new", "t-old"]);
   });
 });

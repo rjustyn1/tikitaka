@@ -20,40 +20,69 @@ export interface ConsolidateInput {
 const MAX_NOTES = 5;
 
 const SYSTEM_PROMPT = [
-  "You are extracting governed memory notes from a completed multi-agent task.",
-  "Return STRICT JSON only, matching: { \"notes\": [ ... ] }.",
-  "Extract only durable facts, decisions, constraints, or collaboration lessons.",
-  "Do not create commands or imperatives; write declarative facts.",
-  "Do not route a note outside the listed group members.",
-  "Every note MUST cite sourceRunIds and sourceSpanIds using ids shown in the prompt.",
-  "Return at most 5 notes. If nothing is durable, return an empty notes array.",
+  "You extract governed memory notes from a completed multi-agent task. These",
+  "notes become durable memory that the target agents re-read on FUTURE tasks,",
+  "so extract reusable facts/decisions/constraints/lessons — not a play-by-play",
+  "of this task. Write declarative facts, never commands.",
+  "",
+  "Return ONLY a JSON object, no markdown fences, of this exact shape:",
+  "{",
+  '  "notes": [',
+  "    {",
+  '      "content": "<the durable fact, declarative, <=2000 chars>",',
+  '      "severity": "normal" | "severe",',
+  '      "targetAgentIds": ["<agent id from the Agents list below>"],',
+  '      "description": "<short trigger describing when this applies, <=300 chars>",',
+  '      "sourceRunIds": ["<a run id shown under Node outputs>"],',
+  '      "sourceSpanIds": ["<a span id shown under Node outputs>"],',
+  '      "rationale": "<why this is worth remembering>"',
+  "    }",
+  "  ]",
+  "}",
+  "",
+  "Rules for EVERY note (all fields are required):",
+  '- severity: "severe" for hard constraints that must never be missed (they',
+  "  land as always-on memory); otherwise \"normal\".",
+  "- targetAgentIds: pick one or more ids from the 'Agents you may target' list.",
+  "  Route to the agent(s) who will benefit on future work. Never invent ids.",
+  "- description: this is the relevance trigger — the target agent loads the note",
+  "  when a future task matches it, so make it specific.",
+  "- sourceRunIds / sourceSpanIds: copy the real ids shown under 'Node outputs'.",
+  "- Return at most 5 notes. If nothing is durable, return { \"notes\": [] }.",
 ].join("\n");
 
-// Per-note shape is strict; the array length is NOT capped here — an over-long
-// list is truncated to MAX_NOTES after validation rather than failing the whole
-// parse. Memory fails open.
+// Lenient on shape (real models omit fields or format ids loosely); we fill
+// defaults in normalizeCandidate and filter provenance in validateCandidates,
+// so a slightly-off response still yields usable notes instead of zero. Array
+// length is capped after validation, not here. Memory fails open.
 const extractorOutputSchema = z.object({
   notes: z.array(
     z.object({
       content: z.string().trim().min(1).max(2000),
-      severity: z.enum(["normal", "severe"]),
-      targetAgentIds: z.array(z.string().uuid()).min(1),
-      description: z.string().trim().min(1).max(300),
-      sourceRunIds: z.array(z.string().uuid()).min(1),
-      sourceSpanIds: z.array(z.string().uuid()).min(1),
-      rationale: z.string().trim().max(1000),
+      severity: z.enum(["normal", "severe"]).optional(),
+      targetAgentIds: z.array(z.string()).optional(),
+      description: z.string().trim().max(300).optional(),
+      sourceRunIds: z.array(z.string()).optional(),
+      sourceSpanIds: z.array(z.string()).optional(),
+      rationale: z.string().trim().max(1000).optional(),
     }),
   ),
 });
 
+/** Fallback when no timeout is configured. Large multi-node prompts are slow. */
+const DEFAULT_EXTRACT_TIMEOUT_MS = 120_000;
+
 export class Consolidator {
-  constructor(private readonly extractor: ExtractorClient) {}
+  constructor(
+    private readonly extractor: ExtractorClient,
+    private readonly timeoutMs: number = DEFAULT_EXTRACT_TIMEOUT_MS,
+  ) {}
 
   async consolidate(input: ConsolidateInput): Promise<CandidateMemoryNote[]> {
     let rawText: string;
     try {
       const response = await this.extractor.extract(
-        buildExtractorRequest(input),
+        buildExtractorRequest(input, this.timeoutMs),
       );
       rawText = response.rawText;
     } catch {
@@ -68,7 +97,10 @@ export class Consolidator {
   }
 }
 
-export function buildExtractorRequest(input: ConsolidateInput): ExtractorRequest {
+export function buildExtractorRequest(
+  input: ConsolidateInput,
+  timeoutMs: number = DEFAULT_EXTRACT_TIMEOUT_MS,
+): ExtractorRequest {
   const { taskBuffer, members } = input;
 
   const agentLines = members
@@ -106,7 +138,7 @@ export function buildExtractorRequest(input: ConsolidateInput): ExtractorRequest
   return {
     system: SYSTEM_PROMPT,
     prompt,
-    timeoutMs: 30_000,
+    timeoutMs,
   };
 }
 
@@ -139,18 +171,37 @@ function normalizeCandidate(
   raw: z.infer<typeof extractorOutputSchema>["notes"][number],
   input: ConsolidateInput,
 ): CandidateMemoryNote {
+  const content = raw.content.trim();
   return {
     id: randomUUID(),
     groupTaskId: input.taskBuffer.groupTaskId,
-    ...raw,
+    content,
+    severity: raw.severity ?? "normal",
+    // Routing is resolved (filtered to members / defaulted) in validateCandidates.
+    targetAgentIds: raw.targetAgentIds ?? [],
+    description:
+      raw.description?.trim() ||
+      (content.length > 120 ? content.slice(0, 117) + "…" : content),
+    sourceRunIds: raw.sourceRunIds ?? [],
+    sourceSpanIds: raw.sourceSpanIds ?? [],
+    rationale: raw.rationale?.trim() ?? "",
   };
 }
 
+/**
+ * Turn raw candidates into safe ones:
+ * - routing: keep only in-group targets; if the model gave targets but ALL are
+ *   out-of-group, drop the note (a real routing error); if it gave none, default
+ *   to the whole group (which trips broad-routing review, so a human decides).
+ * - provenance: filter cited run/span ids down to ones that actually exist in
+ *   the buffer, rather than discarding the whole note for one bad id.
+ */
 export function validateCandidates(
   candidates: CandidateMemoryNote[],
   input: ConsolidateInput,
 ): CandidateMemoryNote[] {
-  const memberIds = new Set(input.members.map((agent) => agent.id));
+  const memberIds = input.members.map((agent) => agent.id);
+  const memberSet = new Set(memberIds);
   const spanIds = new Set(
     input.taskBuffer.entries.flatMap((entry) => entry.spans.map((s) => s.id)),
   );
@@ -160,12 +211,18 @@ export function validateCandidates(
       .filter((id): id is string => Boolean(id)),
   );
 
-  return candidates.filter((note) => {
-    // Routing must stay inside the source group.
-    if (!note.targetAgentIds.every((id) => memberIds.has(id))) return false;
-    // Provenance must be real: every cited span/run must exist in the buffer.
-    if (!note.sourceSpanIds.every((id) => spanIds.has(id))) return false;
-    if (!note.sourceRunIds.every((id) => runIds.has(id))) return false;
-    return true;
-  });
+  const result: CandidateMemoryNote[] = [];
+  for (const note of candidates) {
+    const inGroup = note.targetAgentIds.filter((id) => memberSet.has(id));
+    if (note.targetAgentIds.length > 0 && inGroup.length === 0) {
+      continue; // model tried to route entirely out of group — drop it
+    }
+    result.push({
+      ...note,
+      targetAgentIds: inGroup.length > 0 ? inGroup : [...memberIds],
+      sourceSpanIds: note.sourceSpanIds.filter((id) => spanIds.has(id)),
+      sourceRunIds: note.sourceRunIds.filter((id) => runIds.has(id)),
+    });
+  }
+  return result;
 }

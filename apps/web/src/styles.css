@@ -1474,3 +1474,61 @@ textarea:focus {
 .chain-preview ol { margin: 8px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 5px; }
 .chain-preview li { font-size: 12px; display: flex; align-items: center; gap: 7px; }
 .chain-preview em { color: var(--muted); font-style: normal; font-size: 11px; }
+
+/* Task history — list past tasks for a team so a failed run can be reopened
+   and resumed. (Person 4 surface; added with the resume feature.) */
+.task-history {
+  margin-top: 14px;
+}
+.task-history h3 {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0 0 8px;
+  font-weight: 600;
+}
+.task-history ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.task-history-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 6px 10px;
+  background: var(--paper);
+}
+.task-history-item.selected {
+  border-color: var(--purple);
+}
+.task-history-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  padding: 2px 0;
+  color: inherit;
+  font: inherit;
+}
+.task-history-prompt {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-history-date {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}

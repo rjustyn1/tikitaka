@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { JsonStore } from "../store.js";
 import type { Agent, GroupPlanNode, GroupTask, TraceSpan } from "../types.js";
 import { FakeExtractorClient, type ExtractorClient } from "./extractor-client.js";
+import { LandingService } from "./landing.js";
 import { RealMemoryPipeline } from "./pipeline.js";
 
 const temporaryDirectories: string[] = [];
@@ -144,13 +145,13 @@ describe("RealMemoryPipeline", () => {
     expect(db.notes.some((n) => n.status === "active")).toBe(true);
     expect(db.notes.some((n) => n.status === "pending")).toBe(true);
 
-    // At least one file landed, and the task was flushed.
+    // At least one file landed. (flushedAt is stamped by the GroupRunner, not
+    // the pipeline, so it is asserted in group-runner.test.ts.)
     const active = db.landedMemoryFiles.filter((f) => f.removedAt === null);
     expect(active.length).toBeGreaterThanOrEqual(1);
     expect(await exists(active[0]!.path)).toBe(true);
     expect(db.grants.some((g) => g.decision === "granted")).toBe(true);
     expect(db.grants.some((g) => g.decision === "withheld")).toBe(true);
-    expect(db.groupTasks[0]!.flushedAt).not.toBeNull();
   });
 
   it("never throws or fails the task when the extractor blows up", async () => {
@@ -187,6 +188,92 @@ describe("RealMemoryPipeline", () => {
     expect(errors[0]).toContain("does-not-exist");
   });
 });
+
+describe("RealMemoryPipeline.resetAutoNotes", () => {
+  it("removes auto notes + files but keeps human-decided notes", async () => {
+    const { store } = await seededStore();
+    const landing = new LandingService(store);
+
+    const autoNote = memoryNote("auto");
+    const humanNote = memoryNote("human");
+
+    // Land both so each has a real SKILL.md on disk + a landedMemoryFiles row.
+    await landing.landMemory(autoNote);
+    await landing.landMemory(humanNote);
+    await store.mutate((db) => {
+      db.notes.push(autoNote, humanNote);
+      // autoNote: only an automatic grant (null reviewer). humanNote: a human
+      // stamped a reviewerName, marking it human-decided.
+      db.grants.push(
+        {
+          id: "g-auto",
+          groupTaskId: "task-1",
+          noteId: autoNote.id,
+          agentId: AGENT_A,
+          decision: "granted",
+          reason: "granted",
+          filePath: "x",
+          reviewerName: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          id: "g-human",
+          groupTaskId: "task-1",
+          noteId: humanNote.id,
+          agentId: AGENT_A,
+          decision: "granted",
+          reason: "granted",
+          filePath: "y",
+          reviewerName: "Lionel",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      );
+    });
+
+    const autoFile = store
+      .snapshot()
+      .landedMemoryFiles.find((f) => f.noteId === autoNote.id)!.path;
+    const humanFile = store
+      .snapshot()
+      .landedMemoryFiles.find((f) => f.noteId === humanNote.id)!.path;
+    expect(await exists(autoFile)).toBe(true);
+
+    const pipeline = new RealMemoryPipeline(store, new FakeExtractorClient());
+    await pipeline.resetAutoNotes("task-1");
+
+    const db = store.snapshot();
+    // Auto note: gone from every table, file deleted.
+    expect(db.notes.some((n) => n.id === autoNote.id)).toBe(false);
+    expect(db.grants.some((g) => g.noteId === autoNote.id)).toBe(false);
+    expect(db.landedMemoryFiles.some((f) => f.noteId === autoNote.id)).toBe(false);
+    expect(await exists(autoFile)).toBe(false);
+    // Human-decided note: untouched.
+    expect(db.notes.some((n) => n.id === humanNote.id)).toBe(true);
+    expect(db.grants.some((g) => g.noteId === humanNote.id)).toBe(true);
+    expect(await exists(humanFile)).toBe(true);
+  });
+});
+
+function memoryNote(kind: string): import("../types.js").MemoryNote {
+  return {
+    id: `${kind}-11111111-1111-4111-8111-11111111111${kind === "auto" ? "1" : "2"}`,
+    groupTaskId: "task-1",
+    groupId: "group-1",
+    content: `A durable fact (${kind}).`,
+    severity: "normal",
+    status: "active",
+    targetAgentIds: [AGENT_A],
+    description: `${kind} note`,
+    sourceRunIds: [RUN_A],
+    sourceSpanIds: [SPAN_A],
+    rationale: "",
+    redactionFired: false,
+    quarantineHit: false,
+    safetyReasons: [],
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+}
 
 async function exists(target: string): Promise<boolean> {
   try {
