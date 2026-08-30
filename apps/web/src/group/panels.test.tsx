@@ -275,6 +275,63 @@ describe("ChainPanel", () => {
     };
   }
 
+  it("shows what each step waits on, so a DAG does not read as a chain", () => {
+    // The panel used to render a bare numbered list, so a fan-out and a
+    // straight chain looked identical — which is what made a working planner
+    // look broken.
+    render(
+      <ChainPanel
+        nodes={[
+          planNode({ id: "n1", nodeRole: "backend-contract", instruction: "x" }),
+          planNode({
+            id: "n2",
+            nodeRole: "frontend-plan",
+            dependsOn: ["n1"],
+            instruction: "x",
+          }),
+          planNode({
+            id: "n3",
+            nodeRole: "security-review",
+            dependsOn: ["n1"],
+            instruction: "x",
+          }),
+          planNode({
+            id: "n4",
+            nodeRole: "backend-impl",
+            kind: "join",
+            dependsOn: ["n2", "n3"],
+            instruction: "x",
+          }),
+        ]}
+        agents={agents}
+        group={group}
+        onOpenTrace={vi.fn()}
+      />,
+    );
+    // Dependencies read as step names, not ids.
+    expect(screen.getAllByText("frontend-plan").length).toBeGreaterThan(1);
+    expect(screen.getByText("starts the plan")).toBeInTheDocument();
+    // The fan-in is labelled.
+    expect(screen.getByText("join")).toBeInTheDocument();
+    // And the branching is called out at the top.
+    expect(screen.getByText(/This plan branches/)).toBeInTheDocument();
+  });
+
+  it("says nothing about branching for a straight chain", () => {
+    render(
+      <ChainPanel
+        nodes={[
+          planNode({ id: "n1", nodeRole: "a", instruction: "x" }),
+          planNode({ id: "n2", nodeRole: "b", dependsOn: ["n1"], instruction: "x" }),
+        ]}
+        agents={agents}
+        group={group}
+        onOpenTrace={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText(/This plan branches/)).not.toBeInTheDocument();
+  });
+
   it("renders the instruction the planner persisted, not the role name alone", () => {
     render(
       <ChainPanel

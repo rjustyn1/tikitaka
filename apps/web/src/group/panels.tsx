@@ -51,6 +51,28 @@ export function EmptyState({ icon, title, body }: {
   );
 }
 
+/** A dependency's step name, so the graph reads in words rather than in ids. */
+function roleOfNode(nodes: GroupPlanNode[], id: string): string {
+  return nodes.find((node) => node.id === id)?.nodeRole ?? shortId(id);
+}
+
+/**
+ * How many steps share a predecessor with another step — i.e. how much of the
+ * plan is genuinely branched rather than sequential. Zero means a straight
+ * chain, which is also what the planner's offline fallback produces.
+ */
+function concurrentSteps(nodes: GroupPlanNode[]): number {
+  const dependents = new Map<string, number>();
+  for (const node of nodes) {
+    for (const id of node.dependsOn) {
+      dependents.set(id, (dependents.get(id) ?? 0) + 1);
+    }
+  }
+  return nodes.filter((node) =>
+    node.dependsOn.some((id) => (dependents.get(id) ?? 0) > 1),
+  ).length;
+}
+
 /** The planner-authored node order, with live status per node. */
 export function ChainPanel({
   nodes,
@@ -72,8 +94,16 @@ export function ChainPanel({
       />
     );
   }
+  const parallelGroups = concurrentSteps(nodes);
   return (
     <div className="chain">
+      {parallelGroups > 0 && (
+        <p className="chain-shape">
+          This plan branches: {parallelGroups} step
+          {parallelGroups === 1 ? "" : "s"} have work that can run alongside
+          another step rather than waiting for it.
+        </p>
+      )}
       {orderedNodes(nodes).map((node, index) => (
         <div key={node.id} className={"chain-node status-" + node.status}>
           <div className="chain-index">{index + 1}</div>
@@ -81,7 +111,27 @@ export function ChainPanel({
             <div className="chain-title">
               <strong>{node.nodeRole}</strong>
               <Pill tone={statusTone(node.status)}>{node.status}</Pill>
+              {node.kind === "join" && <Pill tone="ok">join</Pill>}
               {node.readOnly && <Pill tone="idle">read-only</Pill>}
+            </div>
+            {/*
+              The graph, not just the order. The plan is a DAG — steps fan out
+              and rejoin — and rendering it as a bare numbered list made every
+              plan look like a straight chain regardless of its real shape.
+            */}
+            <div className="chain-deps">
+              {node.dependsOn.length === 0 ? (
+                <span className="chain-dep chain-dep-entry">starts the plan</span>
+              ) : (
+                <>
+                  <span className="chain-dep-label">after</span>
+                  {node.dependsOn.map((id) => (
+                    <span key={id} className="chain-dep">
+                      {roleOfNode(nodes, id)}
+                    </span>
+                  ))}
+                </>
+              )}
             </div>
             <div className="chain-meta">
               <span>

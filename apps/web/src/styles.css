@@ -2242,3 +2242,25 @@ textarea:focus {
 .approval-safety { margin: 0 0 9px; font-size: 12px; color: #973939; font-weight: 600; }
 .approval-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 .approval-actions .button { min-height: 34px; }
+/* --- the plan graph --- */
+.chain-shape {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.chain-deps {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  font-size: 11px;
+}
+.chain-dep-label { color: var(--muted); }
+.chain-dep {
+  background: #ecebe6;
+  border-radius: 6px;
+  padding: 2px 7px;
+  color: var(--muted);
+}
+.chain-dep-entry { font-style: italic; }
