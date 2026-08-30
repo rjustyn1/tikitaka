@@ -449,3 +449,37 @@ describe("the offline planner client", () => {
     expect(first.nodes).toEqual(second.nodes);
   });
 });
+
+describe("join nodes", () => {
+  it("marks a fan-in node as a join, and a single-dependency node as work", () => {
+    // The watermark in ARCHITECTURE.md section 9 needs a boundary to fire on,
+    // and a join is it: the point where every branch has reported in.
+    const parsed = parsePlannerJson(
+      plannerJson([
+        rawNode(),
+        rawNode({ agent: 2, dependsOn: [0] }),
+        rawNode({ agent: 3, dependsOn: [0] }),
+        rawNode({ agent: 1, dependsOn: [1, 2] }),
+      ]),
+    )!;
+    const validated = validatePlan(parsed, AGENTS);
+    if (!validated.ok) throw new Error("expected a valid plan");
+
+    const nodes = buildPlanNodes("t", validated.nodes, "2026-01-01T00:00:00.000Z");
+    expect(nodes.map((node) => node.kind)).toEqual([
+      "work",
+      "work",
+      "work",
+      "join",
+    ]);
+  });
+
+  it("leaves a purely sequential plan with no join nodes", () => {
+    const nodes = buildPlanNodes(
+      "t",
+      fallbackPlan({ prompt: "x", agents: AGENTS }),
+      "2026-01-01T00:00:00.000Z",
+    );
+    expect(nodes.every((node) => node.kind === "work")).toBe(true);
+  });
+});

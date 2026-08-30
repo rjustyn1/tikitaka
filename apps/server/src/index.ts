@@ -1,7 +1,7 @@
 import path from "node:path";
 import { AgentService } from "./agent-service.js";
 import { createApp } from "./app.js";
-import { loadConfig, writeCodexConfig } from "./config.js";
+import { isArkConfigured, loadConfig, writeCodexConfig } from "./config.js";
 import { createExtractorClient } from "./memory/extractor-client.js";
 import { createMemoryPipeline } from "./memory/pipeline.js";
 import { FakePlannerClient, TaskPlanner } from "./memory/planner.js";
@@ -23,13 +23,47 @@ const workspaces = new WorkspaceManager(
   config.runtimeProvider,
 );
 const runner = createRunner(config);
-// W1 + W2 - the real governed-memory pipeline, with Person 1 config.
-// MEMORY_EXTRACTOR defaults to "ark"; offline environments must select "fake".
-const memoryPipeline = createMemoryPipeline(store, config, {
-  reviewAllSkills: config.reviewAllSkills,
-});
+
+/**
+ * MEMORY_EXTRACTOR defaults to "ark", which means both the planner and memory
+ * extraction make a real model call. Without a usable key those calls fail on
+ * EVERY task -- and both components fail soft, so the symptom is not an error:
+ * the planner quietly returns its fallback (a plain sequential chain, no
+ * branching) and extraction quietly returns zero notes. That reads exactly like
+ * "the DAG does not work" while nothing is actually broken.
+ *
+ * So decide it ONCE, here, out loud, instead of rediscovering it per task.
+ */
+const arkReady = isArkConfigured(config);
+const effectiveExtractor =
+  config.memoryExtractor === "ark" && !arkReady ? "fake" : config.memoryExtractor;
+
+if (config.nodeEnv !== "test" && effectiveExtractor !== config.memoryExtractor) {
+  console.warn(
+    [
+      "",
+      "  MEMORY_EXTRACTOR=ark, but ARK_API_KEY/ARK_MODEL are not usable.",
+      "  Falling back to the OFFLINE planner and extractor so the app still runs.",
+      "",
+      "  What this changes:",
+      "    - plans come from FakePlannerClient (deterministic, ignores the task text)",
+      "    - governed memory notes are the canned demo notes, not real extraction",
+      "",
+      "  Set ARK_API_KEY and ARK_MODEL for the real thing, or set",
+      "  MEMORY_EXTRACTOR=fake to select this offline mode deliberately.",
+      "",
+    ].join("\n"),
+  );
+}
+
+// W1 + W2 - the real governed-memory pipeline.
+const memoryPipeline = createMemoryPipeline(
+  store,
+  { ...config, memoryExtractor: effectiveExtractor },
+  { reviewAllSkills: config.reviewAllSkills },
+);
 const planner = new TaskPlanner(
-  config.memoryExtractor === "ark"
+  effectiveExtractor === "ark"
     ? createExtractorClient(config)
     : new FakePlannerClient(),
   config.memoryExtractTimeoutMs,

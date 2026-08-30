@@ -37,19 +37,50 @@ const { LandingService } = await import(path.join(dist, "memory/landing.js"));
 const { LedgerService } = await import(path.join(dist, "memory/ledger.js"));
 const { ReviewService } = await import(path.join(dist, "memory/review.js"));
 const { evaluateNoteSafety } = await import(path.join(dist, "memory/safety.js"));
+// The REAL planner materialiser. The demo plan is built by the same code a live
+// task uses, so seeded rows can never drift from planner output again: ids,
+// `dependsOn`, `kind`, and the transitive `allowedPlanNodeIds` are all computed
+// here, not hand-written below.
+const { buildPlanNodes, deriveOwnership } = await import(
+  path.join(dist, "memory/planner.js")
+);
 
 const GROUP_NAME = "Upload Feature Team";
 const now = () => new Date().toISOString();
 const iso = (minutesAgo) =>
   new Date(Date.now() - minutesAgo * 60_000).toISOString();
 
-/** The v1 five-node chain: Backend and Frontend each take two turns. */
-const CHAIN = [
+/**
+ * The demo plan, in the planner's own `PlannedNode` shape.
+ *
+ * This is a real DAG, not a straight line -- and that matters, because the
+ * seeded task is what most people look at first. It used to be five nodes each
+ * depending on the previous one, with no `instruction` at all, which made the
+ * planner look like it was not running. The shape below is what a planner
+ * actually produces:
+ *
+ *     0 backend-contract
+ *       |
+ *       +-- 1 frontend-plan ---+
+ *       |                      +--> 3 backend-impl (JOIN) --> 4 frontend-impl
+ *       +-- 2 security-review -+
+ *
+ * Frontend planning and security review are independent of each other -- both
+ * only need the contract -- so they fan out. Backend implementation joins them,
+ * because it needs both answers before it can write code.
+ */
+const PLAN = [
   {
     role: "backend",
     nodeRole: "backend-contract",
-    owns: ["code/apps/server/**"],
-    locks: ["package-manager"],
+    dependsOnIndexes: [],
+    area: "server",
+    writes: true,
+    instruction:
+      "Propose the endpoint contract and the storage flow for the upload " +
+      "feature. State the public request and response shape explicitly, and " +
+      "say what must NOT cross the boundary to other Agents.",
+    expectedOutput: "An endpoint contract and storage flow.",
     output:
       "Contract: POST /uploads accepts multipart/form-data and returns " +
       "{ fileId, url }. Objects are stored under uploads/{userId}/{uuid}. " +
@@ -59,7 +90,14 @@ const CHAIN = [
   {
     role: "frontend",
     nodeRole: "frontend-plan",
-    readOnly: true,
+    dependsOnIndexes: [0],
+    area: "none",
+    writes: false,
+    instruction:
+      "Plan the upload widget and its API integration against the contract " +
+      "above. Ask for any public API detail you still need. Do not write " +
+      "code in this turn.",
+    expectedOutput: "A UI and API integration plan.",
     output:
       "The upload widget only needs fileId and url from the response. It does " +
       "not need storage credentials and should never receive them. I will " +
@@ -68,7 +106,14 @@ const CHAIN = [
   {
     role: "security",
     nodeRole: "security-review",
-    readOnly: true,
+    dependsOnIndexes: [0],
+    area: "none",
+    writes: false,
+    instruction:
+      "Review auth, validation, and secret boundaries across the contract. " +
+      "Call out anything that would leak a credential between Agents. Do not " +
+      "write code in this turn.",
+    expectedOutput: "A security review with explicit constraints.",
     output:
       "Agreed, and making it binding: storage credentials must never cross to " +
       "the browser. Enforce a 10MB limit server-side and return HTTP 413 on " +
@@ -77,7 +122,14 @@ const CHAIN = [
   {
     role: "backend",
     nodeRole: "backend-impl",
-    owns: ["code/apps/server/**"],
+    // The join: it needs BOTH the frontend plan and the security review.
+    dependsOnIndexes: [1, 2],
+    area: "server",
+    writes: true,
+    instruction:
+      "Implement the upload endpoint under ./code/apps/server, honouring the " +
+      "security constraints raised above and the shape the frontend plan needs.",
+    expectedOutput: "Backend implementation in shared code.",
     output:
       "Implemented POST /uploads with the 10MB limit and HTTP 413. Credentials " +
       "stay server-side; the response carries fileId and url only.",
@@ -85,7 +137,13 @@ const CHAIN = [
   {
     role: "frontend",
     nodeRole: "frontend-impl",
-    owns: ["code/apps/web/**"],
+    dependsOnIndexes: [3],
+    area: "web",
+    writes: true,
+    instruction:
+      "Implement the upload widget under ./code/apps/web against the " +
+      "implemented backend contract, including the oversize-file error state.",
+    expectedOutput: "Frontend implementation in shared code.",
     output:
       "Wired the upload widget to POST /uploads and surfaced the 413 as " +
       '"That file is larger than 10MB."',
@@ -270,7 +328,6 @@ async function main() {
   const messages = [];
   const injections = [];
   const locks = [];
-  let previousNodeId = null;
   let seq = 1;
 
   messages.push({
@@ -285,9 +342,27 @@ async function main() {
     createdAt: iso(30),
   });
 
-  CHAIN.forEach((step, index) => {
+  // Materialise the plan through the PRODUCTION path. buildPlanNodes assigns
+  // the ids, resolves dependsOnIndexes -> dependsOn, computes the transitive
+  // allowedPlanNodeIds, and marks the fan-in node's `kind`. The loop below only
+  // layers the demo's recorded outcome (runs, spans, transcript) on top.
+  const planNodes = buildPlanNodes(
+    taskId,
+    PLAN.map((step) => ({
+      agentId: byKey[step.role].id,
+      nodeRole: step.nodeRole,
+      instruction: step.instruction,
+      expectedOutput: step.expectedOutput,
+      dependsOnIndexes: step.dependsOnIndexes,
+      ...deriveOwnership(step.area, step.writes),
+    })),
+    iso(29),
+  );
+
+  PLAN.forEach((step, index) => {
     const agent = byKey[step.role];
-    const nodeId = randomUUID();
+    const planNode = planNodes[index];
+    const nodeId = planNode.id;
     const runId = randomUUID();
     const startedAt = iso(28 - index * 5);
     const completedAt = iso(26 - index * 5);
@@ -319,23 +394,14 @@ async function main() {
       }, completedAt),
     );
 
+    // Everything structural came from buildPlanNodes; only the outcome of the
+    // recorded run is added here.
     nodes.push({
-      id: nodeId,
-      groupTaskId: taskId,
-      agentId: agent.id,
-      kind: "work",
-      nodeRole: step.nodeRole,
-      dependsOn: previousNodeId ? [previousNodeId] : [],
+      ...planNode,
       contextSnapshotSeq: seq - 1,
-      allowedPlanNodeIds: nodes.map((node) => node.id),
       status: "completed",
       runId,
       output: step.output,
-      error: null,
-      readOnly: Boolean(step.readOnly),
-      fileOwnershipHints: step.owns ?? [],
-      runtimeLocks: step.locks ?? [],
-      expectedOutput: step.nodeRole,
       createdAt: startedAt,
       startedAt,
       completedAt,
@@ -355,12 +421,12 @@ async function main() {
       injectedMessageIds: messages
         .filter((message) => !seen.includes(message.id))
         .map((message) => message.id),
-      injectedDependencyNodeIds: previousNodeId ? [previousNodeId] : [],
+      injectedDependencyNodeIds: [...planNode.dependsOn],
       withheldMessageIds: seen,
       createdAt: startedAt,
     });
 
-    for (const lockKey of step.locks ?? []) {
+    for (const lockKey of planNode.runtimeLocks) {
       locks.push({
         id: randomUUID(),
         groupTaskId: taskId,
@@ -383,7 +449,6 @@ async function main() {
       createdAt: completedAt,
     });
 
-    previousNodeId = nodeId;
   });
 
   await store.mutate((db) => {

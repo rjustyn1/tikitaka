@@ -36,6 +36,10 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/apps/server/package.json ./apps/server/package.json
 COPY --from=build /app/apps/server/dist ./apps/server/dist
 COPY --from=build /app/apps/web/dist ./apps/web/dist
+# The demo seeder runs against the same image (docker compose --profile seed).
+# It imports from apps/server/dist, so it needs no extra build step.
+COPY scripts ./scripts
+COPY package.json ./package.json
 
 RUN mkdir -p /app/data /app/workspaces /app/codex-home \
     && chown -R node:node /app

@@ -19,6 +19,10 @@ services:
       AGENT_WORKSPACE_ROOT: /app/workspaces
       CODEX_HOME: /app/codex-home
       CODEX_SANDBOX_MODE: ${CODEX_SANDBOX_MODE:-workspace-write}
+      # Explicit so the planner's model backend is visible here rather than
+      # inherited invisibly from .env. With "ark" and no usable ARK_API_KEY the
+      # server logs a warning and runs offline instead of degrading silently.
+      MEMORY_EXTRACTOR: ${MEMORY_EXTRACTOR:-ark}
     ports:
       - "${PUBLIC_PORT:-3000}:3000"
     volumes:
@@ -33,3 +37,25 @@ services:
     pids_limit: 512
     mem_limit: 4g
     cpus: 2
+
+  # One-shot demo data, sharing the app's volumes so it targets the same store.
+  #   docker compose --profile seed run --rm seed
+  # Idempotent: it wipes the demo group and its task before reseeding.
+  seed:
+    image: volc-agent-launchpad:local
+    profiles: ["seed"]
+    depends_on:
+      - launchpad
+    env_file:
+      - ${LAUNCHPAD_ENV_FILE:-.env}
+    environment:
+      NODE_ENV: production
+      APP_DATA_DIR: /app/data
+      AGENT_WORKSPACE_ROOT: /app/workspaces
+      CODEX_HOME: /app/codex-home
+    volumes:
+      - ./data:/app/data
+      - ./workspaces:/app/workspaces
+      - ./codex-home:/app/codex-home
+    command: ["node", "scripts/seed-demo.mjs"]
+    restart: "no"

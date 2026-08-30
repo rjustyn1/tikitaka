@@ -173,5 +173,12 @@ cleanup
 log "Building the local Web and API."
 npm run build
 
+# Optional demo data. Off by default so a real run is never confused with the
+# seeded story; idempotent, so SEED_DEMO=1 is safe to leave on between runs.
+if [[ "${SEED_DEMO:-0}" == "1" ]]; then
+  log "Seeding the demo dataset into $APP_DATA_DIR."
+  node scripts/seed-demo.mjs
+fi
+
 log "Open http://localhost:$PORT"
 npm start

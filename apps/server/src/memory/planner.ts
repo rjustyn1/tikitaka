@@ -486,7 +486,12 @@ export function buildPlanNodes(
       id: ids[index]!,
       groupTaskId,
       agentId: node.agentId,
-      kind: "work",
+      // A node with more than one dependency is where branches reconverge --
+      // which is exactly what `GROUP-CHAT-DESIGN.md` means by a join: "the group
+      // returns to one shared state". Nothing branches on `kind` yet; recording
+      // it truthfully is what lets an incremental flush trigger find a safe
+      // consolidation boundary later (ARCHITECTURE.md section 9's watermark).
+      kind: node.dependsOnIndexes.length > 1 ? "join" : "work",
       nodeRole: node.nodeRole,
       dependsOn: node.dependsOnIndexes.map((dependency) => ids[dependency]!),
       contextSnapshotSeq: 0,
