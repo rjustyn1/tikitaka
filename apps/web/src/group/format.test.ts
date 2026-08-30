@@ -6,7 +6,9 @@
  * put the operator's home directory on screen during a demo.
  */
 import { describe, expect, it } from "vitest";
-import { fileTail, roleClass } from "./format";
+import { fileTail, roleClass,
+  deriveRole,
+} from "./format";
 
 describe("fileTail", () => {
   it("keeps the last two segments of a POSIX path", () => {
@@ -37,5 +39,28 @@ describe("roleClass", () => {
     expect(roleClass("backend")).toBe("backend");
     expect(roleClass("Product Owner")).toBe("member");
     expect(roleClass(null)).toBe("member");
+  });
+});
+
+describe("deriveRole", () => {
+  it("takes the label from the Agent's own name", () => {
+    expect(deriveRole("Security Agent")).toBe("security");
+    expect(deriveRole("Backend Agent")).toBe("backend");
+    expect(deriveRole("Ops Agent")).toBe("ops");
+  });
+
+  it("slugs a multi-word name", () => {
+    expect(deriveRole("Data Platform Agent")).toBe("data-platform");
+  });
+
+  it("falls back to member when nothing usable is left", () => {
+    expect(deriveRole("Agent")).toBe("member");
+    expect(deriveRole("   ")).toBe("member");
+    expect(deriveRole("!!!")).toBe("member");
+  });
+
+  it("cannot produce a label that contradicts its Agent", () => {
+    // The bug it replaces: a human typing "frontend" onto a Security Agent.
+    expect(deriveRole("Security Agent")).not.toBe("frontend");
   });
 });

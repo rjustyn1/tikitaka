@@ -35,6 +35,26 @@ export function isTerminal(status: GroupTaskStatus): boolean {
 }
 
 /** Map a free-form display role onto one of the available visual accents. */
+/**
+ * The role label for an Agent, derived from the Agent itself.
+ *
+ * Role labels are cosmetic: the planner picks who works on a node by reading
+ * each Agent's `description`, and never looks at this. Letting a human type one
+ * anyway produced labels that contradicted the Agent they were attached to -- a
+ * "Security Agent" carrying the label `frontend`, with the wrong colour dot
+ * everywhere it appeared. Deriving it means the label can never disagree with
+ * the Agent it describes.
+ */
+export function deriveRole(agentName: string): string {
+  const slug = agentName
+    .trim()
+    .toLowerCase()
+    .replace(/\bagent\b/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || "member";
+}
+
 export function roleClass(role: GroupRole | null): string {
   const normalized = role?.trim().toLowerCase();
   return normalized === "backend" ||

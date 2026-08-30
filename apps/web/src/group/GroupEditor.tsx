@@ -1,19 +1,20 @@
 /**
  * Create or edit a team.
  *
- * Team creation is membership only: pick the Agents who may collaborate. Roles
- * here are a display label from the current model (backend / frontend /
- * security) — the planner decides who actually works on each node at task time,
- * and the DAG-assignment flow (task start) is where per-node roles will live.
+ * Team creation is membership ONLY: pick the Agents who may collaborate.
+ *
+ * There is deliberately no role picker. The planner decides who works on each
+ * node by reading every candidate Agent's `description`, and never reads a role
+ * label -- so a picker offered an authoritative-looking choice that changed
+ * nothing, and let a "Security Agent" be saved as `frontend`, which then drove
+ * the wrong colour dot in the sidebar, the member rail and the chat. The label
+ * is derived from the Agent instead, so it cannot disagree with it.
  */
 import { useMemo, useState } from "react";
-import type { Agent, AgentGroup, GroupMember, GroupRole } from "../types";
+import type { Agent, AgentGroup, GroupMember } from "../types";
+import { deriveRole } from "./format";
 
 const MAX_MEMBERS = 12;
-
-// The current, hardcoded role model. A team loaded with some other label keeps
-// it (added to the list for that row) rather than silently losing it.
-const ROLE_OPTIONS = ["backend", "frontend", "security", "member"];
 
 interface Props {
   agents: Agent[];
@@ -30,23 +31,21 @@ interface Props {
 export function GroupEditor({ agents, group, busy, onCancel, onSubmit }: Props) {
   const [name, setName] = useState(group?.name ?? "");
   const [description, setDescription] = useState(group?.description ?? "");
-  const [assignments, setAssignments] = useState<Record<string, GroupRole>>(
-    () => {
-      const initial: Record<string, GroupRole> = {};
-      for (const member of group?.members ?? []) {
-        initial[member.agentId] = member.role;
-      }
-      return initial;
-    },
+  const [selected, setSelected] = useState<string[]>(
+    () => (group?.members ?? []).map((member) => member.agentId),
   );
 
+  // Saving re-derives every label, so editing a team also repairs one whose
+  // stored labels were wrong before.
   const members = useMemo<GroupMember[]>(
     () =>
-      Object.entries(assignments).map(([agentId, role]) => ({
+      selected.map((agentId) => ({
         agentId,
-        role: role.trim() || "member",
+        role: deriveRole(
+          agents.find((agent) => agent.id === agentId)?.name ?? "",
+        ),
       })),
-    [assignments],
+    [selected, agents],
   );
 
   const valid =
@@ -55,20 +54,13 @@ export function GroupEditor({ agents, group, busy, onCancel, onSubmit }: Props) 
     members.length <= MAX_MEMBERS;
 
   const toggle = (agentId: string) => {
-    setAssignments((previous) => {
-      const next = { ...previous };
-      if (Object.hasOwn(next, agentId)) {
-        delete next[agentId];
-      } else if (Object.keys(next).length < MAX_MEMBERS) {
-        // Default a newly-picked Agent to a generic label; the human can refine.
-        next[agentId] = "member";
-      }
-      return next;
-    });
-  };
-
-  const assignRole = (agentId: string, role: string) => {
-    setAssignments((previous) => ({ ...previous, [agentId]: role }));
+    setSelected((previous) =>
+      previous.includes(agentId)
+        ? previous.filter((id) => id !== agentId)
+        : previous.length < MAX_MEMBERS
+          ? [...previous, agentId]
+          : previous,
+    );
   };
 
   const submit = (event: React.FormEvent) => {
@@ -88,8 +80,8 @@ export function GroupEditor({ agents, group, busy, onCancel, onSubmit }: Props) 
           <span className="eyebrow">{group ? "Edit team" : "New team"}</span>
           <h2>{group ? "Update membership" : "Assemble a team"}</h2>
           <p>
-            Pick the Agents on this team. The planner decides who works on each
-            task — the role label is just how each Agent is shown.
+            Pick the Agents on this team. The planner reads each Agent's own
+            description and decides who works on each task.
           </p>
         </div>
 
@@ -136,21 +128,17 @@ export function GroupEditor({ agents, group, busy, onCancel, onSubmit }: Props) 
               </p>
             )}
             {agents.map((agent) => {
-              const selected = Object.hasOwn(assignments, agent.id);
-              const role = assignments[agent.id] ?? "member";
-              const options = ROLE_OPTIONS.includes(role)
-                ? ROLE_OPTIONS
-                : [role, ...ROLE_OPTIONS];
+              const picked = selected.includes(agent.id);
               return (
                 <div
                   key={agent.id}
-                  className={"roster-row " + (selected ? "is-member" : "")}
+                  className={"roster-row " + (picked ? "is-member" : "")}
                 >
                   <label className="roster-toggle">
                     <input
                       type="checkbox"
-                      checked={selected}
-                      disabled={!selected && members.length >= MAX_MEMBERS}
+                      checked={picked}
+                      disabled={!picked && members.length >= MAX_MEMBERS}
                       onChange={() => toggle(agent.id)}
                     />
                     <span className="agent-avatar">
@@ -158,22 +146,15 @@ export function GroupEditor({ agents, group, busy, onCancel, onSubmit }: Props) 
                     </span>
                     <span className="roster-copy">
                       <strong>{agent.name}</strong>
+                      {/*
+                        The Agent's own description, which is the text the
+                        planner actually reads when it decides who does what.
+                      */}
                       <span>{agent.description || "Coding Agent"}</span>
                     </span>
                   </label>
-                  {selected && (
-                    <select
-                      className="role-select"
-                      aria-label={"Role for " + agent.name}
-                      value={role}
-                      onChange={(event) => assignRole(agent.id, event.target.value)}
-                    >
-                      {options.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
+                  {picked && (
+                    <span className="role-chip">{deriveRole(agent.name)}</span>
                   )}
                 </div>
               );
