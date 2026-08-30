@@ -36,6 +36,41 @@ function isTerminalTask(task: GroupTask): boolean {
 }
 
 /**
+ * The nearest ancestor of `node` that failed or was cancelled, or null.
+ *
+ * SHARED WITH THE EXECUTOR. `GroupRunner.executeGroupTask()` asks the same
+ * question for a different reason -- "may I skip this node?" -- and must get
+ * the same answer, so both callers use this one traversal. Two implementations
+ * of "is this node blocked" that can disagree would be worse than the bug it
+ * fixes: the runner would abandon a node the flush trigger still waits on, or
+ * vice versa.
+ *
+ * Breadth-first on purpose: the first failure found is the CLOSEST one, which
+ * is the useful thing to name in a skipped node's error message.
+ */
+export function findFailedAncestor(
+  node: GroupPlanNode,
+  byId: Map<string, GroupPlanNode>,
+): GroupPlanNode | null {
+  const seen = new Set<string>([node.id]);
+  const queue = [...node.dependsOn];
+  let cursor = 0;
+  while (cursor < queue.length) {
+    const id = queue[cursor];
+    cursor += 1;
+    if (id === undefined || seen.has(id)) continue;
+    seen.add(id);
+    const dependency = byId.get(id);
+    if (!dependency) continue;
+    if (dependency.status === "failed" || dependency.status === "cancelled") {
+      return dependency;
+    }
+    queue.push(...dependency.dependsOn);
+  }
+  return null;
+}
+
+/**
  * A node that can never run, because something it transitively depends on
  * failed or was cancelled.
  *
@@ -46,24 +81,11 @@ function isTerminalTask(task: GroupTask): boolean {
  * cancelled branches do not block the task forever". Treating unreachable
  * nodes as settled is what makes that rule true.
  */
-function isUnreachable(
+export function isUnreachable(
   node: GroupPlanNode,
   byId: Map<string, GroupPlanNode>,
 ): boolean {
-  const seen = new Set<string>([node.id]);
-  const queue = [...node.dependsOn];
-  while (queue.length > 0) {
-    const id = queue.pop();
-    if (id === undefined || seen.has(id)) continue;
-    seen.add(id);
-    const dependency = byId.get(id);
-    if (!dependency) continue;
-    if (dependency.status === "failed" || dependency.status === "cancelled") {
-      return true;
-    }
-    queue.push(...dependency.dependsOn);
-  }
-  return false;
+  return findFailedAncestor(node, byId) !== null;
 }
 
 export function decideFlush(input: FlushTriggerInput): FlushDecision {

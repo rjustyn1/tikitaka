@@ -37,7 +37,7 @@ import type {
   UpdateGroupInput,
 } from "../types.js";
 import type { WorkspaceManager } from "../workspace.js";
-import { decideFlush } from "./flush-trigger.js";
+import { decideFlush, findFailedAncestor } from "./flush-trigger.js";
 import { findMembershipError, readMembers } from "./group-chain.js";
 import {
   buildContextPacket,
@@ -365,17 +365,41 @@ export class GroupRunner {
       }
     });
 
+    // Execution stays SEQUENTIAL. The planner emits a real DAG now, so running
+    // independent branches concurrently looks like the obvious next step -- it
+    // is not, and three things block it: the A3 agent lease is not re-entrant
+    // (one Agent can hold several nodes), runtime-lock COLLISION validation is
+    // still STRETCH (sequential execution is the only reason that has been
+    // safe), and every branch writes one shared `./code` tree. Containment
+    // below gets the correctness win without any of that.
     const chain = this.chainFor(taskId);
-    // V1: a plain sequential loop. The STRETCH parallel form would be
-    // `Promise.all` over runnable sets after parallel-set validation (A4).
+    const byId = new Map(chain.map((node) => [node.id, node]));
+
     for (const node of chain) {
       if (this.activeTasks.get(taskId)?.cancelled) break;
       // Resume: a node that already completed in an earlier run is not re-run;
       // its output is reused. On a first run every node is queued, so this is a
       // no-op there.
       if (node.status === "completed") continue;
-      const status = await this.runPlanNode(taskId, node.id);
-      if (status !== "completed") break;
+
+      // CONTAINMENT. A failure blocks only what transitively depends on it, not
+      // the rest of the task. This loop used to `break` on any failure, which
+      // was right while every node depended on the one before it, and wrong the
+      // moment the planner could emit fan-out: a sibling branch that never
+      // touched the failed node would be abandoned with it.
+      const blocker = findFailedAncestor(node, byId);
+      if (blocker) {
+        await this.blockNode(node.id, blocker);
+        // Keep the local view in step so this node, now settled, correctly
+        // blocks ITS descendants on later iterations.
+        node.status = "cancelled";
+        continue;
+      }
+
+      // `chain` is a deep clone from the store snapshot, so writing the result
+      // back here mutates nothing persisted -- it only lets `findFailedAncestor`
+      // above see failures that happened during this very loop.
+      node.status = await this.runPlanNode(taskId, node.id);
     }
 
     await this.finishGroupTask(taskId);
@@ -389,6 +413,24 @@ export class GroupRunner {
     const task = database.groupTasks.find((item) => item.id === taskId);
     const node = database.groupPlanNodes.find((item) => item.id === nodeId);
     if (!task || !node) return "failed";
+
+    // Dependency gate. Containment and the execution order below should make
+    // this unreachable; it fires only if a node is somehow reached before its
+    // plan said it could be. Failing loudly beats running an Agent without the
+    // dependency output its instruction assumes it has.
+    const unmet = node.dependsOn.find((dependencyId) => {
+      const dependency = database.groupPlanNodes.find(
+        (item) => item.id === dependencyId,
+      );
+      return !dependency || dependency.status !== "completed";
+    });
+    if (unmet) {
+      await this.failNode(
+        nodeId,
+        "This node ran before its dependencies completed",
+      );
+      return "failed";
+    }
 
     const agent = database.agents.find((item) => item.id === node.agentId);
     const participant = database.groupParticipants.find(
@@ -666,7 +708,7 @@ export class GroupRunner {
             node.error ??
             (cancelled
               ? "Group task cancelled"
-              : "An earlier node in the chain did not complete");
+              : "The task ended before this node ran");
           node.completedAt = completedAt;
         }
       }
@@ -894,11 +936,22 @@ export class GroupRunner {
     );
   }
 
+  /**
+   * The task's nodes in a dependency-safe execution order.
+   *
+   * This used to sort by `createdAt` alone -- but `buildPlanNodes()` stamps
+   * EVERY node of a task with the same timestamp, so every comparison returned
+   * 0 and the order survived only because V8's sort is stable and the planner
+   * happened to insert topologically. Correct by accident. `orderForExecution`
+   * makes it correct on purpose while preserving the planner's order between
+   * nodes that are equally ready, so a plan still runs in the order it reads.
+   */
   private chainFor(taskId: string): GroupPlanNode[] {
-    return this.store
+    const nodes = this.store
       .snapshot()
       .groupPlanNodes.filter((node) => node.groupTaskId === taskId)
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    return orderForExecution(nodes);
   }
 
   private nextSeq(database: Database, groupId: string): number {
@@ -931,6 +984,33 @@ export class GroupRunner {
         lock.releasedAt = at;
       }
     }
+  }
+
+  /**
+   * Record that a node was skipped because an ancestor failed.
+   *
+   * Status stays `cancelled` -- adding a `blocked` value to GroupTaskStatus
+   * would ripple into flush-trigger's NODE_TERMINAL, the API DTO, the web
+   * mirror type and every status pill, for a distinction the error string
+   * already carries. What matters is that the reason NAMES the node that
+   * actually failed, instead of the old blanket "an earlier node in the chain
+   * did not complete" -- which is false for a node on an unrelated branch.
+   */
+  private async blockNode(
+    nodeId: string,
+    blocker: GroupPlanNode,
+  ): Promise<void> {
+    const completedAt = now();
+    await this.store.mutate((database) => {
+      const node = database.groupPlanNodes.find((item) => item.id === nodeId);
+      if (!node) return;
+      node.status = "cancelled";
+      node.error =
+        "Blocked: this node depends on " +
+        blocker.nodeRole +
+        ", which did not complete";
+      node.completedAt = completedAt;
+    });
   }
 
   private async failNode(nodeId: string, message: string): Promise<void> {
@@ -1024,4 +1104,50 @@ export class GroupRunner {
       }
     }
   }
+}
+
+/**
+ * A dependency-safe execution order that preserves the planner's ordering.
+ *
+ * Kahn's algorithm, with the ORIGINAL ARRAY INDEX as the tie-break between
+ * equally-ready nodes. That tie-break matters: the planner already returns its
+ * nodes topologically ordered and that order is meaningful (it is the sequence
+ * the plan reads in), so two independent nodes must keep their planned order
+ * rather than being reordered by id or timestamp.
+ *
+ * Deliberately NOT `task-buffer.ts`'s `topologicalSort()`: that one breaks ties
+ * on `completedAt` then id, which is right for assembling a finished
+ * transcript and wrong here -- on a fresh task every `completedAt` is null, so
+ * it would order the run by UUID.
+ *
+ * Never drops a node. A dependency outside this set is ignored, and a cycle
+ * (which the planner rejects, so this is belt-and-braces) leaves the remaining
+ * nodes in their input order rather than silently losing them.
+ */
+export function orderForExecution(
+  nodes: readonly GroupPlanNode[],
+): GroupPlanNode[] {
+  const indexOf = new Map(nodes.map((node, index) => [node.id, index]));
+  const pending = nodes.map(
+    (node) => new Set(node.dependsOn.filter((id) => indexOf.has(id))),
+  );
+  const placed = new Set<number>();
+  const ordered: GroupPlanNode[] = [];
+
+  while (ordered.length < nodes.length) {
+    const ready = pending.findIndex(
+      (dependencies, index) => !placed.has(index) && dependencies.size === 0,
+    );
+    if (ready === -1) break; // cycle: fall through to the remainder below
+    placed.add(ready);
+    ordered.push(nodes[ready]!);
+    const id = nodes[ready]!.id;
+    for (const dependencies of pending) dependencies.delete(id);
+    pending[ready] = new Set(["__placed__"]);
+  }
+
+  for (const [index, node] of nodes.entries()) {
+    if (!placed.has(index)) ordered.push(node);
+  }
+  return ordered;
 }

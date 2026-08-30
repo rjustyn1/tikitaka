@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { decideFlush } from "./flush-trigger.js";
+import {
+  decideFlush,
+  findFailedAncestor,
+  isUnreachable,
+} from "./flush-trigger.js";
 import type { GroupPlanNode, GroupTask, GroupTaskStatus } from "../types.js";
 
 const TASK_ID = "task-1";
@@ -193,5 +197,66 @@ describe("decideFlush", () => {
       shouldFlush: false,
       reason: "no_completed_runs",
     });
+  });
+});
+
+describe("findFailedAncestor — the rule shared with the executor", () => {
+  const index = (nodes: GroupPlanNode[]) =>
+    new Map(nodes.map((node) => [node.id, node]));
+
+  it("returns null when every ancestor is healthy", () => {
+    const nodes = [
+      makeNode("a", "completed"),
+      makeNode("b", "completed", ["a"]),
+      makeNode("c", "queued", ["b"]),
+    ];
+    expect(findFailedAncestor(nodes[2]!, index(nodes))).toBeNull();
+    expect(isUnreachable(nodes[2]!, index(nodes))).toBe(false);
+  });
+
+  it("finds a failure through several hops, not just a direct dependency", () => {
+    const nodes = [
+      makeNode("a", "failed"),
+      makeNode("b", "cancelled", ["a"]),
+      makeNode("c", "queued", ["b"]),
+    ];
+    // c depends on b depends on a. The transitive walk is the whole point.
+    expect(findFailedAncestor(nodes[2]!, index(nodes))?.id).toBe("b");
+    expect(isUnreachable(nodes[2]!, index(nodes))).toBe(true);
+  });
+
+  it("returns the CLOSEST failure, so the reason names the useful node", () => {
+    const nodes = [
+      makeNode("root", "failed"),
+      makeNode("mid", "cancelled", ["root"]),
+      makeNode("leaf", "queued", ["mid"]),
+    ];
+    // Breadth-first: "mid" is one hop away, "root" is two.
+    expect(findFailedAncestor(nodes[2]!, index(nodes))?.id).toBe("mid");
+  });
+
+  it("does not blame a failure on a SIBLING branch", () => {
+    // This is the containment case: a and b both depend on root; a failed.
+    // b must not be considered blocked -- it never depended on a.
+    const nodes = [
+      makeNode("root", "completed"),
+      makeNode("a", "failed", ["root"]),
+      makeNode("b", "queued", ["root"]),
+    ];
+    expect(findFailedAncestor(nodes[2]!, index(nodes))).toBeNull();
+  });
+
+  it("survives a dependency that is not in the set", () => {
+    const nodes = [makeNode("a", "queued", ["missing"])];
+    expect(findFailedAncestor(nodes[0]!, index(nodes))).toBeNull();
+  });
+
+  it("terminates on a cyclic graph instead of looping forever", () => {
+    // The planner rejects cycles, so this is belt-and-braces on stored data.
+    const nodes = [
+      makeNode("a", "queued", ["b"]),
+      makeNode("b", "queued", ["a"]),
+    ];
+    expect(findFailedAncestor(nodes[0]!, index(nodes))).toBeNull();
   });
 });

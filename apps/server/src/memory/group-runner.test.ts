@@ -482,7 +482,11 @@ describe("A3 - solo and group runs contend for one lease", () => {
 });
 
 describe("failure and cancellation", () => {
-  it("stops the chain on a failed node and consolidates partially", async () => {
+  it("contains a failure to its own branch and consolidates partially", async () => {
+    // The plan is a fan-out: node 0 (backend), then nodes 1 (frontend) and 2
+    // (security) BOTH depending only on node 0. Failing node 1 must not touch
+    // node 2 -- node 2's only dependency completed, so it is still runnable.
+    // This loop used to `break` on any failure and abandon node 2 with it.
     let failingAgentId = "";
     const runner = new FakeRunner({
       failFor: (request) => (request.agentId === failingAgentId ? "Codex exploded" : null),
@@ -497,9 +501,15 @@ describe("failure and cancellation", () => {
     expect(response.nodes.map((node) => node.status)).toEqual([
       "completed",
       "failed",
-      "cancelled",
+      "completed",
     ]);
     expect(response.nodes[1]!.error).toBe("Codex exploded");
+    // The independent branch really ran, rather than being marked completed
+    // without ever reaching the runner.
+    expect(response.nodes[2]!.runId).not.toBeNull();
+    expect(
+      runner.requests.some((request) => request.agentId === harness.security.id),
+    ).toBe(true);
     // Nothing is left holding a lock or a lease.
     expect(
       harness.store
@@ -511,6 +521,44 @@ describe("failure and cancellation", () => {
     ).toBe(true);
     // Partial work still reaches the memory pipeline.
     expect(pipeline.calls).toHaveLength(1);
+  });
+
+  it("blocks the nodes that actually depend on a failure, and names it", async () => {
+    // Fail node 0 instead. Nodes 1 and 2 both depend on it, so both really are
+    // blocked -- containment must not run them, and the reason recorded must
+    // name the node that failed rather than the old blanket "an earlier node in
+    // the chain did not complete".
+    let failingAgentId = "";
+    const runner = new FakeRunner({
+      failFor: (request) => (request.agentId === failingAgentId ? "Codex exploded" : null),
+    });
+    const harness = await makeHarness(runner);
+    failingAgentId = harness.backend.id;
+    const { task } = await runToCompletion(harness);
+    const response = harness.service.getGroupTask(task.id);
+
+    expect(response.task.status).toBe("failed");
+    expect(response.nodes.map((node) => node.status)).toEqual([
+      "failed",
+      "cancelled",
+      "cancelled",
+    ]);
+    for (const blocked of response.nodes.slice(1)) {
+      expect(blocked.error).toBe(
+        "Blocked: this node depends on " +
+          response.nodes[0]!.nodeRole +
+          ", which did not complete",
+      );
+      // Blocked means never started, not started-and-abandoned.
+      expect(blocked.runId).toBeNull();
+    }
+    // The blocked Agents were never asked to run.
+    expect(runner.requests).toHaveLength(1);
+    expect(
+      harness.store
+        .snapshot()
+        .runtimeLocks.every((lock) => lock.releasedAt !== null),
+    ).toBe(true);
   });
 
   it("cancels a running task, releasing leases and locks", async () => {
