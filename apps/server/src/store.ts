@@ -1,6 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { AgentRun, Database } from "./types.js";
+import type { AgentGroup, AgentRun, Database, GroupRole } from "./types.js";
 
 const emptyDatabase = (): Database => ({
   version: 1,
@@ -46,6 +46,9 @@ export class JsonStore {
       if (!Array.isArray(parsed.grants)) parsed.grants = [];
       if (!Array.isArray(parsed.runtimeLocks)) parsed.runtimeLocks = [];
       if (!Array.isArray(parsed.landedMemoryFiles)) parsed.landedMemoryFiles = [];
+      for (const group of parsed.groups) {
+        backfillGroupMembers(group);
+      }
       for (const run of parsed.runs) {
         if (!("traceSummary" in run)) (run as AgentRun).traceSummary = null;
       }
@@ -83,4 +86,17 @@ export class JsonStore {
     });
     await rename(temporaryPath, this.filePath);
   }
+}
+
+function backfillGroupMembers(group: AgentGroup): void {
+  if (Array.isArray(group.members)) return;
+  const legacy = group as AgentGroup & { memberAgentIds?: unknown };
+  const legacyMemberAgentIds = Array.isArray(legacy.memberAgentIds)
+    ? legacy.memberAgentIds.filter((value): value is string => typeof value === "string")
+    : [];
+  const roles: GroupRole[] = ["backend", "frontend", "security"];
+  group.members = legacyMemberAgentIds.slice(0, roles.length).map((agentId, index) => ({
+    agentId,
+    role: roles[index]!,
+  }));
 }

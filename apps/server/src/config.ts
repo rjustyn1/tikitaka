@@ -32,6 +32,11 @@ const envSchema = z.object({
     .max(48)
     .regex(/^[a-zA-Z0-9_.-]+$/)
     .default("default"),
+  MEMORY_ENABLED: z.enum(["true", "false"]).default("true"),
+  MEMORY_EXTRACTOR: z.enum(["ark", "fake", "off"]).default("fake"),
+  MEMORY_EXTRACT_TIMEOUT_MS: z.coerce.number().int().min(1000).default(30000),
+  REVIEW_ALL_SKILLS: z.enum(["true", "false"]).default("false"),
+  SKILLS_DIR: z.enum([".agents/skills", ".codex/skills"]).default(".agents/skills"),
   APP_AUTH_TOKEN: z
     .string()
     .trim()
@@ -83,6 +88,11 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
     containerPidsLimit: env.CONTAINER_PIDS_LIMIT,
     containerUser: env.CONTAINER_USER?.trim() || defaultContainerUser,
     runtimeInstanceId: env.RUNTIME_INSTANCE_ID,
+    memoryEnabled: env.MEMORY_ENABLED === "true",
+    memoryExtractor: env.MEMORY_EXTRACTOR,
+    memoryExtractTimeoutMs: env.MEMORY_EXTRACT_TIMEOUT_MS,
+    reviewAllSkills: env.REVIEW_ALL_SKILLS === "true",
+    skillsDir: env.SKILLS_DIR,
     authToken,
     arkApiKey: env.ARK_API_KEY?.trim() ?? "",
     arkModel: env.ARK_MODEL?.trim() ?? "",

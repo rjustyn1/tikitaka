@@ -2,6 +2,7 @@ import type {
   Agent,
   AgentGroup,
   AgentRun,
+  CreateGroupInput,
   GrantRecord,
   GroupTask,
   GroupTaskResponse,
@@ -12,8 +13,10 @@ import type {
   ReviewNoteInput,
   RevokeNoteInput,
   RunTraceSummary,
+  SendMessageInput,
   SystemInfo,
   TraceSpan,
+  UpdateGroupInput,
 } from "./types";
 
 export class ApiError extends Error {
@@ -85,12 +88,17 @@ export const api = {
     request<{ messages: Message[] }>("/api/agents/" + id + "/messages"),
   runs: (id: string) =>
     request<{ runs: AgentRun[] }>("/api/agents/" + id + "/runs"),
-  sendMessage: (id: string, content: string) =>
+  sendMessage: (id: string, content: string, options?: { freshThread?: boolean }) =>
     request<{ run: AgentRun; message: Message }>(
       "/api/agents/" + id + "/messages",
       {
         method: "POST",
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({
+          content,
+          ...(options?.freshThread !== undefined && {
+            freshThread: options.freshThread,
+          }),
+        } satisfies SendMessageInput),
       },
     ),
   run: (id: string) => request<{ run: AgentRun }>("/api/runs/" + id),
@@ -107,19 +115,12 @@ export const api = {
   // --- Groups + governed memory ---------------------------------------------
   groups: () => request<{ groups: AgentGroup[] }>("/api/groups"),
   group: (id: string) => request<{ group: AgentGroup }>("/api/groups/" + id),
-  createGroup: (body: {
-    name: string;
-    description?: string;
-    memberAgentIds: string[];
-  }) =>
+  createGroup: (body: CreateGroupInput) =>
     request<{ group: AgentGroup }>("/api/groups", {
       method: "POST",
       body: JSON.stringify(body),
     }),
-  updateGroup: (
-    id: string,
-    body: { name?: string; description?: string; memberAgentIds?: string[] },
-  ) =>
+  updateGroup: (id: string, body: UpdateGroupInput) =>
     request<{ group: AgentGroup }>("/api/groups/" + id, {
       method: "PATCH",
       body: JSON.stringify(body),
@@ -132,6 +133,25 @@ export const api = {
   groupTask: (groupId: string, taskId: string) =>
     request<GroupTaskResponse>(
       "/api/groups/" + groupId + "/tasks/" + taskId,
+    ),
+  // All tasks for a group, newest first — powers the task history list so a
+  // failed task can be found and resumed.
+  listGroupTasks: (groupId: string) =>
+    request<{ tasks: GroupTask[] }>("/api/groups/" + groupId + "/tasks"),
+  // The route exists (SPEC Part 2) but had no client method. Needed for QA and
+  // the demo: the v1 chain is five nodes at up to CODEX_TIMEOUT_MS each.
+  cancelGroupTask: (groupId: string, taskId: string) =>
+    request<{ task: GroupTask }>(
+      "/api/groups/" + groupId + "/tasks/" + taskId + "/cancel",
+      { method: "POST" },
+    ),
+  // Continue a task that ended before completing (e.g. an Agent run ran out of
+  // tokens). Reuses completed node outputs and each Agent's group thread; handy
+  // after switching ARK_MODEL.
+  resumeGroupTask: (groupId: string, taskId: string) =>
+    request<{ task: GroupTask }>(
+      "/api/groups/" + groupId + "/tasks/" + taskId + "/resume",
+      { method: "POST" },
     ),
   notes: (params?: { agentId?: string; status?: MemoryStatus }) => {
     const qs = new URLSearchParams();

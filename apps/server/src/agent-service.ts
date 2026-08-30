@@ -2,14 +2,26 @@ import { randomUUID } from "node:crypto";
 import type { AppConfig } from "./config.js";
 import { isArkConfigured } from "./config.js";
 import { HttpError, RunCancelledError } from "./errors.js";
+import { GroupRunner } from "./memory/group-runner.js";
+import { LandingService } from "./memory/landing.js";
+import { LedgerService } from "./memory/ledger.js";
+import {
+  NoopMemoryPipeline,
+  type MemoryPipeline,
+} from "./memory/pipeline.js";
+import { ReviewService } from "./memory/review.js";
 import { JsonStore } from "./store.js";
+import { computeTraceSummary } from "./trace-summary.js";
 import type {
   Agent,
   AgentGroup,
+  AgentLease,
+  AgentLeaseHolder,
+  CreateGroupInput,
+  UpdateGroupInput,
   AgentRun,
   AgentRunner,
   CreateAgentInput,
-  CreateGroupInput,
   GrantRecord,
   GroupTask,
   GroupTaskResponse,
@@ -19,41 +31,85 @@ import type {
   MemoryNote,
   ReviewNoteInput,
   RevokeNoteInput,
-  RunTraceSummary,
+  SendMessageInput,
   TraceSpan,
   UpdateAgentInput,
-  UpdateGroupInput,
 } from "./types.js";
 import { WorkspaceManager } from "./workspace.js";
 
 const now = () => new Date().toISOString();
 
-function computeTraceSummary(spans: TraceSpan[], runId: string): RunTraceSummary {
-  const runSpans = spans.filter((s) => s.runId === runId);
-  return {
-    spanCount: runSpans.length,
-    failedSpanCount: runSpans.filter((s) => s.status === "failed").length,
-    reasoningCount: runSpans.filter((s) => s.type === "reasoning").length,
-    actionCount: runSpans.filter(
-      (s) => s.type !== "reasoning" && s.type !== "error",
-    ).length,
-  };
+function sameHolder(left: AgentLeaseHolder, right: AgentLeaseHolder): boolean {
+  if (left.kind === "solo" && right.kind === "solo") {
+    return left.runId === right.runId;
+  }
+  if (left.kind === "group" && right.kind === "group") {
+    return (
+      left.groupTaskId === right.groupTaskId &&
+      left.planNodeId === right.planNodeId
+    );
+  }
+  return false;
 }
 
-export class AgentService {
+export class AgentService implements AgentLease {
   private readonly activeExecutions = new Map<string, Promise<void>>();
   private readonly cancellationRequests = new Set<string>();
+  /**
+   * A3 - who currently holds each Agent. `CodexRunner.active` and the container
+   * `--name` are both keyed by agentId, so solo runs and group nodes must
+   * contend for one lease or a solo message sent during a group task surfaces
+   * as a raw 500.
+   */
+  private readonly leases = new Map<string, AgentLeaseHolder>();
+
+  private readonly groupRunner: GroupRunner;
+
+  // W3 - the governed-memory services. Routes call these through AgentService;
+  // they never write files or mutate the ledger directly.
+  private readonly landing: LandingService;
+  private readonly ledger: LedgerService;
+  private readonly review: ReviewService;
 
   constructor(
     private readonly config: AppConfig,
     private readonly store: JsonStore,
     private readonly workspaces: WorkspaceManager,
     private readonly runner: AgentRunner,
-  ) {}
+    memoryPipeline: MemoryPipeline = new NoopMemoryPipeline(),
+  ) {
+    // `this` is the AgentLease (A3). Safe to pass here: GroupRunner only stores
+    // the reference and never calls back during construction.
+    this.groupRunner = new GroupRunner(
+      config,
+      store,
+      workspaces,
+      runner,
+      this,
+      memoryPipeline,
+    );
+    // W3 - governed-memory services (integrationManifest3 section 3).
+    this.ledger = new LedgerService(store);
+    this.landing = new LandingService(store);
+    this.review = new ReviewService(
+      store,
+      this.landing,
+      this.ledger,
+      config.reviewAllSkills,
+    );
+  }
+
+  /** Exposed so callers can await a group task in tests. */
+  get groups(): GroupRunner {
+    return this.groupRunner;
+  }
 
   async initialize(): Promise<void> {
     await this.store.initialize();
     await this.workspaces.initialize();
+    // A3 - a restart cannot leave a lease held by a process that no longer runs.
+    this.leases.clear();
+    await this.groupRunner.recoverFromRestart();
     await this.store.mutate((database) => {
       for (const run of database.runs) {
         if (run.status === "queued" || run.status === "running") {
@@ -160,6 +216,15 @@ export class AgentService {
 
   async stopAgent(id: string): Promise<Agent> {
     this.getAgent(id);
+    const holder = this.leases.get(id);
+    if (holder?.kind === "group") {
+      throw new HttpError(
+        409,
+        "This Agent is running group task " +
+          holder.groupTaskId +
+          ". Cancel the group task first.",
+      );
+    }
     await this.cancelExecution(id);
     return this.setStatus(id, "stopped");
   }
@@ -199,7 +264,7 @@ export class AgentService {
 
   async sendMessage(
     agentId: string,
-    prompt: string,
+    input: string | SendMessageInput,
   ): Promise<{ run: AgentRun; message: Message }> {
     if (!isArkConfigured(this.config)) {
       throw new HttpError(
@@ -207,6 +272,11 @@ export class AgentService {
         "Ark is not configured. Set ARK_API_KEY and ARK_MODEL, then restart.",
       );
     }
+    // A5 - freshThread starts a NEW Codex thread so AGENTS.md and .agents/skills
+    // are re-read from disk. This is what makes landed governed memory observable.
+    const prompt = typeof input === "string" ? input : input.content;
+    const freshThread =
+      typeof input === "string" ? false : input.freshThread === true;
     const timestamp = now();
     const runId = randomUUID();
     const run: AgentRun = {
@@ -230,26 +300,18 @@ export class AgentService {
       content: prompt,
       createdAt: timestamp,
     };
-    const agentAtStart = await this.store.mutate((database) => {
-      const storedAgent = database.agents.find((item) => item.id === agentId);
-      if (!storedAgent) {
-        throw new HttpError(404, "Agent not found");
-      }
-      if (storedAgent.status === "stopped") {
-        throw new HttpError(409, "Start the Agent before sending a message");
-      }
-      if (storedAgent.status === "busy") {
-        throw new HttpError(409, "This Agent is already running");
-      }
-      database.runs.push(run);
-      database.messages.push(message);
-      const snapshot = structuredClone(storedAgent);
-      storedAgent.status = "busy";
-      storedAgent.lastError = null;
-      storedAgent.updatedAt = timestamp;
-      return snapshot;
-    });
-    const execution = this.executeRun(agentAtStart, run);
+    const holder: AgentLeaseHolder = { kind: "solo", runId };
+    const agentAtStart = await this.acquireAgent(agentId, holder);
+    try {
+      await this.store.mutate((database) => {
+        database.runs.push(run);
+        database.messages.push(message);
+      });
+    } catch (error) {
+      await this.releaseAgent(agentId, holder);
+      throw error;
+    }
+    const execution = this.executeRun(agentAtStart, run, freshThread);
     this.activeExecutions.set(agentId, execution);
     void execution
       .finally(() => {
@@ -280,7 +342,26 @@ export class AgentService {
     };
   }
 
-  private async executeRun(agentAtStart: Agent, run: AgentRun): Promise<void> {
+  private async executeRun(
+    agentAtStart: Agent,
+    run: AgentRun,
+    freshThread: boolean,
+  ): Promise<void> {
+    try {
+      await this.runToTerminal(agentAtStart, run, freshThread);
+    } finally {
+      await this.releaseAgent(agentAtStart.id, {
+        kind: "solo",
+        runId: run.id,
+      });
+    }
+  }
+
+  private async runToTerminal(
+    agentAtStart: Agent,
+    run: AgentRun,
+    freshThread: boolean,
+  ): Promise<void> {
     await this.store.mutate((database) => {
       const storedRun = database.runs.find((item) => item.id === run.id);
       if (storedRun) {
@@ -291,7 +372,9 @@ export class AgentService {
 
     // Collect spans via callback; single flush at terminal state
     const spanBuffer: TraceSpan[] = [];
-    let capturedThreadId: string | null = agentAtStart.codexThreadId;
+    // A5 - a fresh thread starts from null, so Codex re-reads AGENTS.md and skills.
+    const threadIdAtStart = freshThread ? null : agentAtStart.codexThreadId;
+    let capturedThreadId: string | null = threadIdAtStart;
 
     try {
       if (this.cancellationRequests.has(agentAtStart.id)) {
@@ -302,7 +385,7 @@ export class AgentService {
         runId: run.id,
         workspacePath: agentAtStart.workspacePath,
         prompt: run.prompt,
-        threadId: agentAtStart.codexThreadId,
+        threadId: threadIdAtStart,
         onThreadId: (id) => {
           capturedThreadId = id;
         },
@@ -406,99 +489,130 @@ export class AgentService {
   }
 
   // --------------------------------------------------------------------------
-  // Group + governed-memory stubs (Person 1 contract layer).
+  // A3 - the Agent lease. One lease, shared by solo runs and group nodes.
   //
-  // These satisfy the API-ROUTES contract and unblock frontend/pipeline work.
-  // Read methods are backed by the store and return live data as soon as it is
-  // populated. Mutating methods throw 501 until:
-  //   - Person 2's GroupRunner lands createGroup/updateGroup/startGroupTask
-  //   - Person 3's memory services land reviewNote/revokeNote
-  // Person 2/3: replace the bodies below by delegating to your services.
+  // Deliberately NOT re-entrant: the v1 chain is sequential, so an Agent taking
+  // two turns acquires and releases twice with no overlap (A4).
+  // --------------------------------------------------------------------------
+
+  async acquireAgent(
+    agentId: string,
+    holder: AgentLeaseHolder,
+  ): Promise<Agent> {
+    return this.store.mutate((database) => {
+      const agent = database.agents.find((item) => item.id === agentId);
+      if (!agent) {
+        throw new HttpError(404, "Agent not found");
+      }
+      if (agent.status === "stopped") {
+        throw new HttpError(
+          409,
+          holder.kind === "solo"
+            ? "Start the Agent before sending a message"
+            : "Start the Agent before it can join a group task",
+        );
+      }
+      if (agent.status === "busy") {
+        throw new HttpError(409, this.busyMessage(agentId));
+      }
+      const snapshot = structuredClone(agent);
+      agent.status = "busy";
+      agent.lastError = null;
+      agent.updatedAt = now();
+      this.leases.set(agentId, holder);
+      return snapshot;
+    });
+  }
+
+  async releaseAgent(agentId: string, holder: AgentLeaseHolder): Promise<void> {
+    const current = this.leases.get(agentId);
+    if (current && !sameHolder(current, holder)) {
+      return; // someone else holds it now; do not release another holder's lease
+    }
+    this.leases.delete(agentId);
+    await this.store.mutate((database) => {
+      const agent = database.agents.find((item) => item.id === agentId);
+      // Only clear "busy". A run that already settled on ready/error/stopped
+      // owns its own terminal status, and the lease must not overwrite it.
+      if (agent && agent.status === "busy") {
+        agent.status = "ready";
+        agent.updatedAt = now();
+      }
+    });
+  }
+
+  /** Who holds this Agent, phrased for a 409 body. */
+  private busyMessage(agentId: string): string {
+    const holder = this.leases.get(agentId);
+    if (holder?.kind === "group") {
+      return "This Agent is running group task " + holder.groupTaskId;
+    }
+    return "This Agent is already running";
+  }
+
+  // --------------------------------------------------------------------------
+  // Group execution -- delegated to GroupRunner (Person 2).
+  //
+  // The memory methods below remain Person 1's contract stubs until Person 3
+  // lands review/landing/ledger.
   // --------------------------------------------------------------------------
 
   listGroups(): AgentGroup[] {
-    return this.store
-      .snapshot()
-      .groups.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    return this.groupRunner.listGroups();
   }
 
   getGroup(id: string): AgentGroup {
-    const group = this.store.snapshot().groups.find((item) => item.id === id);
-    if (!group) {
-      throw new HttpError(404, "Group not found");
-    }
-    return group;
+    return this.groupRunner.getGroup(id);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async createGroup(_input: CreateGroupInput): Promise<AgentGroup> {
-    throw new HttpError(501, "Group creation is not implemented yet");
+  async createGroup(input: CreateGroupInput): Promise<AgentGroup> {
+    return this.groupRunner.createGroup(input);
   }
 
   async updateGroup(
-    _id: string,
-    _input: UpdateGroupInput,
+    id: string,
+    input: UpdateGroupInput,
   ): Promise<AgentGroup> {
-    throw new HttpError(501, "Group update is not implemented yet");
+    return this.groupRunner.updateGroup(id, input);
   }
 
-  async startGroupTask(_groupId: string, _prompt: string): Promise<GroupTask> {
-    throw new HttpError(501, "Group task execution is not implemented yet");
+  async startGroupTask(groupId: string, prompt: string): Promise<GroupTask> {
+    return this.groupRunner.startGroupTask(groupId, prompt);
+  }
+
+  async cancelGroupTask(taskId: string): Promise<GroupTask> {
+    return this.groupRunner.cancelGroupTask(taskId);
+  }
+
+  async resumeGroupTask(taskId: string): Promise<GroupTask> {
+    return this.groupRunner.resumeGroupTask(taskId);
+  }
+
+  listGroupTasks(groupId: string): GroupTask[] {
+    return this.groupRunner.listGroupTasks(groupId);
   }
 
   getGroupTask(taskId: string): GroupTaskResponse {
-    const database = this.store.snapshot();
-    const task = database.groupTasks.find((item) => item.id === taskId);
-    if (!task) {
-      throw new HttpError(404, "Group task not found");
-    }
-    return {
-      task,
-      nodes: database.groupPlanNodes
-        .filter((node) => node.groupTaskId === taskId)
-        .sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
-      messages: database.groupMessages
-        .filter((message) => message.groupTaskId === taskId)
-        .sort((left, right) => left.seq - right.seq),
-      contextInjections: database.contextInjections.filter(
-        (injection) => injection.groupTaskId === taskId,
-      ),
-    };
+    return this.groupRunner.getGroupTask(taskId);
   }
 
   listNotes(query: ListNotesQuery): MemoryNote[] {
-    let notes = this.store.snapshot().notes;
-    if (query.agentId) {
-      notes = notes.filter((note) => note.targetAgentIds.includes(query.agentId!));
-    }
-    if (query.status) {
-      notes = notes.filter((note) => note.status === query.status);
-    }
-    return notes.sort((left, right) =>
-      right.createdAt.localeCompare(left.createdAt),
-    );
+    return this.review.listNotes(query);
   }
 
-  async reviewNote(_id: string, _input: ReviewNoteInput): Promise<MemoryNote> {
-    throw new HttpError(501, "Note review is not implemented yet");
+  async reviewNote(id: string, input: ReviewNoteInput): Promise<MemoryNote> {
+    return this.review.applyReview(id, input);
   }
 
-  async revokeNote(_id: string, _input: RevokeNoteInput): Promise<MemoryNote> {
-    throw new HttpError(501, "Note revocation is not implemented yet");
+  async revokeNote(id: string, input: RevokeNoteInput): Promise<MemoryNote> {
+    return this.review.revoke(id, input);
   }
 
   listAgentMemory(agentId: string): LandedMemoryFile[] {
-    return this.store
-      .snapshot()
-      .landedMemoryFiles.filter(
-        (file) => file.agentId === agentId && file.removedAt === null,
-      );
+    return this.landing.listAgentMemory(agentId);
   }
 
   listTaskGrants(taskId: string): GrantRecord[] {
-    return this.store
-      .snapshot()
-      .grants.filter((grant) => grant.groupTaskId === taskId)
-      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    return this.ledger.listTaskGrants(taskId);
   }
 }

@@ -22,7 +22,11 @@ Each document answers **one** question. Read the one that matches your question.
 | [`DECISIONS.md`](./DECISIONS.md) | **What** did we decide, on what evidence? | anything still undecided |
 | [`GROUP-CHAT-DESIGN.md`](./GROUP-CHAT-DESIGN.md) | Why this group/thread model? | buildable contracts |
 | [`DEMO.md`](./DEMO.md) | Which beats, in what order, under 3:00? | design rationale, interfaces |
+| [`BUILD-REVIEW.md`](./BUILD-REVIEW.md) | What exists right now across all four workstreams, and which claims are proven? | design, contracts |
 | [`MIDDLEWARE.md`](./MIDDLEWARE.md) | *(for reviewers)* What is the problem, the trust boundary, the enforcement point? | internal planning |
+| [`integrationManifestTask2.md`](./integrationManifestTask2.md) | *(for QA)* How do the four workstreams become one green build? | design, contracts |
+| [`integrationManifest3.md`](./integrationManifest3.md) | *(for QA)* How does the memory pipeline reconcile with 1 and 2? | design, contracts |
+| `MILESTONE_PERSON_1..4.md` | **Has** that workstream built it, and is it verified? | design, contracts |
 | [`components/`](./components/) | **How** does this one module work internally? | anything outside that module |
 | [`archive/`](./archive/) | history — a superseded design | anything to build from |
 

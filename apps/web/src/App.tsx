@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, setAuthToken } from "./api";
+import { GroupWorkspace } from "./group/GroupWorkspace";
 import type { Agent, AgentRun, Message, RunTraceSummary, SystemInfo, TraceSpan } from "./types";
 
 const starterPrompts = [
@@ -423,6 +424,9 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState<boolean | null>(null);
   const [authInput, setAuthInput] = useState("");
+  // Two surfaces: the original solo Agent playground, and Teams. Keeping them
+  // separate means the group work cannot regress the solo flow.
+  const [view, setView] = useState<"agents" | "teams">("agents");
   const messageEnd = useRef<HTMLDivElement>(null);
   const selectedIdRef = useRef<string | null>(null);
   const mountedRef = useRef(true);
@@ -702,6 +706,25 @@ export default function App() {
           </div>
         </div>
 
+        <div className="view-switch" role="tablist">
+          <button
+            role="tab"
+            aria-selected={view === "agents"}
+            className={"view-tab " + (view === "agents" ? "selected" : "")}
+            onClick={() => setView("agents")}
+          >
+            Agents
+          </button>
+          <button
+            role="tab"
+            aria-selected={view === "teams"}
+            className={"view-tab " + (view === "teams" ? "selected" : "")}
+            onClick={() => setView("teams")}
+          >
+            Teams
+          </button>
+        </div>
+
         <button
           className="button button-primary create-button"
           onClick={() => {
@@ -773,7 +796,14 @@ export default function App() {
           </div>
         )}
 
-        {selected ? (
+        {/* Shared by both views: a group node's trace opens the same panel. */}
+        {traceRunId && (
+          <TracePanel runId={traceRunId} onClose={() => setTraceRunId(null)} />
+        )}
+
+        {view === "teams" ? (
+          <GroupWorkspace agents={agents} onOpenTrace={setTraceRunId} />
+        ) : selected ? (
           <>
             <header className="agent-header">
               <div>
@@ -807,10 +837,6 @@ export default function App() {
                 </button>
               </div>
             </header>
-
-            {traceRunId && (
-              <TracePanel runId={traceRunId} onClose={() => setTraceRunId(null)} />
-            )}
 
             {showSettings && (
               <form className="settings-panel" onSubmit={saveAgent}>

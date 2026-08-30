@@ -85,14 +85,21 @@ export interface AgentRun {
 }
 
 // ---------------------------------------------------------------------------
-// Group chat + DAG types (see technical-dev-docs/TYPES-AND-STORE.md, GROUPCHAT.md)
+// Group chat + DAG types (see middlewaredoc/SPEC.md)
 // ---------------------------------------------------------------------------
+
+export type GroupRole = "backend" | "frontend" | "security";
+
+export interface GroupMember {
+  agentId: string;
+  role: GroupRole;
+}
 
 export interface AgentGroup {
   id: string;
   name: string;
   description: string;
-  memberAgentIds: string[];
+  members: GroupMember[];
   activeTaskId: string | null;
   createdAt: string;
   updatedAt: string;
@@ -192,7 +199,7 @@ export interface GroupRuntimeLock {
 }
 
 // ---------------------------------------------------------------------------
-// Governed memory types (see technical-dev-docs/TYPES-AND-STORE.md + memory TDs)
+// Governed memory types (see middlewaredoc/SPEC.md + memory TDs)
 // ---------------------------------------------------------------------------
 
 export type MemorySeverity = "normal" | "severe";
@@ -276,16 +283,21 @@ export interface UpdateAgentInput {
   instructions?: string | undefined;
 }
 
+export interface SendMessageInput {
+  content: string;
+  freshThread?: boolean | undefined;
+}
+
 export interface CreateGroupInput {
   name: string;
   description?: string | undefined;
-  memberAgentIds: string[];
+  members: GroupMember[];
 }
 
 export interface UpdateGroupInput {
   name?: string | undefined;
   description?: string | undefined;
-  memberAgentIds?: string[] | undefined;
+  members?: GroupMember[] | undefined;
 }
 
 export type ReviewNoteInput =
@@ -318,6 +330,15 @@ export interface GroupTaskResponse {
   contextInjections: GroupContextInjection[];
 }
 
+export type AgentLeaseHolder =
+  | { kind: "solo"; runId: string }
+  | { kind: "group"; groupTaskId: string; planNodeId: string };
+
+export interface AgentLease {
+  acquireAgent(agentId: string, holder: AgentLeaseHolder): Promise<Agent>;
+  releaseAgent(agentId: string, holder: AgentLeaseHolder): Promise<void>;
+}
+
 export interface RunnerResult {
   output: string;
   threadId: string | null;
@@ -330,6 +351,7 @@ export interface RunnerRequest {
   workspacePath: string;
   prompt: string;
   threadId: string | null;
+  sharedCodePath?: string | undefined;
   onSpan?: (span: TraceSpan) => void;
   onThreadId?: (id: string) => void;
 }

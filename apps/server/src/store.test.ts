@@ -77,6 +77,17 @@ describe("JsonStore", () => {
       messages: [],
       runs: [],
       spans: [],
+      groups: [
+        {
+          id: "group-1",
+          name: "Legacy group",
+          description: "",
+          memberAgentIds: ["agent-1", "agent-2", "agent-3"],
+          activeTaskId: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
     };
     await writeFile(filePath, JSON.stringify(legacy), "utf8");
 
@@ -100,7 +111,13 @@ describe("JsonStore", () => {
       "landedMemoryFiles",
     ] as const) {
       expect(Array.isArray(snapshot[key])).toBe(true);
+      if (key === "groups") continue;
       expect(snapshot[key]).toEqual([]);
     }
+    expect(snapshot.groups[0]?.members).toEqual([
+      { agentId: "agent-1", role: "backend" },
+      { agentId: "agent-2", role: "frontend" },
+      { agentId: "agent-3", role: "security" },
+    ]);
   });
 });
