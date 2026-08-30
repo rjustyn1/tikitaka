@@ -24,7 +24,8 @@ import type {
 } from "../types";
 import { ConversationPanel } from "./ConversationPanel";
 import { GroupEditor } from "./GroupEditor";
-import { isTerminal, statusTone } from "./format";
+import { isAwaitingReview, isTerminal, statusTone } from "./format";
+import { LiveTerminal } from "./LiveTerminal";
 import { MemberRail } from "./MemberRail";
 import {
   ChainPanel,
@@ -46,7 +47,8 @@ type View =
   | "review"
   | "ledger"
   | "memory"
-  | "proof";
+  | "proof"
+  | "history";
 
 /**
  * A historical task belongs to exactly one team. Keeping that association in
@@ -63,8 +65,14 @@ interface TaskSelection {
  * Conversation is the surface. Everything below inspects what it produced, so
  * they sit in a lighter strip beside it rather than competing with it.
  */
-const SECONDARY_VIEWS: { id: View; label: string }[] = [
+const PLAN_VIEWS: { id: View; label: string }[] = [
   { id: "chain", label: "Plan" },
+];
+
+// The audit surfaces — everything that inspects what a finished task produced.
+// Memory approval itself happens inline in the conversation (the approval card);
+// Review here is the full surface (severity, routing, the match description).
+const AUDIT_VIEWS: { id: View; label: string }[] = [
   { id: "context", label: "Context" },
   { id: "review", label: "Review" },
   { id: "ledger", label: "Ledger" },
@@ -106,6 +114,7 @@ export function GroupWorkspace({
     taskId: null,
   });
   const [view, setView] = useState<View>("chat");
+  const [auditOpen, setAuditOpen] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [editing, setEditing] = useState<"new" | "edit" | null>(null);
   const [busy, setBusy] = useState(false);
@@ -144,6 +153,18 @@ export function GroupWorkspace({
   const state = useGroupTask(selectedGroupId, taskId, watchedAgentIds);
   const task = state.task?.task ?? null;
   const running = task !== null && !isTerminal(task.status);
+
+  // The run the Live Terminal streams: the node running right now, else the
+  // most recent node that produced a run so the panel shows the last activity
+  // rather than going blank the moment a task finishes.
+  const liveRunId =
+    (state.task?.nodes.find(
+      (node) => node.status === "running" && node.runId,
+    )?.runId ??
+      [...(state.task?.nodes ?? [])]
+        .reverse()
+        .find((node) => node.runId)?.runId) ??
+    null;
 
   // The rail reads each member's workspace through the API. Bump the revision
   // — never poll — whenever something could have changed one: a different
@@ -398,11 +419,14 @@ export function GroupWorkspace({
                 Edit team
               </button>
               <button
-                className="button button-ghost"
-                onClick={() => setEditing("new")}
+                className={
+                  "button button-ghost" + (view === "history" ? " is-active" : "")
+                }
+                onClick={() => setView(view === "history" ? "chat" : "history")}
                 disabled={busy}
+                aria-pressed={view === "history"}
               >
-                New team
+                History
               </button>
               {running && (
                 <button
@@ -443,13 +467,8 @@ export function GroupWorkspace({
               Conversation
             </button>
             <span className="team-views-rule" aria-hidden="true" />
-            {SECONDARY_VIEWS.map((item) => {
-              const count =
-                item.id === "review"
-                  ? state.notes.length
-                  : item.id === "ledger"
-                    ? state.grants.length
-                    : 0;
+            {PLAN_VIEWS.map((item) => {
+              const count = item.id === "review" ? state.notes.length : 0;
               return (
                 <button
                   key={item.id}
@@ -463,6 +482,43 @@ export function GroupWorkspace({
                 </button>
               );
             })}
+            <div className="team-audit">
+              <button
+                className={
+                  "team-view team-audit-toggle " +
+                  (AUDIT_VIEWS.some((item) => item.id === view) ? "selected" : "")
+                }
+                onClick={() => setAuditOpen((open) => !open)}
+                disabled={!task}
+                title={task ? "Ledger · Workspaces · Proof" : "Start a task to inspect it"}
+                aria-expanded={auditOpen}
+                aria-haspopup="menu"
+              >
+                Audit ▾
+                {state.grants.length > 0 && (
+                  <span className="tab-count">{state.grants.length}</span>
+                )}
+              </button>
+              {auditOpen && task && (
+                <div className="team-audit-menu" role="menu">
+                  {AUDIT_VIEWS.map((item) => (
+                    <button
+                      key={item.id}
+                      role="menuitem"
+                      className={
+                        "team-audit-item " + (view === item.id ? "selected" : "")
+                      }
+                      onClick={() => {
+                        setView(item.id);
+                        setAuditOpen(false);
+                      }}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </nav>
 
           {running && (
@@ -483,7 +539,7 @@ export function GroupWorkspace({
             </p>
           )}
 
-          <section className="group-panel">
+          <section className={"group-panel" + (view === "chat" ? " is-chat" : "")}>
             {view === "chat" && group && (
               <ConversationPanel
                 messages={state.task?.messages ?? []}
@@ -494,6 +550,11 @@ export function GroupWorkspace({
                 onSubmit={startTask}
                 running={running}
                 busy={busy}
+                pendingNotes={state.notes.filter(isAwaitingReview)}
+                reviewer={reviewer.trim() || "operator"}
+                busyNoteId={busyNoteId}
+                onReview={reviewNote}
+                onRevoke={revokeNote}
               />
             )}
             {view === "chain" && group && (
@@ -549,8 +610,62 @@ export function GroupWorkspace({
                 onOpenTrace={onOpenTrace}
               />
             )}
+            {/* Task history is its own view now, opened from the header, so it
+                replaces the conversation rather than trailing beneath it. */}
+            {view === "history" &&
+              group &&
+              (tasks.length === 0 ? (
+                <EmptyState
+                  icon="🕘"
+                  title="No tasks yet"
+                  body="Start a task in the conversation and every run — completed, failed, or resumable — will be listed here."
+                />
+              ) : (
+                <section className="task-history in-panel">
+                  <ul>
+                    {tasks.map((item) => {
+                      const resumable =
+                        item.status === "partial" ||
+                        item.status === "failed" ||
+                        item.status === "cancelled";
+                      return (
+                        <li
+                          key={item.id}
+                          className={
+                            item.id === taskId
+                              ? "task-history-item selected"
+                              : "task-history-item"
+                          }
+                        >
+                          <button
+                            className="task-history-open"
+                            onClick={() => openTask(item.id)}
+                            title="Open this task"
+                          >
+                            <Pill tone={statusTone(item.status)}>{item.status}</Pill>
+                            <span className="task-history-prompt">{item.prompt}</span>
+                            <span className="task-history-date">
+                              {new Date(item.createdAt).toLocaleString()}
+                            </span>
+                          </button>
+                          {resumable && !running && (
+                            <button
+                              className="button button-ghost"
+                              disabled={busy}
+                              onClick={() => resume(item.id)}
+                              title="Continue the unfinished nodes on the current model"
+                            >
+                              Resume
+                            </button>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </section>
+              ))}
             {/* A secondary view with no task has nothing to report on. */}
-            {!task && view !== "chat" && (
+            {!task && view !== "chat" && view !== "history" && (
               <EmptyState
                 icon="◇"
                 title="No task yet"
@@ -558,65 +673,26 @@ export function GroupWorkspace({
               />
             )}
           </section>
-
-          {group && tasks.length > 0 && (
-            <section className="task-history">
-              <h3>Task history</h3>
-              <ul>
-                {tasks.map((item) => {
-                  const resumable =
-                    item.status === "partial" ||
-                    item.status === "failed" ||
-                    item.status === "cancelled";
-                  return (
-                    <li
-                      key={item.id}
-                      className={
-                        item.id === taskId
-                          ? "task-history-item selected"
-                          : "task-history-item"
-                      }
-                    >
-                      <button
-                        className="task-history-open"
-                        onClick={() => openTask(item.id)}
-                        title="Open this task"
-                      >
-                        <Pill tone={statusTone(item.status)}>{item.status}</Pill>
-                        <span className="task-history-prompt">{item.prompt}</span>
-                        <span className="task-history-date">
-                          {new Date(item.createdAt).toLocaleString()}
-                        </span>
-                      </button>
-                      {resumable && !running && (
-                        <button
-                          className="button button-ghost"
-                          disabled={busy}
-                          onClick={() => resume(item.id)}
-                          title="Continue the unfinished nodes on the current model"
-                        >
-                          Resume
-                        </button>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            </section>
-          )}
         </div>
 
         {group && (
-          <MemberRail
-            group={group}
-            agents={agents}
-            nodes={state.task?.nodes ?? []}
-            taskStatus={task?.status ?? null}
-            memory={railMemory.memory}
-            memoryLoading={railMemory.loading}
-            memoryFailed={railMemory.failed}
-            onOpenTrace={onOpenTrace}
-          />
+          <div className="cc-rail">
+            <LiveTerminal
+              runId={liveRunId}
+              agents={agents}
+              running={running}
+            />
+            <MemberRail
+              group={group}
+              agents={agents}
+              nodes={state.task?.nodes ?? []}
+              taskStatus={task?.status ?? null}
+              memory={railMemory.memory}
+              memoryLoading={railMemory.loading}
+              memoryFailed={railMemory.failed}
+              onOpenTrace={onOpenTrace}
+            />
+          </div>
         )}
       </div>
 

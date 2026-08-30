@@ -1261,7 +1261,31 @@ textarea:focus {
   font-size: 10px;
   font-weight: 700;
 }
-.group-panel { padding-bottom: 40px; }
+.group-panel {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 40px;
+}
+/* The conversation view manages its own scroll: the feed scrolls, the composer
+   is pinned. So the panel itself does not scroll for chat. */
+.group-panel.is-chat {
+  overflow: hidden;
+  padding-bottom: 0;
+  display: flex;
+  flex-direction: column;
+}
+.group-panel.is-chat .chat { flex: 1; min-height: 0; }
+.group-panel.is-chat .chat-feed {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.group-panel.is-chat .chat-composer {
+  position: static;
+  padding-bottom: 4px;
+}
 
 /* --- the chain --- */
 .chain { display: flex; flex-direction: column; gap: 9px; }
@@ -1443,11 +1467,30 @@ textarea:focus {
 .proof-output.error pre { color: var(--red); }
 
 /* --- group editor modal --- */
-.group-modal { max-width: 620px; width: 100%; }
-.roster-head { display: flex; align-items: center; justify-content: space-between; margin: 6px 0 8px; }
+/* The team editor is a bounded flex column: heading and footer are fixed, the
+   member list scrolls between them, so the modal never clips on the footer. */
+.group-modal {
+  max-width: 560px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 44px);
+}
+.group-modal-head { margin-bottom: 6px; }
+.group-modal-head h2 { font-size: 22px; margin: 6px 0 4px; }
+.group-modal-head p { color: var(--muted); margin: 0; font-size: 12px; line-height: 1.5; }
+.group-modal-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 4px 2px 2px;
+}
+.roster-head { display: flex; align-items: center; justify-content: space-between; margin: 14px 0 8px; }
 .roster-ok { font-size: 11px; color: var(--green); font-weight: 600; }
 .roster-missing { font-size: 11px; color: #8a6212; font-weight: 600; }
-.roster { display: flex; flex-direction: column; gap: 7px; max-height: 264px; overflow-y: auto; }
+.roster { display: flex; flex-direction: column; gap: 7px; }
 .roster-row {
   display: flex;
   align-items: center;
@@ -1455,21 +1498,24 @@ textarea:focus {
   padding: 9px 11px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  flex-wrap: wrap;
 }
 .roster-row.is-member { border-color: var(--purple); background: var(--purple-soft); }
 .roster-toggle { display: flex; align-items: center; gap: 10px; flex: 1; cursor: pointer; min-width: 0; }
 .roster-copy { display: flex; flex-direction: column; min-width: 0; }
 .roster-copy strong { font-size: 13px; }
 .roster-copy span { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.role-label-input {
-  width: min(160px, 100%);
-  height: 32px;
+.role-select {
+  flex: none;
+  width: 118px;
+  height: 34px;
   margin-top: 0;
-  flex: 0 1 160px;
+  padding: 0 8px;
   font-size: 12px;
+  border-radius: 9px;
+  background: var(--paper);
+  text-transform: capitalize;
+  cursor: pointer;
 }
-.role-label-input:disabled { opacity: 0.45; }
 .role-picker { display: flex; gap: 4px; }
 .role-chip {
   border: 1px solid var(--line);
@@ -1887,11 +1933,21 @@ textarea:focus {
 /* --- the two-column Teams shell --- */
 .team-shell {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
+  grid-template-columns: minmax(0, 1fr) 340px;
   gap: 22px;
-  align-items: start;
+  align-items: stretch;
+  /* Bound the surface to the viewport so the conversation feed scrolls inside
+     it and the composer pins to the bottom — the same trick as the solo
+     playground. 56px = the .main top+bottom padding. */
+  height: calc(100vh - 56px);
+  min-height: 520px;
 }
-.team-main { min-width: 0; }
+.team-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
 .team-head {
   display: flex;
   align-items: flex-start;
@@ -1964,7 +2020,19 @@ textarea:focus {
 
 /* The rail stops being a rail before it starts squeezing the conversation. */
 @media (max-width: 1180px) {
-  .team-shell { grid-template-columns: minmax(0, 1fr); }
+  .team-shell {
+    grid-template-columns: minmax(0, 1fr);
+    /* Below the breakpoint the surface returns to normal page flow — a locked
+       viewport height would cram the stacked rail into a tiny scroll box. */
+    height: auto;
+    min-height: 0;
+  }
+  .group-panel,
+  .group-panel.is-chat { overflow: visible; }
+  .group-panel.is-chat .chat-feed { overflow: visible; }
+  /* Narrow: the column returns to normal flow, so nothing is pinned/scrolled. */
+  .cc-rail { height: auto; overflow: visible; }
+  .cc-rail .member-rail { flex: none; overflow: visible; }
   .member-rail {
     position: static;
     max-height: none;
@@ -1979,3 +2047,198 @@ textarea:focus {
   .team-head .header-actions { width: 100%; }
   .team-head .header-actions .button { flex: 1; }
 }
+
+/* --- command center: right column (Live Terminal + Members) --- */
+.cc-rail {
+  min-height: 0;
+  height: 100%;
+  max-height: 100%;
+  overflow: hidden; /* the column itself never scrolls */
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-bottom: 4px;
+}
+/* The Live Terminal is pinned at the top of the column: fixed height, does not
+   scroll away. Only the member list below it scrolls. */
+.cc-rail .live-terminal { flex: none; }
+.cc-rail .member-rail {
+  position: static;
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  padding-bottom: 4px;
+}
+
+/* --- Live Terminal ---
+   Reuses the sidebar's dark surface (#242421) so it reads as a terminal while
+   staying inside the organizer's palette. Accents are tints of --green/--purple. */
+.live-terminal {
+  flex: none;
+  height: 300px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #242421;
+  overflow: hidden;
+}
+.live-terminal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 13px;
+  border-bottom: 1px solid #363632;
+}
+.live-terminal-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #f5f3ed;
+}
+.live-terminal-pip {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.live-terminal-pip.is-live {
+  background: var(--green);
+  box-shadow: 0 0 0 3px rgba(51, 144, 109, 0.28);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+.live-terminal-pip.is-idle { background: #5a5a54; }
+.live-terminal-feed {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 13px;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.7;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.live-terminal-empty { margin: 0; color: #8f8f88; font-size: 12px; }
+/* One flowing line, like a real terminal: dim time, bright agent, then the
+   message wrapping naturally under a hanging indent. */
+.live-line {
+  padding-left: 12px;
+  text-indent: -12px;
+  overflow-wrap: anywhere;
+}
+.live-line-time { color: #6f6f68; margin-right: 7px; }
+.live-line-agent { color: #c0b6f2; font-weight: 600; margin-right: 7px; }
+.live-line-agent::after { content: ":"; color: #6f6f68; }
+.live-line-text { color: #d7d5cc; white-space: pre-wrap; }
+.live-line-text.tone-command { color: #9fd0c0; }
+.live-line-text.tone-file { color: #cbb98f; }
+.live-line-text.tone-error { color: #e79a94; }
+.live-line-text.tone-reasoning { color: #a9a7a0; font-style: italic; }
+.live-line-text.tone-message { color: #e9e7df; }
+@media (prefers-reduced-motion: reduce) {
+  .live-terminal-pip.is-live { animation: none; }
+}
+
+/* --- Audit overflow (demoted Ledger / Workspaces / Proof) --- */
+.team-audit { position: relative; }
+.team-audit-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  min-width: 152px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+.team-audit-item {
+  border: 0;
+  background: none;
+  text-align: left;
+  padding: 8px 11px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--ink);
+  cursor: pointer;
+}
+.team-audit-item:hover { background: rgba(0, 0, 0, 0.04); }
+.team-audit-item.selected {
+  background: var(--purple-soft);
+  color: var(--purple-dark);
+  font-weight: 600;
+}
+
+/* The command-center rail collapses with the same breakpoint as the old rail. */
+@media (max-width: 1180px) {
+  .cc-rail {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+}
+
+/* History button active state (ghost button pressed) */
+.button.button-ghost.is-active {
+  background: var(--purple-soft);
+  border-color: var(--purple);
+  color: var(--purple-dark);
+}
+/* Task history rendered as its own view rather than a trailing strip. */
+.task-history.in-panel { margin-top: 0; }
+.task-history.in-panel h3 { margin-top: 0; }
+
+/* --- inline memory-approval card (surfaced in the conversation) --- */
+.approval-stack { display: flex; flex-direction: column; gap: 12px; margin: 12px 0 4px; }
+.approval-card {
+  border: 1px solid var(--purple);
+  background: var(--purple-soft);
+  border-radius: 14px;
+  padding: 14px 16px;
+  box-shadow: 0 6px 20px rgba(105, 84, 217, 0.12);
+}
+.approval-card.approval-quarantined {
+  border-color: var(--red);
+  background: #fbeceb;
+  box-shadow: 0 6px 20px rgba(197, 83, 83, 0.12);
+}
+.approval-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 9px; }
+.approval-icon { font-size: 15px; }
+.approval-head strong { font-size: 13px; }
+.approval-sev {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: 6px;
+}
+.approval-sev.is-severe { background: #f3d9d9; color: #973939; }
+.approval-sev.is-normal { background: #e2e0d8; color: #5a5b53; }
+.approval-reason {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--muted); border: 1px solid var(--line); border-radius: 6px;
+  padding: 2px 6px; background: rgba(255, 255, 255, 0.6);
+}
+.approval-dest { margin: 0 0 9px; font-size: 12.5px; line-height: 1.55; color: var(--ink); }
+.approval-dest code {
+  background: rgba(0, 0, 0, 0.06); padding: 1px 5px; border-radius: 5px; font-size: 11.5px;
+}
+.approval-withheld { color: var(--muted); }
+.approval-content {
+  margin: 0 0 9px; padding: 9px 12px;
+  background: var(--paper); border-left: 3px solid var(--purple);
+  border-radius: 8px; font-size: 13px; line-height: 1.6; color: var(--ink);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.approval-quarantined .approval-content { border-left-color: var(--red); }
+.approval-edit {
+  width: 100%; margin-bottom: 9px; border-radius: 9px; padding: 10px 12px;
+  font-size: 13px; line-height: 1.6;
+}
+.approval-fires { margin: 0 0 9px; font-size: 12px; color: var(--muted); line-height: 1.5; }
+.approval-fires .eyebrow { margin-right: 4px; }
+.approval-safety { margin: 0 0 9px; font-size: 12px; color: #973939; font-weight: 600; }
+.approval-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.approval-actions .button { min-height: 34px; }

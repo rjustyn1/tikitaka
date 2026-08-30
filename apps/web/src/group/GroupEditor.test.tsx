@@ -57,15 +57,16 @@ describe("GroupEditor", () => {
     expect(submit).toBeEnabled();
   });
 
-  it("submits the server membership shape with free-form labels", () => {
+  it("submits the server membership shape with the chosen role labels", () => {
     const onSubmit = renderEditor();
     fireEvent.change(screen.getByPlaceholderText("Upload Feature Team"), {
       target: { value: "Upload Feature Team" },
     });
     fireEvent.click(screen.getAllByRole("checkbox")[0] as HTMLElement);
     fireEvent.click(screen.getAllByRole("checkbox")[1] as HTMLElement);
+    // Roles are chosen from the fixed current-model set, not free text.
     fireEvent.change(screen.getByLabelText("Role for Backend Agent"), {
-      target: { value: "API owner" },
+      target: { value: "backend" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Create team" }));
 
@@ -73,7 +74,7 @@ describe("GroupEditor", () => {
       name: "Upload Feature Team",
       description: "",
       members: [
-        { agentId: "a1", role: "API owner" },
+        { agentId: "a1", role: "backend" },
         { agentId: "a2", role: "member" },
       ],
     });

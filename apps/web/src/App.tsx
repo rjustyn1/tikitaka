@@ -766,15 +766,26 @@ export default function App() {
           </button>
         </div>
 
-        <button
-          className="button button-primary create-button"
-          onClick={() => {
-            setForm(emptyForm);
-            setShowCreate(true);
-          }}
-        >
-          <span>＋</span> Create Agent
-        </button>
+        {view === "teams" ? (
+          <button
+            className="button button-primary create-button"
+            onClick={() => setCreateTeamRequested(true)}
+            disabled={agents.length < 3}
+            title={agents.length < 3 ? "Create three Agents first" : undefined}
+          >
+            <span>＋</span> Create New Team
+          </button>
+        ) : (
+          <button
+            className="button button-primary create-button"
+            onClick={() => {
+              setForm(emptyForm);
+              setShowCreate(true);
+            }}
+          >
+            <span>＋</span> Create Agent
+          </button>
+        )}
 
         {/*
           The sidebar lists whatever the active view is about. The Agents branch
@@ -832,7 +843,7 @@ export default function App() {
       </aside>
 
       <main className="main">
-        {!system?.arkConfigured || !system?.codexAvailable ? (
+        {view !== "teams" && (!system?.arkConfigured || !system?.codexAvailable) ? (
           <div className="config-banner">
             <span>!</span>
             <div>
