@@ -2,6 +2,7 @@
 import { useMemo, useState } from "react";
 import type { Agent, AgentGroup, GroupMember, GroupRole } from "../types";
 
+const MIN_MEMBERS = 2;
 const MAX_MEMBERS = 12;
 
 interface Props {
@@ -40,7 +41,7 @@ export function GroupEditor({ agents, group, busy, onCancel, onSubmit }: Props) 
 
   const valid =
     name.trim().length > 0 &&
-    members.length >= 1 &&
+    members.length >= MIN_MEMBERS &&
     members.length <= MAX_MEMBERS;
 
   const toggle = (agentId: string) => {
@@ -104,7 +105,11 @@ export function GroupEditor({ agents, group, busy, onCancel, onSubmit }: Props) 
 
         <div className="roster-head">
           <span className="eyebrow">Members</span>
-          <span className={members.length > 0 ? "roster-ok" : "roster-missing"}>
+          <span
+            className={
+              members.length >= MIN_MEMBERS ? "roster-ok" : "roster-missing"
+            }
+          >
             {members.length} of {MAX_MEMBERS} selected
           </span>
         </div>

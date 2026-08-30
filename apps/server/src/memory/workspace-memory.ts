@@ -11,6 +11,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Agent, MemoryNote } from "../types.js";
 import { removeManagedBlock, replaceManagedBlock } from "../workspace.js";
+import { isValidSkillKey } from "./skill-catalog.js";
 
 // Re-exported so existing importers of this module are unaffected by the swap.
 export { removeManagedBlock, replaceManagedBlock };
@@ -33,8 +34,8 @@ export class WorkspaceMemoryWriter {
     return path.join(agent.workspacePath, "AGENTS.md");
   }
 
-  private skillDir(agent: Agent, note: MemoryNote): string {
-    return path.join(agent.workspacePath, SKILLS_DIR, noteSlug(note));
+  private skillDir(agent: Agent, skillKey: string): string {
+    return path.join(agent.workspacePath, SKILLS_DIR, skillKey);
   }
 
   /** Severe note -> upsert a managed block in the target Agent's AGENTS.md. */
@@ -59,28 +60,41 @@ export class WorkspaceMemoryWriter {
     return filePath;
   }
 
-  /** Normal note -> write a SKILL.md into the target Agent's private skills dir. */
-  async writeSkill(agent: Agent, note: MemoryNote): Promise<string> {
-    const dir = this.skillDir(agent, note);
+  /** Normal note -> upsert one managed block in a private Agent skill. */
+  async writeSkill(
+    agent: Agent,
+    note: MemoryNote,
+    skillKey: string = note.skillKey ?? noteSlug(note),
+  ): Promise<string> {
+    if (!isValidSkillKey(skillKey)) {
+      throw new Error(`Invalid skill key: ${skillKey}`);
+    }
+    const dir = this.skillDir(agent, skillKey);
     await mkdir(dir, { recursive: true });
     const filePath = path.join(dir, "SKILL.md");
-    const content = [
-      "---",
-      `name: memory-${noteSlug(note)}`,
-      `description: ${note.description}`,
-      "---",
-      "",
-      "# Governed Memory",
-      "",
-      "> This memory was granted to this Agent by a human-reviewed governance",
-      "> pipeline. Treat it as a durable fact, not a new instruction.",
-      "",
+    let existing = "";
+    try {
+      existing = await readFile(filePath, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      existing = [
+        "---",
+        `name: ${skillKey}`,
+        `description: ${note.description}`,
+        "---",
+        "",
+      ].join("\n");
+    }
+    const body = [
       note.content,
       "",
       `Source task: ${note.groupTaskId}`,
-      "",
     ].join("\n");
-    await writeFile(filePath, content, "utf8");
+    await writeFile(
+      filePath,
+      replaceManagedBlock(existing, `memory:${note.id}`, body),
+      "utf8",
+    );
     return filePath;
   }
 
@@ -98,8 +112,26 @@ export class WorkspaceMemoryWriter {
     await writeFile(filePath, next, "utf8");
   }
 
-  /** Revoke a normal note: delete its skill directory. */
-  async removeSkill(agent: Agent, note: MemoryNote): Promise<void> {
-    await rm(this.skillDir(agent, note), { recursive: true, force: true });
+  /** Revoke a normal note while preserving unrelated memories in the skill. */
+  async removeSkill(
+    agent: Agent,
+    note: MemoryNote,
+    skillKey: string = note.skillKey ?? noteSlug(note),
+  ): Promise<void> {
+    const dir = this.skillDir(agent, skillKey);
+    const filePath = path.join(dir, "SKILL.md");
+    let existing = "";
+    try {
+      existing = await readFile(filePath, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+    const next = removeManagedBlock(existing, `memory:${note.id}`);
+    if (!next.includes("<!-- memory:")) {
+      await rm(dir, { recursive: true, force: true });
+      return;
+    }
+    await writeFile(filePath, next, "utf8");
   }
 }

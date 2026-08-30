@@ -57,7 +57,7 @@ describe("OffExtractorClient", () => {
 });
 
 describe("FakeExtractorClient", () => {
-  it("returns deterministic notes wired to real ids from the prompt", async () => {
+  it("returns deterministic notes with provenance indices and no routing", async () => {
     const result = await new FakeExtractorClient().extract({
       system: "s",
       prompt: FIXTURE_PROMPT,
@@ -65,9 +65,7 @@ describe("FakeExtractorClient", () => {
     });
     const parsed = JSON.parse(result.rawText);
     expect(parsed.notes).toHaveLength(2);
-    expect(parsed.notes[0].targetAgentIds).toEqual([
-      "11111111-1111-4111-8111-111111111111",
-    ]);
+    expect(parsed.notes[0].targetAgentIds).toBeUndefined();
     // Provenance is cited by index, not by echoing UUIDs.
     expect(parsed.notes[0].sourceRunIndices).toEqual([1]);
     expect(parsed.notes[0].sourceSpanIndices).toEqual([1]);

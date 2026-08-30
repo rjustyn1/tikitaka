@@ -5,7 +5,7 @@
  * runner. Nothing here calls Codex or touches the store.
  */
 
-import type { GroupMessage, GroupPlanNode } from "../types.js";
+import type { GroupMessage, GroupPlanNode, MemoryNote } from "../types.js";
 import type { ChainNodeTemplate } from "./group-chain.js";
 
 export interface ContextPacket {
@@ -69,6 +69,11 @@ export interface TurnPromptInput {
   /** Completed dependency outputs, in chain order. */
   dependencyOutputs: ReadonlyArray<{ nodeRole: string; output: string }>;
   agentNames: ReadonlyMap<string, string>;
+  /** Active notes already landed in this Agent's private workspace. */
+  governedMemory: readonly Pick<
+    MemoryNote,
+    "content" | "description" | "severity"
+  >[];
 }
 
 function speakerLabel(
@@ -128,6 +133,18 @@ export function buildTurnPrompt(input: TurnPromptInput): string {
     for (const dependency of input.dependencyOutputs) {
       sections.push(dependency.nodeRole + ":", dependency.output, "");
     }
+  }
+
+  if (input.governedMemory.length > 0) {
+    sections.push("[Your governed memory]");
+    for (const note of input.governedMemory) {
+      sections.push(
+        note.severity === "severe"
+          ? "- (always apply) " + note.content
+          : "- (apply when: " + note.description + ") " + note.content,
+      );
+    }
+    sections.push("");
   }
 
   sections.push(

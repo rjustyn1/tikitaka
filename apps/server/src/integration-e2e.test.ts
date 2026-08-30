@@ -6,7 +6,7 @@
  * Bridge 5 (what GroupRunner persists) against what TaskBufferBuilder reads.
  * No unit test covers that seam.
  */
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -34,6 +34,8 @@ beforeEach(async () => {
       AGENT_WORKSPACE_ROOT: path.join(root, "workspaces"),
       CODEX_HOME: path.join(root, "codex-home"),
       MEMORY_EXTRACTOR: "fake",
+      MEMORY_RECOGNITION_AGENT_THRESHOLD: "0.01",
+      MEMORY_RECOGNITION_SKILL_THRESHOLD: "0.01",
     } as NodeJS.ProcessEnv),
   };
   store = new JsonStore(path.join(root, "data", "launchpad.json"));
@@ -71,14 +73,32 @@ async function waitForTerminal(taskId: string): Promise<GroupTaskStatus> {
   throw new Error("group task never reached a terminal status");
 }
 
+async function seedUploadStorageSkill(agentId: string): Promise<void> {
+  const agent = service.getAgent(agentId);
+  const directory = path.join(agent.workspacePath, ".agents", "skills", "upload-storage-keys");
+  await mkdir(directory, { recursive: true });
+  await writeFile(
+    path.join(directory, "SKILL.md"),
+    "---\nname: upload-storage-keys\ndescription: Upload object storage keys and namespaces.\n---\n",
+    "utf8",
+  );
+}
+
 describe("end-to-end: group task -> governed memory", () => {
   it("runs the chain and hands real node output to the memory pipeline", async () => {
     const roles: GroupRole[] = ["backend", "frontend", "security"];
     const members = [];
     for (const role of roles) {
-      const agent = await service.createAgent({ name: role + " Agent" });
+      const agent = await service.createAgent({
+        name: role + " Agent",
+        description:
+          role === "backend"
+            ? "Owns upload APIs, storage and server contracts."
+            : role + " implementation work.",
+      });
       members.push({ agentId: agent.id, role });
     }
+    await seedUploadStorageSkill(members[0]!.agentId);
     const outsider = await service.createAgent({ name: "Ops Agent" });
 
     const group = await service.createGroup({ name: "Upload Feature Team", members });
@@ -138,9 +158,16 @@ describe("end-to-end: the governance claim", () => {
     const roles: GroupRole[] = ["backend", "frontend", "security"];
     const members = [];
     for (const role of roles) {
-      const agent = await service.createAgent({ name: role + " Agent" });
+      const agent = await service.createAgent({
+        name: role + " Agent",
+        description:
+          role === "backend"
+            ? "Owns upload APIs, storage and server contracts."
+            : role + " implementation work.",
+      });
       members.push({ agentId: agent.id, role });
     }
+    await seedUploadStorageSkill(members[0]!.agentId);
     const outsider = await service.createAgent({ name: "Ops Agent" });
 
     const group = await service.createGroup({ name: "Upload Feature Team", members });

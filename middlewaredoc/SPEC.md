@@ -54,7 +54,11 @@ export interface Database {
 ## Group Types
 
 ```ts
-export type GroupRole = "backend" | "frontend" | "security";
+export type GroupRole =
+  | "backend"
+  | "frontend"
+  | "security"
+  | (string & {});
 
 export interface GroupMember {
   agentId: string;
@@ -65,7 +69,7 @@ export interface AgentGroup {
   id: string;
   name: string;
   description: string;
-  // A4: replaces memberAgentIds. Exactly three, one per role.
+  // Replaces memberAgentIds. Between 2 and 12 unique Agents.
   members: GroupMember[];
   activeTaskId: string | null;
   createdAt: string;
@@ -408,14 +412,25 @@ const groupTaskParams = z.object({
 const noteIdParams = z.object({ id: z.string().uuid() });
 const taskIdParams = z.object({ id: z.string().uuid() });
 
+const groupMemberBody = z.object({
+  agentId: z.string().uuid(),
+  role: z.string().trim().min(1).max(40).default("member"),
+});
+
+const groupMembersBody = z.array(groupMemberBody).min(2).max(12)
+  .superRefine((members, ctx) => {
+    if (new Set(members.map((member) => member.agentId)).size !== members.length) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Each Agent can appear only once in a group",
+      });
+    }
+  });
+
 const createGroupBody = z.object({
   name: z.string().trim().min(1).max(80),
   description: z.string().trim().max(500).optional(),
-  // A4: exactly three members, one per role. Replaces memberAgentIds.
-  members: z.array(z.object({
-    agentId: z.string().uuid(),
-    role: z.enum(["backend", "frontend", "security"]),
-  })).length(3),
+  members: groupMembersBody,
 });
 
 const updateGroupBody = createGroupBody.partial().refine(
@@ -537,14 +552,16 @@ const messageBody = z.object({
 
 No new route. `AgentService.sendMessage()` passes `threadId: null` when set.
 
-### A4 - membership validation
+### A4 - membership validation (superseded)
 
 ```text
-POST /api/groups          400 unless exactly three members, one per role
+POST /api/groups          400 unless there are 2-12 unique Agent members
 PATCH /api/groups/:id     409 while group.activeTaskId is set
-POST /api/groups/:id/tasks 409 if a role is missing:
-  "This plan needs one backend, one frontend, and one security member."
+POST /api/groups/:id/tasks planner selects relevant members from descriptions
 ```
+
+Roles are free-form display labels. They do not assign work; the task planner
+returns Agent ids directly after reading the prompt and member descriptions.
 
 ### A3 - lease-aware error codes
 

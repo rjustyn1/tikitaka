@@ -48,6 +48,10 @@ export function requiresHumanReview(
     candidate.severity === "severe" ||
     safety.redactionFired ||
     safety.quarantineHit ||
+    candidate.recognitionMatchKind === "fallback" ||
+    candidate.skillAssignments?.some(
+      (assignment) => assignment.matchKind === "new-skill",
+    ) === true ||
     candidate.targetAgentIds.length > 2
   );
 }
@@ -89,6 +93,16 @@ export class ReviewService {
       // Start non-active; activate() flips it only after files are on disk.
       status: parked === "active" ? "candidate" : parked,
       targetAgentIds: candidate.targetAgentIds,
+      ...(candidate.recognitionMatchKind
+        ? { recognitionMatchKind: candidate.recognitionMatchKind }
+        : {}),
+      ...(candidate.recognitionScores
+        ? { recognitionScores: candidate.recognitionScores }
+        : {}),
+      skillKey: candidate.skillKey,
+      ...(candidate.skillAssignments
+        ? { skillAssignments: candidate.skillAssignments }
+        : {}),
       description: safety.note.description,
       sourceRunIds: candidate.sourceRunIds,
       sourceSpanIds: candidate.sourceSpanIds,
@@ -223,6 +237,12 @@ export class ReviewService {
         agentId,
         filePath: pathByAgent.get(agentId) ?? "",
         reviewerName,
+        ...(note.recognitionMatchKind
+          ? { recognitionMatchKind: note.recognitionMatchKind }
+          : {}),
+        ...(note.recognitionScores?.[agentId] !== undefined
+          ? { recognitionScore: note.recognitionScores[agentId] }
+          : {}),
       });
     }
 

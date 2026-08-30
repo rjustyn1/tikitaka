@@ -9,6 +9,7 @@ import { FakeRunner } from "../test-helpers.js";
 import type { Agent, TraceSpan } from "../types.js";
 import { WorkspaceManager } from "../workspace.js";
 import type { MemoryPipeline } from "./pipeline.js";
+import { TaskPlanner, type PlannerClient } from "./planner.js";
 import { RecordingMemoryPipeline } from "../test-helpers.js";
 import type { GroupMember } from "../types.js";
 
@@ -47,6 +48,7 @@ interface Harness {
 async function makeHarness(
   runner: FakeRunner = new FakeRunner(),
   pipeline: MemoryPipeline & { calls?: unknown } = new RecordingMemoryPipeline(),
+  planner?: TaskPlanner,
 ): Promise<Harness> {
   const root = await mkdtemp(path.join(tmpdir(), "launchpad-group-"));
   temporaryDirectories.push(root);
@@ -59,13 +61,13 @@ async function makeHarness(
     ARK_MODEL: "ep-test",
   });
   const store = new JsonStore(path.join(root, "data", "db.json"));
-  const service = new AgentService(
-    config,
-    store,
-    new WorkspaceManager(path.join(root, "workspaces"), "local-process"),
-    runner,
-    pipeline,
+  const workspaces = new WorkspaceManager(
+    path.join(root, "workspaces"),
+    "local-process",
   );
+  const service = planner
+    ? new AgentService(config, store, workspaces, runner, pipeline, planner)
+    : new AgentService(config, store, workspaces, runner, pipeline);
   await service.initialize();
 
   const backend = await service.createAgent({ name: "Backend" });
@@ -231,6 +233,47 @@ describe("group lifecycle", () => {
     for (const agent of [harness.backend, harness.frontend, harness.security]) {
       await expect(lstat(path.join(agent.workspacePath, "code"))).rejects.toThrow();
     }
+  });
+
+  it("releases unselected members before a later task", async () => {
+    const subsetClient: PlannerClient = {
+      async extract() {
+        return {
+          rawText: JSON.stringify({
+            nodes: [
+              {
+                agent: 1,
+                nodeRole: "focused-work",
+                instruction: "Complete the focused work.",
+                expectedOutput: "A result.",
+                dependsOn: [],
+                area: "all",
+                writes: true,
+              },
+            ],
+          }),
+        };
+      },
+    };
+    const harness = await makeHarness(
+      new FakeRunner(),
+      new RecordingMemoryPipeline(),
+      new TaskPlanner(subsetClient),
+    );
+    const group = await harness.service.createGroup({
+      name: "Subset team",
+      members: harness.members,
+    });
+
+    const first = await harness.service.startGroupTask(group.id, "First task.");
+    await settle(harness, first.id);
+    for (const agent of [harness.backend, harness.frontend, harness.security]) {
+      await expect(lstat(path.join(agent.workspacePath, "code"))).rejects.toThrow();
+    }
+
+    const second = await harness.service.startGroupTask(group.id, "Second task.");
+    await settle(harness, second.id);
+    expect(harness.service.getGroupTask(second.id).task.status).toBe("completed");
   });
 
   it("gives a re-added Agent a new epoch and a fresh group thread", async () => {

@@ -7,7 +7,7 @@
 // components/LEDGER.md.
 
 import { randomUUID } from "node:crypto";
-import type { GrantRecord } from "../types.js";
+import type { GrantRecord, MemoryMatchKind } from "../types.js";
 import type { JsonStore } from "../store.js";
 
 const now = () => new Date().toISOString();
@@ -28,6 +28,8 @@ export interface RecordGrantInput {
   agentId: string;
   filePath: string;
   reviewerName?: string | null;
+  recognitionMatchKind?: MemoryMatchKind;
+  recognitionScore?: number;
 }
 
 export interface RecordWithheldInput {
@@ -62,6 +64,8 @@ interface BuildGrantRecordInput {
   reason: string;
   filePath?: string | null;
   reviewerName?: string | null;
+  recognitionMatchKind?: MemoryMatchKind;
+  recognitionScore?: number;
 }
 
 function buildGrantRecord(input: BuildGrantRecordInput): GrantRecord {
@@ -74,6 +78,12 @@ function buildGrantRecord(input: BuildGrantRecordInput): GrantRecord {
     reason: input.reason,
     filePath: input.filePath ?? null,
     reviewerName: input.reviewerName ?? null,
+    ...(input.recognitionMatchKind
+      ? { recognitionMatchKind: input.recognitionMatchKind }
+      : {}),
+    ...(input.recognitionScore !== undefined
+      ? { recognitionScore: input.recognitionScore }
+      : {}),
     createdAt: now(),
   };
 }
@@ -90,6 +100,12 @@ export class LedgerService {
       reason: "granted",
       filePath: input.filePath,
       reviewerName: input.reviewerName ?? null,
+      ...(input.recognitionMatchKind
+        ? { recognitionMatchKind: input.recognitionMatchKind }
+        : {}),
+      ...(input.recognitionScore !== undefined
+        ? { recognitionScore: input.recognitionScore }
+        : {}),
     });
     await this.store.mutate((db) => {
       db.grants.push(record);

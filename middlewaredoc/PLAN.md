@@ -13,11 +13,11 @@ four-person team.
 
 > ⚠️ **Read "Resolved Blockers (A1-A5)" and "Ownership Corrections" at the end of
 > this file before starting.** They were added after a design review and they
-> **supersede** anything above that contradicts them — most importantly the group
-> membership contract (`memberAgentIds: string[]` is replaced by
-> `members: [{agentId, role}]`, and the seven-node DAG is now STRETCH scope --
-> v1 is a hardcoded sequential chain, see A4) and the file ownership of
-> `workspace.ts` and `app.test.ts`.
+> **supersede** anything above that contradicts them. The current integrated
+> contract replaces `memberAgentIds` with 2-12 unique
+> `members: [{agentId, role}]`; roles are display labels, and the planner reads
+> Agent descriptions to produce a bounded, validated DAG. Nodes execute
+> sequentially in topological order; parallel execution remains stretch scope.
 
 The implementation should follow the component TDs in this folder, especially:
 
@@ -40,7 +40,7 @@ Core architecture:
 private Agent roots
 + shared group code under ./code
 + app-owned group transcript
-+ hardcoded sequential chain (branch-and-join DAG is STRETCH - see A4)
++ planner-authored DAG, executed sequentially in validated topological order
 + governed memory landing into private Agent workspaces
 ```
 
@@ -186,26 +186,25 @@ workspaces/shared-code/<groupTaskId>
 Implement planner-written group-task sections in each selected Agent's private
 `AGENTS.md`.
 
-Implement the sequential chain (**v1 - see A4; the DAG below is STRETCH**):
+Implement planner-backed task execution:
 
 ```text
-one GroupPlanNode per member, in member-list order
-node[0].dependsOn = []
-node[i].dependsOn = [node[i-1].id]
-the last node is the single sink
+give the planner the task plus every member's name and description
+accept at most eight validated nodes using short integer Agent/dependency indexes
+reject unknown Agents, malformed dependencies, duplicate edges and cycles
+persist each node's instruction and expected output
+derive ownership hints and locks from a fixed server-side area map
 ```
 
 ```text
-STRETCH - do not build until the sequential demo runs end to end:
-  backend-contract -> frontend-plan / security-review -> join-plan
-    -> backend-impl / frontend-impl -> final-join
+STRETCH - current execution remains one node at a time:
+  run independent planner nodes concurrently
   no duplicate Agent in one parallel phase
   no overlapping write paths
   no duplicate runtime locks
-  join nodes depend on all branches they integrate
 ```
 
-Implement execution (a plain `for` loop over the chain in v1):
+Implement execution (a plain `for` loop over topologically ordered nodes):
 
 ```text
 acquire the A3 Agent lease
@@ -459,8 +458,8 @@ The demo should visibly prove:
 only selected Agents joined
 each Agent has separate groupThreadId
 all Agents edit shared ./code
-branch context does not leak sibling output   (STRETCH - no branches in v1, see A4)
-join owner receives branch outputs            (STRETCH - see A4)
+each node receives only its transitive dependency outputs
+planner-selected Agents execute their persisted mini-plans
 memory lands only in target private Agent workspace
 withheld records exist for non-target Agents
 ```

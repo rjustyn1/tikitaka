@@ -459,6 +459,10 @@ export class GroupRunner {
           nodeRole: candidate.nodeRole,
           output: candidate.output ?? "",
         }));
+      const governedMemory = database.notes.filter(
+        (note) =>
+          note.status === "active" && note.targetAgentIds.includes(node.agentId),
+      );
 
       const prompt = buildTurnPrompt({
         taskPrompt: task.prompt,
@@ -471,6 +475,7 @@ export class GroupRunner {
         agentNames: new Map(
           database.agents.map((item) => [item.id, item.name]),
         ),
+        governedMemory,
       });
 
       const run: AgentRun = {
@@ -865,11 +870,12 @@ export class GroupRunner {
         .filter((node) => node.groupTaskId === taskId)
         .map((node) => node.agentId),
     );
-    if (agentIds.size === 0) {
-      const group = database.groups.find((item) => item.id === task.groupId);
-      for (const member of group ? readMembers(group) : []) {
-        agentIds.add(member.agentId);
-      }
+    // Startup prepares ./code for every member, even when the planner selects
+    // only a subset. Release that same full roster; keep plan-node ids in the
+    // union so historical rows remain clean if the stored group is missing.
+    const group = database.groups.find((item) => item.id === task.groupId);
+    for (const member of group ? readMembers(group) : []) {
+      agentIds.add(member.agentId);
     }
 
     await Promise.all(

@@ -108,17 +108,17 @@ describe("group + memory routes", () => {
     await app.close();
   });
 
-  it("accepts any number of members, with or without a role label", async () => {
+  it("accepts 2-12 members, with optional free-form role labels", async () => {
     // A4's exactly-three-one-per-role rule is gone: the planner assigns work
     // from each Agent's description, so `role` is just a label with a default.
     const app = await createApp(loadConfig({ NODE_ENV: "test" }), groupService);
     for (const members of [
-      [{ agentId: randomUUID() }],
       [{ agentId: randomUUID(), role: "data" }, { agentId: randomUUID() }],
       [
         { agentId: randomUUID(), role: "backend" },
         { agentId: randomUUID(), role: "backend" },
       ],
+      Array.from({ length: 12 }, () => ({ agentId: randomUUID() })),
     ]) {
       const created = await app.inject({
         method: "POST",
@@ -132,11 +132,13 @@ describe("group + memory routes", () => {
     await app.close();
   });
 
-  it("rejects an empty group and the same Agent listed twice with 400", async () => {
+  it("rejects out-of-range membership and duplicate Agents with 400", async () => {
     const app = await createApp(loadConfig({ NODE_ENV: "test" }), groupService);
     const duplicated = randomUUID();
     for (const members of [
       [],
+      [{ agentId: randomUUID() }],
+      Array.from({ length: 13 }, () => ({ agentId: randomUUID() })),
       [
         { agentId: duplicated, role: "backend" },
         { agentId: duplicated, role: "frontend" },

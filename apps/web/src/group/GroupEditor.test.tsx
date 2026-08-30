@@ -46,7 +46,7 @@ describe("GroupEditor", () => {
     }
   });
 
-  it("accepts a named team with one member", () => {
+  it("requires at least two members", () => {
     renderEditor();
     const submit = screen.getByRole("button", { name: "Create team" });
     fireEvent.change(screen.getByPlaceholderText("Upload Feature Team"), {
@@ -54,6 +54,8 @@ describe("GroupEditor", () => {
     });
     expect(submit).toBeDisabled();
     fireEvent.click(screen.getAllByRole("checkbox")[0] as HTMLElement);
+    expect(submit).toBeDisabled();
+    fireEvent.click(screen.getAllByRole("checkbox")[1] as HTMLElement);
     expect(submit).toBeEnabled();
   });
 
@@ -85,12 +87,14 @@ describe("GroupEditor", () => {
       target: { value: "Team" },
     });
     fireEvent.click(screen.getAllByRole("checkbox")[0] as HTMLElement);
+    fireEvent.click(screen.getAllByRole("checkbox")[1] as HTMLElement);
     fireEvent.change(screen.getByLabelText("Role for Backend Agent"), {
       target: { value: "" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Create team" }));
     expect(onSubmit.mock.calls[0]?.[0].members).toEqual([
       { agentId: "a1", role: "member" },
+      { agentId: "a2", role: "member" },
     ]);
   });
 

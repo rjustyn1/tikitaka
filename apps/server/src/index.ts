@@ -1,7 +1,7 @@
 import path from "node:path";
 import { AgentService } from "./agent-service.js";
 import { createApp } from "./app.js";
-import { loadConfig, writeCodexConfig } from "./config.js";
+import { loadConfig, loadLocalEnvironment, writeCodexConfig } from "./config.js";
 import { createExtractorClient } from "./memory/extractor-client.js";
 import { createMemoryPipeline } from "./memory/pipeline.js";
 import { FakePlannerClient, TaskPlanner } from "./memory/planner.js";
@@ -12,6 +12,7 @@ import {
   WorkspaceManager,
 } from "./workspace.js";
 
+loadLocalEnvironment();
 const config = loadConfig();
 await writeCodexConfig(config);
 await assertNoGovernedMemoryInCodexHome(config.codexHome);
@@ -26,7 +27,11 @@ const runner = createRunner(config);
 // W1 + W2 - the real governed-memory pipeline, with Person 1 config.
 // MEMORY_EXTRACTOR defaults to "ark"; offline environments must select "fake".
 const memoryPipeline = createMemoryPipeline(store, config, {
-  reviewAllSkills: config.reviewAllSkills,
+  // A local SBERT checkpoint trained only on synthetic labels may route notes,
+  // but it cannot auto-grant until a reviewed holdout explicitly authorizes it.
+  reviewAllSkills:
+    config.reviewAllSkills ||
+    (config.memoryRecognizer === "sbert" && !config.memoryAutoGrantEnabled),
 });
 const planner = new TaskPlanner(
   config.memoryExtractor === "ark"

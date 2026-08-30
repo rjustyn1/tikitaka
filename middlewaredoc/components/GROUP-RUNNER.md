@@ -6,12 +6,9 @@
 
 ## Purpose
 
-> ⚠️ **V1 IS A SEQUENTIAL CHAIN, NOT A DAG.** See A4 in
-> `../DECISIONS.md`. Everything in this document describing parallel
-> phases, branch nodes, join nodes, join-owner selection, or parallel-set
-> validation is **STRETCH scope** - build it only after the sequential demo runs
-> end to end. The v1 chain, the runner call, and the failure behaviour below are
-> current and correct.
+> The planner emits a bounded, validated DAG from the task and member
+> descriptions. The runner executes its topological order sequentially.
+> Concurrent phases and runtime-lock collision handling remain stretch scope.
 
 Execute a group task across selected Agents using the branch-and-join DAG from
 `../GROUP-CHAT-DESIGN.md`.
@@ -34,12 +31,12 @@ interface StartGroupTaskInput {
 1. Freeze group membership.
 2. Create shared code directory.
 3. Link or mount shared code as ./code in each selected Agent root.
-4. Create preseeded/template DAG.
-5. Validate parallel phases.
+4. Ask the planner for a validated DAG and persist each mini-plan.
+5. Derive file ownership and runtime lock records server-side.
 6. Write per-Agent group-task AGENTS.md sections.
-7. Execute runnable DAG nodes.
+7. Execute DAG nodes in validated topological order.
 8. Save group messages, runs, spans, node outputs, and context injections.
-9. Finish at final join node.
+9. Finish when every reachable node is terminal.
 10. Ask flush-trigger whether memory consolidation should run.
 ```
 
@@ -93,7 +90,7 @@ Request types:
 interface CreateGroupInput {
   name: string;
   description?: string;
-  members: GroupMember[];    // A4: {agentId, role}, exactly three
+  members: GroupMember[];    // 2-12 unique Agents; role is a display label
 }
 
 interface UpdateGroupInput {
@@ -116,12 +113,11 @@ interface GroupTaskResponse {
 async function startGroupTask(groupId: string, prompt: string) {
   // 1. read group and selected agents
   // 2. reject if group has activeTaskId
-  // 3. A4: reject unless exactly three members, one per role
-  //    409 "This plan needs one backend, one frontend, and one security member."
+  // 3. reject unless there are 2-12 unique Agent members
   // 4. create GroupTask with status queued
   // 5. create sharedCodePath
   // 6. create/update GroupParticipantState for each member
-  // 7. create preseeded/template GroupPlanNode rows
+  // 7. plan from the prompt + Agent descriptions and persist GroupPlanNode rows
   // 8. write initial human GroupMessage seq
   // 9. set group.activeTaskId = task.id
   // 10. kick executeGroupTask(task.id) in background
@@ -172,65 +168,14 @@ if (decision.shouldFlush) {
 Use `GroupParticipantState.groupThreadId`, not `Agent.codexThreadId`. The solo
 thread must stay untouched by group tasks.
 
-## Preseeded Chain (V1) And DAG (STRETCH)
+## Planner-authored DAG
 
-**V1 - build this.** A fixed five-node sequential chain, bound by ROLE so any
-three Agents can play it:
-
-```text
-1  backend-contract   role: backend    owns code/apps/server/**
-2  frontend-plan      role: frontend   readOnly, dependsOn backend-contract
-3  security-review    role: security   readOnly, dependsOn frontend-plan
-4  backend-impl       role: backend    owns code/apps/server/**, dependsOn security-review
-5  frontend-impl      role: frontend   owns code/apps/web/**,   dependsOn backend-impl
-```
-
-Backend and Frontend each take two turns, so the demo shows plan-then-implement.
-Sequential means node 4 starts only after node 3 completes - no overlap, so the
-A3 lease needs no re-entrancy.
-
-**STRETCH - do not build yet.** The branch-and-join DAG:
-
-```text
-backend-contract
-  agent: Backend
-  kind: work
-  owns: code/apps/server/**
-
-frontend-plan
-  agent: Frontend
-  kind: work
-  dependsOn: backend-contract
-  readOnly: true
-
-security-review
-  agent: Security
-  kind: work
-  dependsOn: backend-contract
-  readOnly: true
-
-join-plan
-  agent: planner-selected join owner
-  kind: join
-  dependsOn: frontend-plan, security-review
-
-backend-impl
-  agent: Backend
-  kind: work
-  dependsOn: join-plan
-  owns: code/apps/server/**
-
-frontend-impl
-  agent: Frontend
-  kind: work
-  dependsOn: join-plan
-  owns: code/apps/web/**
-
-final-join
-  agent: planner-selected join owner
-  kind: join
-  dependsOn: backend-impl, frontend-impl
-```
+`planner.ts` receives the task plus all 2-12 member descriptions and may select
+the relevant subset. It returns no more than eight nodes, each with an Agent
+index, dependencies, instruction, expected output, work area and write flag.
+The server resolves indices to ids, rejects malformed or cyclic plans, derives
+ownership from a fixed work-area map, and falls back to one sequential node per
+member if planning fails.
 
 ## Parallel Safety (STRETCH)
 
@@ -254,8 +199,9 @@ If validation fails, serialize or fail the task before launching Codex.
 
 ## Tests
 
-- runs the five-node sequential chain in order;
-- an Agent taking two turns (Backend, Frontend) works without lease deadlock;
+- runs planner nodes in validated topological order;
+- accepts 2-12 members and planner-selected subsets;
+- an Agent taking multiple turns works without lease deadlock;
 - a solo message during a group task returns 409, not 500 (A3);
 - shared ./code is writable from a real Codex run in BOTH runtimes (A2);
 - STRETCH: prevents duplicate Agent in one parallel set;

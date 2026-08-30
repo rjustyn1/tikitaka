@@ -64,8 +64,8 @@ describe("HTTP boundary in production", () => {
   });
 
   it("reports the failing field, not just the first message", async () => {
-    // A single member is valid now, so the invalid case is the one membership
-    // rule left: the same Agent twice.
+    // Two members satisfy the lower bound, so this isolates duplicate-agent
+    // validation rather than failing on group size first.
     const app = await createApp(productionConfig(), groupService);
     const response = await app.inject({
       method: "POST",

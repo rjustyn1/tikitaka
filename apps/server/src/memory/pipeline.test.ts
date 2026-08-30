@@ -7,6 +7,7 @@ import type { Agent, GroupPlanNode, GroupTask, TraceSpan } from "../types.js";
 import { FakeExtractorClient, type ExtractorClient } from "./extractor-client.js";
 import { LandingService } from "./landing.js";
 import { RealMemoryPipeline } from "./pipeline.js";
+import type { NoteRecognizer } from "./types.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -136,7 +137,19 @@ function messageSpan(id: string, runId: string, agentId: string): TraceSpan {
 describe("RealMemoryPipeline", () => {
   it("runs end to end: fake notes are created, a clean note lands, ledger records grants", async () => {
     const { store } = await seededStore();
-    const pipeline = new RealMemoryPipeline(store, new FakeExtractorClient());
+    const recognizer: NoteRecognizer = {
+      async recognizeAgents(_noteText, members) {
+        return {
+          threshold: 0.5,
+          matches: [
+            { agentId: members[0]!.id, score: 0.9, matchKind: "threshold" },
+          ],
+        };
+      },
+    };
+    const pipeline = new RealMemoryPipeline(store, new FakeExtractorClient(), {
+      recognizer,
+    });
 
     await pipeline.runMemoryPipeline("task-1", ["n2"]);
 
@@ -175,6 +188,38 @@ describe("RealMemoryPipeline", () => {
     // pipeline-level error — the task is untouched, never failed.
     expect(store.snapshot().notes).toHaveLength(0);
     expect(store.snapshot().groupTasks[0]!.status).toBe("completed");
+  });
+
+  it("uses recognizer routing and reviews fallback matches", async () => {
+    const { store } = await seededStore();
+    const recognizer: NoteRecognizer = {
+      async recognizeAgents(_noteText, members) {
+        return {
+          threshold: 0.9,
+          matches: [
+            {
+              agentId: members[1]!.id,
+              score: 0.31,
+              matchKind: "fallback",
+            },
+          ],
+        };
+      },
+    };
+    const pipeline = new RealMemoryPipeline(store, new FakeExtractorClient(), {
+      recognizer,
+    });
+
+    await pipeline.runMemoryPipeline("task-1", ["n2"]);
+
+    const notes = store.snapshot().notes;
+    expect(notes.length).toBeGreaterThanOrEqual(2);
+    expect(notes.every((note) => note.targetAgentIds.length > 0)).toBe(true);
+    expect(notes.every((note) => note.targetAgentIds.length === 1)).toBe(true);
+    expect(notes.every((note) => note.targetAgentIds[0] === AGENT_B)).toBe(true);
+    expect(notes.every((note) => note.recognitionMatchKind === "fallback")).toBe(true);
+    expect(notes.every((note) => note.recognitionScores?.[AGENT_B] === 0.31)).toBe(true);
+    expect(notes.every((note) => note.status === "pending")).toBe(true);
   });
 
   it("logs and swallows when the task cannot be found", async () => {

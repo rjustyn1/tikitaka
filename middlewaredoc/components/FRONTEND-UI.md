@@ -44,7 +44,11 @@ Grant Ledger
 Extend `apps/web/src/types.ts` with DTOs mirroring server types:
 
 ```ts
-export type GroupRole = "backend" | "frontend" | "security";
+export type GroupRole =
+  | "backend"
+  | "frontend"
+  | "security"
+  | (string & {});
 
 export interface GroupMember {
   agentId: string;
@@ -284,12 +288,12 @@ Do this first. It is a five-minute change and it unblocks every other call.
 ### A4 - group modal with roles
 
 ```text
-Agent toggles PLUS a role selector per selected Agent.
-Roles: backend | frontend | security. Exactly one Agent each.
-Submit disabled until all three roles are filled.
+Agent toggles PLUS a free-form display label per selected Agent.
+Select between 2 and 12 unique Agents.
+Labels default to "member" and do not assign planner work.
+Submit disabled until at least two Agents and a team name are present.
 Nothing selected by default.
-Render the resulting chain above the composer:
-  Backend -> Frontend -> Security -> Backend -> Frontend
+Render the server's planner-authored nodes and persisted instructions.
 ```
 
 ### A5 - the proof beat (Person 4 owns this)
@@ -323,11 +327,11 @@ In a sequential chain, `withheldMessageIds` means **already seen by this Agent**
 UI. The governance withholding story lives in the grant ledger, where
 `decision: "withheld"` carries a real reason. Do not conflate them on stage.
 
-### Sequential v1 - what NOT to promise
+### Sequential execution - what NOT to promise
 
 ```text
-The DAG/node panel shows a five-node CHAIN in v1, not a branch diagram.
-"branch context does not leak sibling output" does not exist - no siblings.
+The plan can be a DAG, but runnable nodes execute one at a time today.
+Do not claim parallel execution or live lock collision prevention.
 Runtime locks are displayed as records (which node held which paths),
   not as collision prevention.
 ```
