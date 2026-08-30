@@ -49,7 +49,11 @@ interface Harness {
 async function makeHarness(
   runner: FakeRunner = new FakeRunner(),
   pipeline: MemoryPipeline & { calls?: unknown } = new RecordingMemoryPipeline(),
-  extra: { planJson?: string; maxParallel?: number } = {},
+  extra: {
+    planJson?: string;
+    maxParallel?: number;
+    onPlanPrompt?: (prompt: string) => void;
+  } = {},
 ): Promise<Harness> {
   const root = await mkdtemp(path.join(tmpdir(), "launchpad-group-"));
   temporaryDirectories.push(root);
@@ -71,11 +75,14 @@ async function makeHarness(
     new WorkspaceManager(path.join(root, "workspaces"), "local-process"),
     runner,
     pipeline,
-    extra.planJson === undefined
+    extra.planJson === undefined && extra.onPlanPrompt === undefined
       ? undefined
       : new TaskPlanner({
-          async extract() {
-            return { rawText: extra.planJson as string };
+          async extract(input) {
+            extra.onPlanPrompt?.(input.prompt);
+            return {
+              rawText: extra.planJson ?? JSON.stringify({ nodes: [] }),
+            };
           },
         }),
   );
@@ -491,6 +498,35 @@ describe("A3 - solo and group runs contend for one lease", () => {
     expect(harness.service.getGroupTask(task.id).task.status).toBe("completed");
     // The lease is handed back, so solo work resumes normally.
     expect(harness.service.getAgent(harness.backend.id).status).toBe("ready");
+  });
+});
+
+describe("planner input", () => {
+  it("gives the planner the group's description as well as the task prompt", async () => {
+    // Additive: a short prompt still gets planned against what the team is for.
+    let seen = "";
+    const harness = await makeHarness(
+      new FakeRunner(),
+      new RecordingMemoryPipeline(),
+      { onPlanPrompt: (prompt) => { seen = prompt; } },
+    );
+    const group = await harness.service.createGroup({
+      name: "Upload Team",
+      description: "We maintain the file upload service.",
+      members: harness.members,
+    });
+    const task = await harness.service.startGroupTask(
+      group.id,
+      "Add a size limit.",
+    );
+    await settle(harness, task.id);
+
+    expect(seen).toContain("We maintain the file upload service.");
+    expect(seen).toContain("Add a size limit.");
+    // Context comes first, the task reads inside it.
+    expect(seen.indexOf("We maintain")).toBeLessThan(
+      seen.indexOf("Add a size limit."),
+    );
   });
 });
 

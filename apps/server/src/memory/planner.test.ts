@@ -81,6 +81,34 @@ describe("the planner prompt", () => {
     }
   });
 
+  it("includes the group's standing description as context above the task", () => {
+    const request = buildPlannerRequest({
+      prompt: "Add a 10MB size limit.",
+      groupDescription: "We maintain the file upload service.",
+      agents: AGENTS,
+    });
+    expect(request.prompt).toContain("# Team context");
+    expect(request.prompt).toContain("We maintain the file upload service.");
+    // Additive, not a replacement: the task is still there, and it reads
+    // AFTER the standing context.
+    expect(request.prompt).toContain("Add a 10MB size limit.");
+    expect(request.prompt.indexOf("# Team context")).toBeLessThan(
+      request.prompt.indexOf("# Task"),
+    );
+  });
+
+  it("omits the context heading entirely when the group has no description", () => {
+    for (const groupDescription of [undefined, "", "   "]) {
+      const request = buildPlannerRequest({
+        prompt: "Add uploads.",
+        groupDescription,
+        agents: AGENTS,
+      });
+      expect(request.prompt).not.toContain("# Team context");
+      expect(request.prompt.startsWith("# Task")).toBe(true);
+    }
+  });
+
   it("carries the task prompt verbatim", () => {
     const request = buildPlannerRequest({
       prompt: "Add a 10MB upload limit.",

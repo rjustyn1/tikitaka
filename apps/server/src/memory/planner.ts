@@ -140,6 +140,14 @@ export interface PlannerAgent {
 export interface PlanRequest {
   /** The user's task, verbatim. */
   prompt: string;
+  /**
+   * The group's standing description -- what this team is for, across every
+   * task it runs. ADDITIVE: it never replaces `prompt`. The prompt is the
+   * immediate ask; this is the context that ask sits inside, so a short prompt
+   * ("add a size limit") can still be planned against a known codebase and
+   * purpose. Optional, and omitted from the model prompt when empty.
+   */
+  groupDescription?: string | undefined;
   /** Every member of the group. The planner may select a subset. */
   agents: readonly PlannerAgent[];
 }
@@ -223,7 +231,12 @@ export function buildPlannerRequest(
     )
     .join("\n");
 
+  const context = input.groupDescription?.trim();
   const prompt = [
+    // Standing context first, so the task below reads inside it. Omitted
+    // entirely when the group has no description, rather than emitting an
+    // empty heading the model has to interpret.
+    ...(context ? ["# Team context", context, ""] : []),
     "# Task",
     input.prompt,
     "",
@@ -531,7 +544,11 @@ export class TaskPlanner {
     const agents = input.agents.slice(0, MAX_PLANNER_AGENTS);
     if (agents.length === 0) return { nodes: [], source: "fallback" };
 
-    const request: PlanRequest = { prompt: input.prompt, agents };
+    const request: PlanRequest = {
+      prompt: input.prompt,
+      groupDescription: input.groupDescription,
+      agents,
+    };
 
     let rawText: string;
     try {

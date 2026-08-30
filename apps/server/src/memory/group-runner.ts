@@ -276,6 +276,9 @@ export class GroupRunner {
       };
       const plan = await this.planner.plan({
         prompt,
+        // Additive: the group's standing description is context for the task,
+        // never a replacement for it.
+        groupDescription: group.description,
         agents: agents.map((agent) => ({
           id: agent.id,
           name: agent.name,
