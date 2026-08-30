@@ -7,6 +7,15 @@ Status: **typecheck clean**, full `apps/server` vitest suite **148 tests green**
 Nothing outside Person 3's owned file list was touched. Not yet integrated with
 a live Ark model (the offline path — tests/demo — is fully exercised).
 
+## Integration resolution
+
+Person 1 integrated this work after the Person 2 planner. The provenance-index,
+single-config-source, and required pipeline-config changes were retained. The
+`MEMORY_EXTRACTOR` schema default was restored to `fake`, per `SPEC.md` and the
+Person 1 config contract, so `npm run check` cannot make an implicit network
+request. A live/demo environment can still opt into Ark explicitly with
+`MEMORY_EXTRACTOR=ark` and valid `ARK_*` values.
+
 ---
 
 ## Scope boundaries held
@@ -74,10 +83,9 @@ gone (replaced earlier by a 120s fallback constant).
   + fake expectations.
 
 ### Item 4 — Fake extraction explicit & safe
-- **`config.ts`**: `MEMORY_EXTRACTOR` schema default flipped `"fake" → "ark"` so a
-  normal run/demo does real extraction. Tests stay offline (they opt into `fake`
-  explicitly — `integration-e2e` sets it; unit tests build `FakeExtractorClient`
-  directly). Comment added explaining this.
+- **`config.ts`**: Person 3 proposed changing the schema default from `fake` to
+  `ark`; integration retained `fake` as the required offline default. Real Ark
+  extraction is still an explicit `MEMORY_EXTRACTOR=ark` choice.
 - **`extractor-client.ts`**: loud `TEST/DEMO ONLY — NOT a real extractor` doc
   block on `FakeExtractorClient` (canned + topic-blind warning).
 - **`.env.example`**: already had `MEMORY_EXTRACTOR=ark` and
@@ -109,10 +117,9 @@ apps/server/src/memory/pipeline.ts
    built a custom `ExtractorClient` or asserted on the old prompt/JSON shape,
    update it. The **persisted** note fields are unchanged, so store/API/web need
    nothing.
-4. **Default extractor is now `ark`.** Real/demo runs will try to reach Ark unless
-   `ARK_*` is configured. For offline runs set `MEMORY_EXTRACTOR=fake` (or `off`)
-   explicitly. Confirm your `.env` sets `MEMORY_EXTRACTOR` — don't rely on the old
-   silent `fake` default.
+4. **Default extractor remains `fake` after integration.** Set
+   `MEMORY_EXTRACTOR=ark` explicitly for live extraction and provide valid
+   `ARK_*` configuration.
 5. Re-run `npm run check` after merge (full check happens post-integration per the
    README concurrency rules).
 
@@ -125,10 +132,9 @@ apps/server/src/memory/pipeline.ts
    `MEMORY_EXTRACTOR=ark` + valid `ARK_*` to confirm a real model reliably cites
    the small integers and notes land with correct provenance. (This was the exact
    failure mode UUID-echo caused; needs a live check to call it fixed end-to-end.)
-2. **Remaining stub seam (unchanged, still open):** Person 2 workspace helpers
-   `replaceManagedBlock` / `removeManagedBlock` — currently local pure fns in
-   `workspace-memory.ts`. Per plan, Person 3 does the swap (delete locals, import
-   from `../workspace.js`) once Person 2 lands them. Not part of this pass.
+2. **Resolved during integration:** `workspace-memory.ts` imports and re-exports
+   `replaceManagedBlock` / `removeManagedBlock` from `../workspace.js`; no local
+   duplicate remains.
 3. Consider indexing agent ids too (routing) if transposition-dropped routes show
    up with a real model — deliberately out of scope here since routing is already
    membership-validated and item 3 was scoped to run/span.

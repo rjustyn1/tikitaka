@@ -1,6 +1,6 @@
 # MANIFEST_1 - Person 1 Runtime And Workspace Lifecycle
 
-Status: landed with the Person 2 planner handoff pending
+Status: Person 1, Person 2, and Person 3 partially integrated; Person 4 pending
 
 Owner: Person 1
 
@@ -73,15 +73,14 @@ an implementation handoff, not a replacement for `TODO.md`, `PLAN.md`, or
 
 ### Person 2 - planner and node execution
 
-The current `GroupRunner` still consumes the existing `buildChainNodes()` and
-`templateFor()` boundary from `memory/group-chain.ts`. Once Person 2 publishes
-the validated planner result and final `GroupPlanNode` instruction contract:
-
-1. Adapt `GroupRunner` to execute the persisted validated node order,
-   dependencies, agent ids, and instruction text.
-2. Keep the existing lease, shared-code, span, context-injection, lock-release,
-   cancellation, and terminal cleanup behavior.
-3. Do not recreate planner validation or infer a second plan inside the runner.
+- Integrated `TaskPlanner` and its validated `GroupPlanNode.instruction`
+  contract into `GroupRunner`.
+- `GroupRunner` persists and sequentially executes the planner's topological
+  node order; it no longer rebuilds the retired fixed chain or role templates.
+- Ark mode shares the validated Ark extractor transport. `fake` and `off` modes
+  use `FakePlannerClient`, preserving offline checks.
+- Existing lease, shared-code, span, context-injection, lock-release,
+  cancellation, resume, and terminal-cleanup behavior remains covered.
 
 The runtime assumes completed nodes persist `status`, `runId`, `output`, and
 `completedAt`, and that each node run persists its context injection and trace
@@ -89,10 +88,13 @@ spans before the memory flush boundary.
 
 ### Person 3 - memory pipeline
 
-- Consume completed `AgentRun`, `TraceSpan`, `GroupPlanNode`, and
-  `GroupContextInjection` rows from the shared store.
-- Use `replaceManagedBlock` and `removeManagedBlock` from `workspace.ts` for
-  memory landing; do not reimplement them in another workspace module.
+- Integrated the required validated-config pipeline boundary and removed the
+  independent `process.env` memory config path.
+- Extractor provenance now uses short run/span indices in model output and
+  resolves those indices back to persisted UUIDs before validation/storage.
+- `workspace-memory.ts` imports and re-exports `replaceManagedBlock` and
+  `removeManagedBlock` from `workspace.ts`; there is one managed-block
+  implementation shared by group charters and governed-memory landing.
 - Keep memory extraction on `fake` for offline checks. Real Ark extraction is
   an explicit environment choice.
 - The runtime calls the memory pipeline only after the existing flush decision;
@@ -123,13 +125,10 @@ spans before the memory flush boundary.
 
 ### Integration requirements
 
-- Person 2 must publish the planner result and final instruction field before
-  the runner is switched away from the current chain boundary.
-- Person 3 must consume execution records without editing `GroupRunner`.
 - Person 4 must consume server DTOs and must not add a second planner or alter
   the runtime lifecycle.
-- Run integration in this order: planner contract, Person 1 runtime, Person 3
-  memory pipeline, then Person 4 web behavior.
+- Person 4 should integrate after this planner/runtime/memory checkpoint and
+  use `members: [{ agentId, role }]` plus dynamic planner nodes.
 
 ## Verification
 
@@ -141,9 +140,10 @@ npm run build -w @launchpad/server
 npm test -w @launchpad/server
 ```
 
-The server suite passed with 158 tests. The root `npm run check` remains blocked
-by the existing missing `apps/web` test dependencies (`@testing-library/react`)
-and related matcher types; no web dependency files were changed in this
-workstream.
+Final post-merge server verification passed typecheck, build, and 199 tests
+across 21 files. The root `npm run check` reaches the unfinished Person 4 web
+workspace and stops during web typecheck because `@testing-library/react` and
+its DOM matcher types are missing. No web dependency files were changed in this
+partial integration.
 
 `TODO.md` remains unchanged.
