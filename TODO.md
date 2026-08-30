@@ -69,16 +69,30 @@ re-derive it.
       correct, the display just gave no way to tell. Needs the node
       `instruction` field from the Planner section below, then rendered here.
 
-- [ ] **Render Teams as a group chat, not a form-and-tabs dashboard.**
-      `GROUP-CHAT-DESIGN.md`'s own one-line summary describes the feature as
-      "one shared conversation to the user" — the Transcript tab
-      (`TimelinePanel` in `panels.tsx:121-172`) already renders turns
-      chat-style (speaker, timestamp, content, in seq order), but it's buried
-      as one of seven tabs behind Plan/Context/Review/Ledger/Workspaces/Proof
-      instead of being the primary surface. Worth a pass on making the
-      chat-like transcript the main view, with plan/status/context/governance
-      as secondary panels around it, closer to what the design doc actually
-      describes.
+- [ ] **Render Teams as a group chat with real agent profiles — a Discord/Slack
+      shape, not a form-and-tabs dashboard.** Two gaps together are what make
+      it not read as a chat app today:
+      1. `GROUP-CHAT-DESIGN.md`'s own one-line summary describes the feature
+         as "one shared conversation to the user" — the Transcript tab
+         (`TimelinePanel` in `panels.tsx:121-172`) already renders turns
+         chat-style (speaker, timestamp, content, in seq order), but it's
+         buried as one of seven equal-weight tabs behind
+         Plan/Context/Review/Ledger/Workspaces/Proof instead of being the
+         primary surface.
+      2. **There is no member/profile panel at all** — only a one-line strip
+         of tiny chips (`roster-inline` in `GroupWorkspace.tsx:245-254`: a
+         colored role-dot, name, and role in italics, crammed into the page
+         header). No avatar, no live status, and no link to what that agent
+         currently knows — which the app already tracks
+         (`LandedMemoryPanel`), just buried as its own separate "Workspaces"
+         tab instead of living next to the person it describes.
+
+      Target shape: teams list (left, from the sidebar item above) → chat
+      feed as the main view (center) → a real agent-profile panel (right) —
+      avatar, name, role, live status for the running task, and what memory
+      that agent currently holds — with plan/review/ledger/governance as
+      secondary panels around that core, not equal tabs competing with the
+      conversation itself.
 
 ## Planner (the plan is hardcoded)
 
@@ -229,6 +243,88 @@ after that does extraction happen over what it produced.
         mid-node, topic-shift trigger is a step finer than anything named in
         the docs, and either version needs spans in the store before the node
         terminates to have anything to read.
+
+## Group runner / workspace
+
+- [ ] **CONFIRMED LIVE, blocking the demo right now.** Reproduced independently
+      through the actual running UI, not just predicted from reading the code:
+      opened Teams, selected "Upload Feature Team," entered a task prompt,
+      clicked Start task — got exactly the predicted error, verbatim: *"This
+      Agent workspace already has a `./code` link pointing elsewhere."* No new
+      group task was created. Verified on the filesystem: all three of that
+      team's agents (`4fa8c6a9...`, `99758dd8...`, `5f2df64f...`) still have
+      `workspaces/<id>/code` symlinked to `shared-code/f5dd2733-...`, the
+      seed script's original task directory — and `GET /api/groups` confirms
+      `activeTaskId: null` for that team, so this is not the "task already
+      running" guard, it's the stale-link conflict below. **Also surfaced a
+      second, smaller side effect of the same root cause:** a
+      `shared-code/11182727-...` directory exists on disk with no group task
+      referencing it — `createSharedCodeDirectory()` runs before the
+      per-member `prepareSharedCode()` loop, so when a first member's link
+      conflict fails the start, the shared-code directory already created for
+      that attempt is orphaned; nothing cleans that up either. Fix for both:
+      same as below, plus have `startGroupTask()` remove the shared-code
+      directory it just created if `prepareSharedCode()` fails partway through
+      the member loop.
+
+- [ ] **A group can only ever run one task, ever, on local-process runtime —
+      shared code is never released.** `WorkspaceManager.releaseSharedCode()`
+      (`workspace.ts`) exists and does exactly what's needed — drops the
+      `./code` link, never touches the target — but `GroupRunner` never calls
+      it, on task completion, cancel, or anywhere else. The only caller
+      anywhere is `scripts/seed-demo.mjs`, as a manual workaround before
+      reseeding. On local-process runtime, `prepareSharedCode()` creates a
+      real symlink (`<workspace>/code -> shared-code/<taskId>`), and its own
+      conflict check throws `409 "This Agent workspace already has a ./code
+      link pointing elsewhere"` if a link already exists pointing at a
+      different task. Since nothing ever removes the first task's link, a
+      second task on the same group fails outright before the new task row is
+      even created — with no workaround from the UI or API; someone has to
+      delete the stale symlink on the server's filesystem by hand. **This is
+      not a demo-only edge case**: `config.ts`'s schema default and the
+      committed `.env` are both `RUNTIME_PROVIDER=local-process` — that's
+      documented as the actual ECS/Docker-Compose production deployment path.
+      Only `npm run poc` explicitly overrides it to `container` (which is
+      unaffected — its bind mount is re-specified fresh on every `codex exec`
+      call, nothing to go stale). Confirmed live: the dev server running this
+      session, started with plain `npm run dev`, reports
+      `"runtimeProvider":"local-process"` from `/api/system` — i.e. it has
+      this bug right now.
+
+      **Proposed minimal fix (drafted and typechecked, not applied — reverted
+      per instruction to leave the code untouched):** a private
+      `releaseSharedCodeForTask(taskId)` helper on `GroupRunner`, snapshotting
+      the store to find the task's group and its member agents, then calling
+      `this.workspaces.releaseSharedCode(agent)` for each — wrapped in a
+      try/catch per agent (logged, not thrown) so a release failure can never
+      block task completion, consistent with how `maybeFlush()` already
+      handles its own failures. Call it once, from `finishGroupTask()`, right
+      after `this.activeTasks.delete(taskId)` and before the flush-trigger
+      call — `finishGroupTask()` is the single path both normal completion
+      and `cancelGroupTask()` fall through to (the `executeGroupTask()` loop
+      calls it unconditionally after `break`), so one call site covers both.
+      Confirmed via `npm run typecheck -w @launchpad/server` before revert:
+      clean, no errors.
+
+- [ ] **The `$CODEX_HOME` governed-memory safety assertion named in
+      `DECISIONS.md` A1 doesn't exist in the codebase — it was dropped during
+      integration, not just left unwired.** A1's "Hard rule for Person 3
+      (LandingService)" says: *"Governed memory is NEVER written under
+      `$CODEX_HOME`... Add a startup assertion that `$CODEX_HOME/skills`
+      contains no governed memory."* This matters because `$CODEX_HOME` is
+      shared across every agent's container, so anything landed there is
+      silently visible to all agents and voids the entire "security = file
+      placement" claim the architecture rests on. A function for this
+      (`assertNoGovernedMemoryInCodexHome`) existed in an earlier version of
+      `workspace-memory.ts` seen mid-session, but a repo-wide grep for it now
+      returns zero matches — it didn't survive the Person 1/2/3 branch
+      integration. The *check* does still exist, but only inside
+      `scripts/verify-live.mjs` as a manual diagnostic you run after a live
+      task (`line(PASS, "isolation", "no governed memory under CODEX_HOME or
+      shared-code")`) — meaningfully weaker than a real startup assertion,
+      since it only catches the problem if someone remembers to run it.
+      Fix: restore the assertion and call it at server boot (`index.ts`,
+      alongside `writeCodexConfig()`), not just in the manual diagnostic.
 
 ## Not urgent, just noted
 
