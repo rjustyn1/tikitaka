@@ -16,6 +16,7 @@ import type {
 import {
   agentName,
   durationOf,
+  fileTail,
   formatTime,
   grantTone,
   orderedNodes,
@@ -91,7 +92,33 @@ export function ChainPanel({
                 <code>{node.fileOwnershipHints.join(", ")}</code>
               )}
             </div>
-            {node.output && <p className="chain-output">{node.output}</p>}
+            {/*
+              The mini-plan. This is planner output the server persisted per
+              row — read here, never reconstructed, and a row that predates the
+              planner says so rather than showing a template.
+            */}
+            <div className="chain-plan">
+              <span className="eyebrow">Told to</span>
+              {node.instruction?.trim() ? (
+                <p>{node.instruction}</p>
+              ) : (
+                <p className="chain-plan-missing">
+                  No instruction was recorded for this step.
+                </p>
+              )}
+            </div>
+            {node.expectedOutput.trim() && (
+              <div className="chain-plan">
+                <span className="eyebrow">Expected output</span>
+                <p>{node.expectedOutput}</p>
+              </div>
+            )}
+            {node.output && (
+              <div className="chain-plan">
+                <span className="eyebrow">Result</span>
+                <p className="chain-output">{node.output}</p>
+              </div>
+            )}
             {node.error && <p className="chain-error">{node.error}</p>}
             {node.runtimeLocks.length > 0 && (
               <div className="lock-row">
@@ -289,7 +316,7 @@ export function LedgerPanel({
                 <td>
                   {grant.filePath ? (
                     <code title={grant.filePath}>
-                      {grant.filePath.split("/").slice(-3).join("/")}
+                      {fileTail(grant.filePath, 3)}
                     </code>
                   ) : (
                     <span className="muted-note">no file written</span>
@@ -349,9 +376,7 @@ export function LandedMemoryPanel({
                 <Pill tone={file.kind === "agents_md" ? "bad" : "ok"}>
                   {file.kind === "agents_md" ? "severe" : "skill"}
                 </Pill>
-                <code title={file.path}>
-                  {file.path.split("/").slice(-3).join("/")}
-                </code>
+                <code title={file.path}>{fileTail(file.path, 3)}</code>
               </li>
             ))}
           </ul>

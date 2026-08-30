@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, setAuthToken } from "./api";
 import { GroupWorkspace } from "./group/GroupWorkspace";
+import { TeamSidebar } from "./group/TeamSidebar";
+import { useGroups } from "./group/useGroups";
 import type { Agent, AgentRun, Message, RunTraceSummary, SystemInfo, TraceSpan } from "./types";
 
 const starterPrompts = [
@@ -427,6 +429,10 @@ export default function App() {
   // Two surfaces: the original solo Agent playground, and Teams. Keeping them
   // separate means the group work cannot regress the solo flow.
   const [view, setView] = useState<"agents" | "teams">("agents");
+  // The team list is owned here, not in GroupWorkspace, so the sidebar can list
+  // teams the same way it lists Agents. It only fetches while Teams is active.
+  const teams = useGroups(view === "teams");
+  const [createTeamRequested, setCreateTeamRequested] = useState(false);
   const messageEnd = useRef<HTMLDivElement>(null);
   const selectedIdRef = useRef<string | null>(null);
   const mountedRef = useRef(true);
@@ -735,32 +741,50 @@ export default function App() {
           <span>＋</span> Create Agent
         </button>
 
-        <div className="sidebar-label">
-          <span>Your Agents</span>
-          <span>{agents.length}</span>
-        </div>
-        <nav className="agent-list">
-          {agents.map((agent) => (
-            <button
-              className={"agent-card " + (agent.id === selectedId ? "selected" : "")}
-              key={agent.id}
-              onClick={() => setSelectedId(agent.id)}
-            >
-              <div className="agent-avatar">{agent.name.slice(0, 1).toUpperCase()}</div>
-              <div className="agent-card-copy">
-                <strong>{agent.name}</strong>
-                <span>{agent.description || "Coding Agent"}</span>
-              </div>
-              <span className={"mini-dot mini-" + agent.status} />
-            </button>
-          ))}
-          {agents.length === 0 && (
-            <div className="empty-sidebar">
-              <span>◇</span>
-              Create your first coding Agent.
+        {/*
+          The sidebar lists whatever the active view is about. The Agents branch
+          below is the original markup, unchanged — only this switch is new.
+        */}
+        {view === "teams" ? (
+          <TeamSidebar
+            groups={teams.groups}
+            agents={agents}
+            selectedId={teams.selectedId}
+            onSelect={teams.select}
+            onCreate={() => setCreateTeamRequested(true)}
+            loading={teams.loading}
+            error={teams.error}
+          />
+        ) : (
+          <>
+            <div className="sidebar-label">
+              <span>Your Agents</span>
+              <span>{agents.length}</span>
             </div>
-          )}
-        </nav>
+            <nav className="agent-list">
+              {agents.map((agent) => (
+                <button
+                  className={"agent-card " + (agent.id === selectedId ? "selected" : "")}
+                  key={agent.id}
+                  onClick={() => setSelectedId(agent.id)}
+                >
+                  <div className="agent-avatar">{agent.name.slice(0, 1).toUpperCase()}</div>
+                  <div className="agent-card-copy">
+                    <strong>{agent.name}</strong>
+                    <span>{agent.description || "Coding Agent"}</span>
+                  </div>
+                  <span className={"mini-dot mini-" + agent.status} />
+                </button>
+              ))}
+              {agents.length === 0 && (
+                <div className="empty-sidebar">
+                  <span>◇</span>
+                  Create your first coding Agent.
+                </div>
+              )}
+            </nav>
+          </>
+        )}
 
         <div className="runtime-card">
           <span className="eyebrow">Runtime</span>
@@ -802,7 +826,18 @@ export default function App() {
         )}
 
         {view === "teams" ? (
-          <GroupWorkspace agents={agents} onOpenTrace={setTraceRunId} />
+          <GroupWorkspace
+            agents={agents}
+            onOpenTrace={setTraceRunId}
+            groups={teams.groups}
+            selectedGroupId={teams.selectedId}
+            onSelectGroup={teams.select}
+            onRefreshGroups={teams.refresh}
+            groupsLoading={teams.loading}
+            groupsError={teams.error}
+            createRequested={createTeamRequested}
+            onCreateHandled={() => setCreateTeamRequested(false)}
+          />
         ) : selected ? (
           <>
             <header className="agent-header">

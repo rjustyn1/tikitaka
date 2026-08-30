@@ -1,0 +1,132 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]: A
+      - generic [ref=e7]:
+        - strong [ref=e8]: Agent Launchpad
+        - generic [ref=e9]: ECS / Docker · Codex CLI
+    - tablist [ref=e10]:
+      - tab "Agents" [ref=e11] [cursor=pointer]
+      - tab "Teams" [selected] [ref=e12] [cursor=pointer]
+    - button "＋ Create Agent" [ref=e13] [cursor=pointer]:
+      - generic [ref=e14]: ＋
+      - text: Create Agent
+    - generic [ref=e15]:
+      - generic [ref=e16]: Your Agents
+      - generic [ref=e17]: "5"
+    - navigation [ref=e18]:
+      - button "F Frontend Agent User-facing upload UI." [ref=e36] [cursor=pointer]:
+        - generic [ref=e37]: F
+        - generic [ref=e38]:
+          - strong [ref=e39]: Frontend Agent
+          - generic [ref=e40]: User-facing upload UI.
+      - button "K kbjhj Coding Agent" [ref=e42] [cursor=pointer]:
+        - generic [ref=e43]: K
+        - generic [ref=e44]:
+          - strong [ref=e45]: kbjhj
+          - generic [ref=e46]: Coding Agent
+      - button "B Backend Agent Backend API and storage work." [ref=e48] [cursor=pointer]:
+        - generic [ref=e49]: B
+        - generic [ref=e50]:
+          - strong [ref=e51]: Backend Agent
+          - generic [ref=e52]: Backend API and storage work.
+      - button "S Security Agent Auth, validation, secret boundaries." [ref=e54] [cursor=pointer]:
+        - generic [ref=e55]: S
+        - generic [ref=e56]:
+          - strong [ref=e57]: Security Agent
+          - generic [ref=e58]: Auth, validation, secret boundaries.
+      - button "O Ops Agent Deploys and runtime operations." [ref=e60] [cursor=pointer]:
+        - generic [ref=e61]: O
+        - generic [ref=e62]:
+          - strong [ref=e63]: Ops Agent
+          - generic [ref=e64]: Deploys and runtime operations.
+    - generic [ref=e21]:
+      - text: Runtime
+      - strong [ref=e22]: Codex CLI in application container
+      - generic [ref=e23]: ep-20260826220956-9pbtp
+  - main [ref=e24]:
+    - generic [ref=e66]:
+      - generic [ref=e67]:
+        - generic [ref=e68]:
+          - heading "Upload Feature Team" [level=1] [ref=e69]
+          - generic [ref=e105]: completed
+        - paragraph [ref=e70]: Ship the file upload endpoint end to end.
+        - generic [ref=e71]:
+          - generic [ref=e72]:
+            - text: Backend Agent
+            - emphasis [ref=e74]: backend
+          - generic [ref=e75]:
+            - text: Frontend Agent
+            - emphasis [ref=e77]: frontend
+          - generic [ref=e78]:
+            - text: Security Agent
+            - emphasis [ref=e80]: security
+      - generic [ref=e81]:
+        - button "Edit team" [ref=e82] [cursor=pointer]
+        - button "New team" [ref=e83] [cursor=pointer]
+    - generic [ref=e84]:
+      - textbox "Give the team one goal — e.g. Plan and implement an upload feature." [ref=e85]
+      - button "Start task" [disabled] [ref=e86]
+    - generic [ref=e87]:
+      - heading "Task history" [level=3] [ref=e88]
+      - list [ref=e89]:
+        - listitem [ref=e90]:
+          - button "partial Add a tiny health check endpoint. Write your contribution as a file under ./code — the backend writes code/health-contract.md, the frontend writes code/health-client.md, security writes code/health-security.md. Keep each file under 15 lines. State one concrete constraint you are binding the others to. 8/30/2026, 4:21:18 PM" [ref=e91] [cursor=pointer]:
+            - generic [ref=e92]: partial
+            - generic [ref=e93]: Add a tiny health check endpoint. Write your contribution as a file under ./code — the backend writes code/health-contract.md, the frontend writes code/health-client.md, security writes code/health-security.md. Keep each file under 15 lines. State one concrete constraint you are binding the others to.
+            - generic [ref=e94]: 8/30/2026, 4:21:18 PM
+          - button "Resume" [ref=e95] [cursor=pointer]
+        - listitem [ref=e96]:
+          - button "completed Plan and implement an upload feature. 8/30/2026, 3:42:45 PM" [ref=e97] [cursor=pointer]:
+            - generic [ref=e98]: completed
+            - generic [ref=e99]: Plan and implement an upload feature.
+            - generic [ref=e100]: 8/30/2026, 3:42:45 PM
+    - navigation [ref=e106]:
+      - button "Plan" [ref=e107] [cursor=pointer]
+      - button "Transcript" [active] [ref=e108] [cursor=pointer]
+      - button "Context" [ref=e109] [cursor=pointer]
+      - button "Review 4" [ref=e110] [cursor=pointer]:
+        - text: Review
+        - generic [ref=e111]: "4"
+      - button "Ledger 15" [ref=e112] [cursor=pointer]:
+        - text: Ledger
+        - generic [ref=e113]: "15"
+      - button "Workspaces" [ref=e114] [cursor=pointer]
+      - button "Proof" [ref=e115] [cursor=pointer]
+    - generic [ref=e185]:
+      - generic [ref=e186]:
+        - generic [ref=e187]:
+          - generic [ref=e188]: "#1"
+          - strong [ref=e189]: You
+          - generic [ref=e190]: 03:42:45 PM
+        - paragraph [ref=e191]: Plan and implement an upload feature.
+      - generic [ref=e192]:
+        - generic [ref=e193]:
+          - generic [ref=e194]: "#2"
+          - strong [ref=e196]: Backend Agent
+          - generic [ref=e197]: 03:46:45 PM
+        - paragraph [ref=e198]: "Contract: POST /uploads accepts multipart/form-data and returns { fileId, url }. Objects are stored under uploads/{userId}/{uuid}. The signed storage credentials stay server-side — I will not return them to the client, even though that would make integration simpler."
+      - generic [ref=e199]:
+        - generic [ref=e200]:
+          - generic [ref=e201]: "#3"
+          - strong [ref=e203]: Frontend Agent
+          - generic [ref=e204]: 03:51:45 PM
+        - paragraph [ref=e205]: The upload widget only needs fileId and url from the response. It does not need storage credentials and should never receive them. I will surface a clear error for files the server rejects.
+      - generic [ref=e206]:
+        - generic [ref=e207]:
+          - generic [ref=e208]: "#4"
+          - strong [ref=e210]: Security Agent
+          - generic [ref=e211]: 03:56:45 PM
+        - paragraph [ref=e212]: "Agreed, and making it binding: storage credentials must never cross to the browser. Enforce a 10MB limit server-side and return HTTP 413 on oversize uploads. Validate content type on the server, not the client."
+      - generic [ref=e213]:
+        - generic [ref=e214]:
+          - generic [ref=e215]: "#5"
+          - strong [ref=e217]: Backend Agent
+          - generic [ref=e218]: 04:01:45 PM
+        - paragraph [ref=e219]: Implemented POST /uploads with the 10MB limit and HTTP 413. Credentials stay server-side; the response carries fileId and url only.
+      - generic [ref=e220]:
+        - generic [ref=e221]:
+          - generic [ref=e222]: "#6"
+          - strong [ref=e224]: Frontend Agent
+          - generic [ref=e225]: 04:06:45 PM
+        - paragraph [ref=e226]: Wired the upload widget to POST /uploads and surfaced the 413 as "That file is larger than 10MB."

@@ -1532,3 +1532,434 @@ textarea:focus {
   font-size: 12px;
   white-space: nowrap;
 }
+
+/* ===========================================================================
+   Teams — conversation shell (Person 4)
+
+   Additive. Every rule below is a NEW class; no base selector is redefined.
+   Identity colour comes from the three role accents already declared above
+   (.role-backend / .role-frontend / .role-security), so one Agent reads as one
+   colour in the sidebar, the conversation, the plan and the member rail.
+   =========================================================================== */
+
+/* --- sidebar: the team list, shaped like .agent-list --- */
+.team-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  flex: 1;
+  margin-bottom: 16px;
+}
+.team-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: #f5f3ed;
+  text-align: left;
+  cursor: pointer;
+}
+.team-card:hover { background: rgba(255, 255, 255, 0.05); }
+.team-card.selected {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+.team-mark {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: #dcd4ff;
+  background: #4a415f;
+  font-size: 13px;
+  font-weight: 700;
+  flex: none;
+}
+.team-card-copy { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.team-card-copy strong {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.team-card-copy span { font-size: 11px; color: #a5a49c; margin-top: 2px; }
+.team-roster-dots { display: inline-flex; gap: 3px; flex: none; }
+.team-live {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #54b98e;
+  box-shadow: 0 0 0 3px rgba(84, 185, 142, 0.16);
+  flex: none;
+  animation: pulse 1.6s ease-in-out infinite;
+}
+.team-empty-action {
+  margin-top: 10px;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: #b9b0ff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+}
+@media (prefers-reduced-motion: reduce) {
+  .team-live { animation: none; }
+}
+
+/*
+  The base sidebar collapses to an icon rail at 900px and to a 65px horizontal
+  bar at 680px. The team list has to collapse with it or it spills out of the
+  bar entirely. These mirror what the base rules already do to `.agent-list`.
+*/
+@media (max-width: 900px) {
+  .team-card {
+    display: grid;
+    grid-template-columns: 1fr;
+    place-items: center;
+    padding: 8px;
+  }
+  .team-card-copy,
+  .team-roster-dots { display: none; }
+}
+@media (max-width: 680px) {
+  .team-list {
+    max-width: 50vw;
+    flex-direction: row;
+    overflow-x: auto;
+    margin-bottom: 0;
+  }
+  .team-card { width: auto; }
+}
+
+/* --- the Agent profile rail --- */
+.member-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: sticky;
+  top: 0;
+  align-self: start;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  padding-bottom: 24px;
+}
+.member-rail-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.member-rail-count {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.member-card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--paper);
+  padding: 13px 14px;
+}
+.member-card.member-running {
+  border-color: var(--purple);
+  box-shadow: 0 0 0 3px var(--purple-soft);
+}
+.member-card.member-failed { border-color: var(--red); }
+.member-identity { display: flex; align-items: center; gap: 10px; }
+.member-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-weight: 700;
+  font-size: 14px;
+  flex: none;
+}
+.role-bg-backend { background: var(--purple); }
+.role-bg-frontend { background: #2f8fbf; }
+.role-bg-security { background: #c07a2b; }
+.member-name { display: flex; flex-direction: column; min-width: 0; }
+.member-name strong { font-size: 13px; font-weight: 600; }
+.member-role {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+.role-text-backend { color: var(--purple-dark); }
+.role-text-frontend { color: #23708f; }
+.role-text-security { color: #96601f; }
+.member-description {
+  margin: 9px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+.member-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 11px;
+  font-size: 12px;
+  color: var(--ink);
+}
+.member-state-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex: none;
+}
+.member-state-dot.state-running {
+  background: var(--purple);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+.member-state-dot.state-done { background: var(--green); }
+.member-state-dot.state-failed { background: var(--red); }
+.member-state-dot.state-waiting { background: #d3a349; }
+.member-trace {
+  margin-left: auto;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--purple-dark);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.member-memory {
+  margin-top: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+.member-memory-empty { margin: 6px 0 0; font-size: 12px; color: var(--muted); }
+.member-memory-files {
+  list-style: none;
+  margin: 7px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+/*
+   The file name IS the memory's identity, so it wraps rather than truncating.
+   A clipped "hard-size-limit-and-error-contr..." tells a reader nothing.
+*/
+.member-memory-files li {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  min-width: 0;
+}
+.member-memory-files code {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ink);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.member-memory-files .member-memory-kind { margin-top: 1px; }
+.member-memory-kind {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 5px;
+  flex: none;
+}
+.member-memory-kind.is-severe { background: #f8dede; color: #973939; }
+.member-memory-kind.is-skill { background: #dff0e7; color: #1f6b4f; }
+@media (prefers-reduced-motion: reduce) {
+  .member-state-dot.state-running { animation: none; }
+}
+
+/* --- the shared conversation --- */
+.chat { display: flex; flex-direction: column; gap: 14px; }
+.chat-feed { display: flex; flex-direction: column; gap: 4px; }
+.chat-turn {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 11px;
+  padding: 11px 13px 11px 11px;
+  border-radius: 14px;
+  border: 1px solid transparent;
+}
+.chat-turn.chat-agent:hover { background: rgba(255, 255, 255, 0.62); }
+.chat-turn.chat-human { background: var(--purple-soft); }
+.chat-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  flex: none;
+}
+.chat-avatar-human { background: #4a4a44; }
+.chat-body { min-width: 0; }
+.chat-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+.chat-meta strong { font-size: 13px; font-weight: 600; }
+.chat-role {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.chat-time { margin-left: auto; font-size: 11px; color: var(--muted); }
+.chat-body p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.chat-composer {
+  display: flex;
+  gap: 9px;
+  position: sticky;
+  bottom: 0;
+  padding: 12px 0 18px;
+  background: linear-gradient(to top, #f2f1ed 68%, rgba(242, 241, 237, 0));
+}
+.chat-composer input {
+  flex: 1;
+  min-height: 46px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0 15px;
+  background: var(--paper);
+  font-size: 14px;
+}
+.chat-composer input:focus {
+  outline: 2px solid var(--purple-soft);
+  border-color: var(--purple);
+}
+
+/* --- the plan node's mini-plan --- */
+.chain-plan { margin-top: 10px; }
+.chain-plan .eyebrow { display: block; margin-bottom: 4px; }
+.chain-plan p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.chain-plan .chain-plan-missing { color: var(--muted); font-style: italic; }
+.chain-plan .chain-output { margin-top: 0; }
+
+/* --- the two-column Teams shell --- */
+.team-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 22px;
+  align-items: start;
+}
+.team-main { min-width: 0; }
+.team-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 6px 0 14px;
+}
+.team-head-copy { min-width: 0; }
+.team-head-title { display: flex; align-items: center; gap: 10px; }
+.team-head h1 {
+  margin: 0;
+  font-size: 25px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+.team-head p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
+
+.team-views {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 9px;
+  margin-bottom: 16px;
+}
+.team-view-primary {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--paper);
+  padding: 7px 15px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+}
+.team-view-primary.selected {
+  background: var(--purple);
+  border-color: var(--purple);
+  color: #fff;
+}
+.team-views-rule {
+  width: 1px;
+  height: 18px;
+  background: var(--line);
+  margin: 0 7px;
+}
+.team-view {
+  border: 0;
+  background: none;
+  padding: 7px 10px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.team-view:hover:not(:disabled) {
+  color: var(--ink);
+  background: rgba(0, 0, 0, 0.035);
+}
+.team-view:disabled { opacity: 0.4; cursor: not-allowed; }
+.team-view.selected {
+  color: var(--purple-dark);
+  font-weight: 600;
+  background: var(--purple-soft);
+}
+
+/* The rail stops being a rail before it starts squeezing the conversation. */
+@media (max-width: 1180px) {
+  .team-shell { grid-template-columns: minmax(0, 1fr); }
+  .member-rail {
+    position: static;
+    max-height: none;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(258px, 1fr));
+    gap: 11px;
+  }
+  .member-rail-head { grid-column: 1 / -1; }
+}
+@media (max-width: 680px) {
+  .team-head { flex-direction: column; }
+  .team-head .header-actions { width: 100%; }
+  .team-head .header-actions .button { flex: 1; }
+}

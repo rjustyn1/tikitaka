@@ -170,6 +170,15 @@ export interface GroupPlanNode {
   readOnly: boolean;
   fileOwnershipHints: string[];
   runtimeLocks: string[];
+  /**
+   * What this Agent was told to do on this node — planner output, persisted per
+   * row by the server.
+   *
+   * Optional on the read side ONLY because task rows seeded before the planner
+   * landed carry no such field. Never reconstruct it in the browser: a missing
+   * instruction is a fact about the row, not a gap to paper over.
+   */
+  instruction?: string;
   expectedOutput: string;
   createdAt: string;
   startedAt: string | null;

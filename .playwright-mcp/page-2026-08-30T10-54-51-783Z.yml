@@ -1,0 +1,36 @@
+- generic [ref=f3e3]:
+  - complementary [ref=f3e4]:
+    - generic [ref=f3e5]:
+      - generic [ref=f3e6]: A
+      - generic [ref=f3e7]:
+        - strong [ref=f3e8]: Agent Launchpad
+        - generic [ref=f3e9]: ECS / Docker · Codex CLI
+    - tablist [ref=f3e10]:
+      - tab "Agents" [selected] [ref=f3e11] [cursor=pointer]
+      - tab "Teams" [ref=f3e12] [cursor=pointer]
+    - button "＋ Create Agent" [ref=f3e13] [cursor=pointer]:
+      - generic [ref=f3e14]: ＋
+      - text: Create Agent
+    - generic [ref=f3e15]:
+      - generic [ref=f3e16]: Your Agents
+      - generic [ref=f3e17]: "0"
+    - navigation [ref=f3e18]:
+      - generic [ref=f3e19]:
+        - generic [ref=f3e20]: ◇
+        - text: Create your first coding Agent.
+    - generic [ref=f3e21]:
+      - text: Runtime
+      - strong [ref=f3e22]: Checking…
+      - generic [ref=f3e23]: Ark model not configured
+  - main [ref=f3e24]:
+    - generic [ref=f3e25]:
+      - generic [ref=f3e26]: "!"
+      - generic [ref=f3e27]:
+        - strong [ref=f3e28]: Runtime configuration needed
+        - paragraph [ref=f3e29]: Set ARK_API_KEY and ARK_MODEL in .env before using the Playground.
+    - generic [ref=f3e30]:
+      - generic [ref=f3e31]: A
+      - generic [ref=f3e32]: Agent Launchpad
+      - heading "Your runtime is ready for an Agent." [level=1] [ref=f3e33]
+      - paragraph [ref=f3e34]: Create a workspace, give Codex a job, and continue the conversation here.
+      - button "Create your first Agent" [ref=f3e35] [cursor=pointer]

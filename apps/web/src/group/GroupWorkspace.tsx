@@ -1,10 +1,17 @@
 /**
- * The Teams surface: pick a team, run a task, watch the chain, then govern the
- * memory it produced.
+ * The Teams surface: one shared conversation, with the Agents who are having it
+ * down the right-hand side and everything that conversation produced behind a
+ * secondary view switch.
  *
- * State lives here; the panels are presentational. Polling is in `useGroupTask`,
- * which stops only when the task is terminal AND the memory pipeline has
- * flushed — the status alone flips one tick too early.
+ * The conversation is primary on purpose. Buried as the seventh of seven equal
+ * tabs it read as a dashboard; this is the feature's own one-line summary —
+ * "one shared conversation to the user" — made literal.
+ *
+ * Task state lives here; the panels are presentational. Polling is in
+ * `useGroupTask`, which stops only when the task is terminal AND the memory
+ * pipeline has flushed — the status alone flips one tick too early. The team
+ * list itself is owned by `App`, so the sidebar and this surface agree on one
+ * selection.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "../api";
@@ -15,8 +22,10 @@ import type {
   GroupTask,
   ReviewNoteInput,
 } from "../types";
+import { ConversationPanel } from "./ConversationPanel";
 import { GroupEditor } from "./GroupEditor";
-import { agentName, isTerminal, roleOf, statusTone } from "./format";
+import { isTerminal, statusTone } from "./format";
+import { MemberRail } from "./MemberRail";
 import {
   ChainPanel,
   ContextPanel,
@@ -24,17 +33,38 @@ import {
   LandedMemoryPanel,
   LedgerPanel,
   Pill,
-  TimelinePanel,
 } from "./panels";
 import { ProofPanel } from "./ProofPanel";
 import { ReviewPanel } from "./ReviewPanel";
+import { useAgentMemory } from "./useAgentMemory";
 import { useGroupTask } from "./useGroupTask";
 
-type Tab = "chain" | "timeline" | "context" | "review" | "ledger" | "memory" | "proof";
+type View =
+  | "chat"
+  | "chain"
+  | "context"
+  | "review"
+  | "ledger"
+  | "memory"
+  | "proof";
 
-const TABS: { id: Tab; label: string }[] = [
+/**
+ * A historical task belongs to exactly one team. Keeping that association in
+ * state makes an old task disappear in the same render that its team changes,
+ * rather than waiting for an effect to clean it up after a mismatched request
+ * has already started.
+ */
+interface TaskSelection {
+  groupId: string | null;
+  taskId: string | null;
+}
+
+/**
+ * Conversation is the surface. Everything below inspects what it produced, so
+ * they sit in a lighter strip beside it rather than competing with it.
+ */
+const SECONDARY_VIEWS: { id: View; label: string }[] = [
   { id: "chain", label: "Plan" },
-  { id: "timeline", label: "Transcript" },
   { id: "context", label: "Context" },
   { id: "review", label: "Review" },
   { id: "ledger", label: "Ledger" },
@@ -47,15 +77,35 @@ const REVIEWER_KEY = "launchpad.reviewerName";
 export function GroupWorkspace({
   agents,
   onOpenTrace,
+  groups,
+  selectedGroupId,
+  onSelectGroup,
+  onRefreshGroups,
+  groupsLoading,
+  groupsError,
+  createRequested,
+  onCreateHandled,
 }: {
   agents: Agent[];
   onOpenTrace: (runId: string) => void;
+  /** Owned by App so the sidebar and this surface agree on one selection. */
+  groups: AgentGroup[];
+  selectedGroupId: string | null;
+  onSelectGroup: (id: string) => void;
+  onRefreshGroups: () => Promise<void>;
+  /** The sidebar owns the group query, including its bounded async state. */
+  groupsLoading: boolean;
+  groupsError: string | null;
+  /** The sidebar's empty state asks for the editor; this clears the request. */
+  createRequested: boolean;
+  onCreateHandled: () => void;
 }) {
-  const [groups, setGroups] = useState<AgentGroup[]>([]);
   const [tasks, setTasks] = useState<GroupTask[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [taskId, setTaskId] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>("chain");
+  const [taskSelection, setTaskSelection] = useState<TaskSelection>({
+    groupId: null,
+    taskId: null,
+  });
+  const [view, setView] = useState<View>("chat");
   const [prompt, setPrompt] = useState("");
   const [editing, setEditing] = useState<"new" | "edit" | null>(null);
   const [busy, setBusy] = useState(false);
@@ -71,8 +121,19 @@ export function GroupWorkspace({
   });
 
   const group = useMemo(
-    () => groups.find((item) => item.id === selectedId) ?? null,
-    [groups, selectedId],
+    () => groups.find((item) => item.id === selectedGroupId) ?? null,
+    [groups, selectedGroupId],
+  );
+  // A task from another team is never valid for this team's endpoint. This is
+  // derived during render, so a sidebar click cannot briefly poll the new team
+  // using the previous team's task id.
+  const taskId =
+    taskSelection.groupId === selectedGroupId ? taskSelection.taskId : null;
+  const selectTask = useCallback(
+    (id: string | null) => {
+      setTaskSelection({ groupId: selectedGroupId, taskId: id });
+    },
+    [selectedGroupId],
   );
   // Include non-members: the withheld view is the point of the demo.
   const watchedAgentIds = useMemo(
@@ -80,55 +141,66 @@ export function GroupWorkspace({
     [agents],
   );
 
-  const state = useGroupTask(selectedId, taskId, watchedAgentIds);
+  const state = useGroupTask(selectedGroupId, taskId, watchedAgentIds);
   const task = state.task?.task ?? null;
   const running = task !== null && !isTerminal(task.status);
 
-  const refreshGroups = useCallback(async () => {
-    const { groups: next } = await api.groups();
-    setGroups(next);
-    setSelectedId((current) =>
-      current && next.some((item) => item.id === current)
-        ? current
-        : (next[0]?.id ?? null),
-    );
-  }, []);
-
+  // The rail reads each member's workspace through the API. Bump the revision
+  // — never poll — whenever something could have changed one: a different
+  // team, a pipeline flush, or a human review decision.
+  const [memoryRevision, setMemoryRevision] = useState(0);
+  const memberIds = useMemo(
+    () => group?.members.map((member) => member.agentId) ?? [],
+    [group],
+  );
+  const railMemory = useAgentMemory(memberIds, memoryRevision);
   useEffect(() => {
-    void refreshGroups().catch((reason) =>
-      setError(reason instanceof Error ? reason.message : String(reason)),
-    );
-  }, [refreshGroups]);
+    setMemoryRevision((current) => current + 1);
+  }, [selectedGroupId, state.memoryReady]);
+
+  // The sidebar's empty state opens the editor from outside this component.
+  useEffect(() => {
+    if (createRequested) {
+      setEditing("new");
+      onCreateHandled();
+    }
+  }, [createRequested, onCreateHandled]);
 
   const refreshTasks = useCallback(async () => {
-    if (!selectedId) {
+    if (!selectedGroupId) {
       setTasks([]);
       return;
     }
-    const { tasks: next } = await api.listGroupTasks(selectedId);
+    const { tasks: next } = await api.listGroupTasks(selectedGroupId);
     setTasks(next);
-  }, [selectedId]);
+  }, [selectedGroupId]);
 
   // Load the history when the team changes, and refresh it whenever the live
   // task reaches a terminal status so the row reflects the outcome.
   useEffect(() => {
     void refreshTasks().catch(() => undefined);
   }, [refreshTasks]);
+  // Also refresh the team list itself: `activeTaskId` is what drives the
+  // sidebar's running indicator, and a task that finishes on its own — rather
+  // than through start/cancel/resume — has no other path back to it. Without
+  // this the sidebar shows a team as running forever.
   useEffect(() => {
-    if (task && isTerminal(task.status)) void refreshTasks().catch(() => undefined);
-  }, [task?.status, refreshTasks]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (task && isTerminal(task.status)) {
+      void refreshTasks().catch(() => undefined);
+      void onRefreshGroups().catch(() => undefined);
+    }
+  }, [task?.status, refreshTasks, onRefreshGroups]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Follow whichever task the selected group is running, so a reload or a
   // group switch lands on live state rather than an empty screen.
   useEffect(() => {
     if (!group) {
-      setTaskId(null);
       return;
     }
     if (group.activeTaskId) {
-      setTaskId(group.activeTaskId);
+      selectTask(group.activeTaskId);
     }
-  }, [group]);
+  }, [group, selectTask]);
 
   const saveReviewer = (value: string) => {
     setReviewer(value);
@@ -174,10 +246,9 @@ export function GroupWorkspace({
         await api.updateGroup(group.id, input);
       } else {
         const created = await api.createGroup(input);
-        setSelectedId(created.group.id);
-        setTaskId(null);
+        onSelectGroup(created.group.id);
       }
-      await refreshGroups();
+      await onRefreshGroups();
       setEditing(null);
     });
 
@@ -186,10 +257,10 @@ export function GroupWorkspace({
     if (!group || !prompt.trim()) return;
     void guard(async () => {
       const { task: started } = await api.startGroupTask(group.id, prompt.trim());
-      setTaskId(started.id);
+      selectTask(started.id);
       setPrompt("");
-      setTab("chain");
-      await refreshGroups();
+      setView("chat");
+      await onRefreshGroups();
       await refreshTasks();
     });
   };
@@ -199,7 +270,7 @@ export function GroupWorkspace({
     void guard(async () => {
       await api.cancelGroupTask(group.id, taskId);
       await state.refresh();
-      await refreshGroups();
+      await onRefreshGroups();
       await refreshTasks();
     });
   };
@@ -208,16 +279,16 @@ export function GroupWorkspace({
     if (!group) return;
     void guard(async () => {
       await api.resumeGroupTask(group.id, id);
-      setTaskId(id);
-      setTab("chain");
-      await refreshGroups();
+      selectTask(id);
+      setView("chat");
+      await onRefreshGroups();
       await refreshTasks();
     });
   };
 
   const openTask = (id: string) => {
-    setTaskId(id);
-    setTab("chain");
+    selectTask(id);
+    setView("chat");
   };
 
   const reviewNote = (noteId: string, input: ReviewNoteInput) => {
@@ -225,6 +296,7 @@ export function GroupWorkspace({
     void guard(async () => {
       await api.reviewNote(noteId, input);
       if (taskId) await state.refreshMemory(taskId);
+      setMemoryRevision((current) => current + 1);
     }).finally(() => setBusyNoteId(null));
   };
 
@@ -233,8 +305,35 @@ export function GroupWorkspace({
     void guard(async () => {
       await api.revokeNote(noteId, { reviewerName: reviewer, reason });
       if (taskId) await state.refreshMemory(taskId);
+      setMemoryRevision((current) => current + 1);
     }).finally(() => setBusyNoteId(null));
   };
+
+  if (groups.length === 0 && groupsLoading && !editing) {
+    return (
+      <div className="no-agent" role="status">
+        <div className="no-agent-art">T</div>
+        <h1>Loading Teams…</h1>
+        <p>Getting your shared workspaces ready.</p>
+      </div>
+    );
+  }
+
+  if (groups.length === 0 && groupsError && !editing) {
+    return (
+      <div className="no-agent" role="alert">
+        <div className="no-agent-art">!</div>
+        <h1>Could not load Teams</h1>
+        <p>{groupsError}</p>
+        <button
+          className="button button-primary"
+          onClick={() => void onRefreshGroups().catch(() => undefined)}
+        >
+          Try again
+        </button>
+      </div>
+    );
+  }
 
   if (groups.length === 0 && !editing) {
     return (
@@ -259,6 +358,7 @@ export function GroupWorkspace({
     );
   }
 
+
   return (
     <>
       {error && (
@@ -267,152 +367,83 @@ export function GroupWorkspace({
           <button onClick={() => setError(null)}>×</button>
         </div>
       )}
+      {groupsError && (
+        <div className="error-banner" role="alert">
+          <span>Could not refresh Teams: {groupsError}</span>
+        </div>
+      )}
 
-      <header className="agent-header">
-        <div>
-          <div className="header-title-row">
-            <h1>{group?.name ?? "Teams"}</h1>
-            {task && <Pill tone={statusTone(task.status)}>{task.status}</Pill>}
-            {running && <span className="pulse" />}
-          </div>
-          <p>
-            {group?.description ||
-              "A team of Agents working one shared plan on one shared codebase."}
-          </p>
-          {group && (
-            <div className="roster-inline">
-              {group.members.map((member) => (
-                <span key={member.agentId} className="target-chip">
-                  <span className={"role-dot role-" + member.role} />
-                  {agentName(agents, member.agentId)}
-                  <em>{roleOf(group.members, member.agentId)}</em>
-                </span>
-              ))}
+      <div className="team-shell">
+        <div className="team-main">
+          <header className="team-head">
+            <div className="team-head-copy">
+              <div className="team-head-title">
+                <h1>{group?.name ?? "Teams"}</h1>
+                {task && <Pill tone={statusTone(task.status)}>{task.status}</Pill>}
+                {running && <span className="pulse" />}
+              </div>
+              <p>
+                {group?.description ||
+                  "A team of Agents working one shared plan on one shared codebase."}
+              </p>
             </div>
-          )}
-        </div>
-        <div className="header-actions">
-          {groups.length > 1 && (
-            <select
-              className="team-select"
-              value={selectedId ?? ""}
-              onChange={(event) => {
-                setSelectedId(event.target.value);
-                setTaskId(null);
-              }}
-            >
-              {groups.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
-          )}
-          <button
-            className="button button-ghost"
-            onClick={() => setEditing("edit")}
-            disabled={busy || running || !group}
-            title={running ? "Membership is frozen while a task runs" : undefined}
-          >
-            Edit team
-          </button>
-          <button
-            className="button button-ghost"
-            onClick={() => setEditing("new")}
-            disabled={busy}
-          >
-            New team
-          </button>
-          {running && (
-            <button className="button button-danger" onClick={cancelTask} disabled={busy}>
-              Cancel task
-            </button>
-          )}
-          {task &&
-            !running &&
-            (task.status === "partial" ||
-              task.status === "failed" ||
-              task.status === "cancelled") && (
+            <div className="header-actions">
+              {/* Team switching lives in the sidebar now — always visible, one click. */}
               <button
-                className="button button-primary"
-                onClick={() => taskId && resume(taskId)}
-                disabled={busy}
-                title="Continue the unfinished nodes (e.g. after switching model)"
+                className="button button-ghost"
+                onClick={() => setEditing("edit")}
+                disabled={busy || running || !group}
+                title={running ? "Membership is frozen while a task runs" : undefined}
               >
-                Resume task
+                Edit team
               </button>
-            )}
-        </div>
-      </header>
-
-      {group && (
-        <form className="task-composer" onSubmit={startTask}>
-          <input
-            value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
-            placeholder={
-              running
-                ? "A task is already running for this team…"
-                : "Give the team one goal — e.g. Plan and implement an upload feature."
-            }
-            disabled={running || busy}
-            maxLength={50_000}
-          />
-          <button
-            className="button button-primary"
-            disabled={running || busy || !prompt.trim()}
-          >
-            Start task
-          </button>
-        </form>
-      )}
-
-      {group && tasks.length > 0 && (
-        <section className="task-history">
-          <h3>Task history</h3>
-          <ul>
-            {tasks.map((item) => {
-              const resumable =
-                item.status === "partial" ||
-                item.status === "failed" ||
-                item.status === "cancelled";
-              return (
-                <li
-                  key={item.id}
-                  className={item.id === taskId ? "task-history-item selected" : "task-history-item"}
+              <button
+                className="button button-ghost"
+                onClick={() => setEditing("new")}
+                disabled={busy}
+              >
+                New team
+              </button>
+              {running && (
+                <button
+                  className="button button-danger"
+                  onClick={cancelTask}
+                  disabled={busy}
                 >
+                  Cancel task
+                </button>
+              )}
+              {task &&
+                !running &&
+                (task.status === "partial" ||
+                  task.status === "failed" ||
+                  task.status === "cancelled") && (
                   <button
-                    className="task-history-open"
-                    onClick={() => openTask(item.id)}
-                    title="Open this task"
+                    className="button button-primary"
+                    onClick={() => taskId && resume(taskId)}
+                    disabled={busy}
+                    title="Continue the unfinished nodes (e.g. after switching model)"
                   >
-                    <Pill tone={statusTone(item.status)}>{item.status}</Pill>
-                    <span className="task-history-prompt">{item.prompt}</span>
-                    <span className="task-history-date">
-                      {new Date(item.createdAt).toLocaleString()}
-                    </span>
+                    Resume task
                   </button>
-                  {resumable && !running && (
-                    <button
-                      className="button button-ghost"
-                      disabled={busy}
-                      onClick={() => resume(item.id)}
-                      title="Continue the unfinished nodes on the current model"
-                    >
-                      Resume
-                    </button>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-      )}
+                )}
+            </div>
+          </header>
 
-      {task ? (
-        <>
-          <nav className="tabs">
-            {TABS.map((item) => {
+          {/*
+            One primary surface, then the things it produced. The rule between
+            them is the whole point: Conversation is not the first of seven
+            equal tabs, it is the view the others report on.
+          */}
+          <nav className="team-views">
+            <button
+              className={"team-view-primary " + (view === "chat" ? "selected" : "")}
+              onClick={() => setView("chat")}
+            >
+              Conversation
+            </button>
+            <span className="team-views-rule" aria-hidden="true" />
+            {SECONDARY_VIEWS.map((item) => {
               const count =
                 item.id === "review"
                   ? state.notes.length
@@ -422,8 +453,10 @@ export function GroupWorkspace({
               return (
                 <button
                   key={item.id}
-                  className={"tab " + (tab === item.id ? "selected" : "")}
-                  onClick={() => setTab(item.id)}
+                  className={"team-view " + (view === item.id ? "selected" : "")}
+                  onClick={() => setView(item.id)}
+                  disabled={!task}
+                  title={task ? undefined : "Start a task to inspect it"}
                 >
                   {item.label}
                   {count > 0 && <span className="tab-count">{count}</span>}
@@ -451,7 +484,19 @@ export function GroupWorkspace({
           )}
 
           <section className="group-panel">
-            {tab === "chain" && group && (
+            {view === "chat" && group && (
+              <ConversationPanel
+                messages={state.task?.messages ?? []}
+                agents={agents}
+                group={group}
+                prompt={prompt}
+                onPromptChange={setPrompt}
+                onSubmit={startTask}
+                running={running}
+                busy={busy}
+              />
+            )}
+            {view === "chain" && group && (
               <ChainPanel
                 nodes={state.task?.nodes ?? []}
                 agents={agents}
@@ -459,21 +504,14 @@ export function GroupWorkspace({
                 onOpenTrace={onOpenTrace}
               />
             )}
-            {tab === "timeline" && group && (
-              <TimelinePanel
-                messages={state.task?.messages ?? []}
-                agents={agents}
-                group={group}
-              />
-            )}
-            {tab === "context" && (
+            {view === "context" && (
               <ContextPanel
                 injections={state.task?.contextInjections ?? []}
                 nodes={state.task?.nodes ?? []}
                 agents={agents}
               />
             )}
-            {tab === "review" && group && (
+            {view === "review" && group && (
               <>
                 <label className="reviewer-field">
                   Reviewer name
@@ -494,15 +532,15 @@ export function GroupWorkspace({
                 />
               </>
             )}
-            {tab === "ledger" && <LedgerPanel grants={state.grants} agents={agents} />}
-            {tab === "memory" && group && (
+            {view === "ledger" && <LedgerPanel grants={state.grants} agents={agents} />}
+            {view === "memory" && group && (
               <LandedMemoryPanel
                 group={group}
                 agents={agents}
                 memoryByAgent={state.memoryByAgent}
               />
             )}
-            {tab === "proof" && group && (
+            {view === "proof" && group && (
               <ProofPanel
                 group={group}
                 agents={agents}
@@ -511,17 +549,76 @@ export function GroupWorkspace({
                 onOpenTrace={onOpenTrace}
               />
             )}
+            {/* A secondary view with no task has nothing to report on. */}
+            {!task && view !== "chat" && (
+              <EmptyState
+                icon="◇"
+                title="No task yet"
+                body="Give the team a goal in the conversation. Each Agent takes its turn on one shared codebase, and what they learn becomes reviewable memory."
+              />
+            )}
           </section>
-        </>
-      ) : (
-        group && (
-          <EmptyState
-            icon="◇"
-            title="No task yet"
-            body="Give the team a goal above. Each Agent takes its turn on one shared codebase, and what they learn becomes reviewable memory."
+
+          {group && tasks.length > 0 && (
+            <section className="task-history">
+              <h3>Task history</h3>
+              <ul>
+                {tasks.map((item) => {
+                  const resumable =
+                    item.status === "partial" ||
+                    item.status === "failed" ||
+                    item.status === "cancelled";
+                  return (
+                    <li
+                      key={item.id}
+                      className={
+                        item.id === taskId
+                          ? "task-history-item selected"
+                          : "task-history-item"
+                      }
+                    >
+                      <button
+                        className="task-history-open"
+                        onClick={() => openTask(item.id)}
+                        title="Open this task"
+                      >
+                        <Pill tone={statusTone(item.status)}>{item.status}</Pill>
+                        <span className="task-history-prompt">{item.prompt}</span>
+                        <span className="task-history-date">
+                          {new Date(item.createdAt).toLocaleString()}
+                        </span>
+                      </button>
+                      {resumable && !running && (
+                        <button
+                          className="button button-ghost"
+                          disabled={busy}
+                          onClick={() => resume(item.id)}
+                          title="Continue the unfinished nodes on the current model"
+                        >
+                          Resume
+                        </button>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          )}
+        </div>
+
+        {group && (
+          <MemberRail
+            group={group}
+            agents={agents}
+            nodes={state.task?.nodes ?? []}
+            taskStatus={task?.status ?? null}
+            memory={railMemory.memory}
+            memoryLoading={railMemory.loading}
+            memoryFailed={railMemory.failed}
+            onOpenTrace={onOpenTrace}
           />
-        )
-      )}
+        )}
+      </div>
 
       {editing && (
         <GroupEditor
