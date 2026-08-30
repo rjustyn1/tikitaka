@@ -110,6 +110,7 @@ function planNode(id: string, agentId: string, runId: string): GroupPlanNode {
     runtimeLocks: [],
     instruction: "",
     expectedOutput: "",
+    attempts: 0,
     createdAt: "2026-01-01T00:00:00.000Z",
     startedAt: "2026-01-01T00:00:00.000Z",
     completedAt: id === "n1" ? "2026-01-01T00:03:00.000Z" : "2026-01-01T00:05:00.000Z",

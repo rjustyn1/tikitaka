@@ -399,10 +399,64 @@ export class GroupRunner {
       // `chain` is a deep clone from the store snapshot, so writing the result
       // back here mutates nothing persisted -- it only lets `findFailedAncestor`
       // above see failures that happened during this very loop.
-      node.status = await this.runPlanNode(taskId, node.id);
+      node.status = await this.runNodeWithRetries(taskId, node.id);
     }
 
     await this.finishGroupTask(taskId);
+  }
+
+  /**
+   * Run a node, retrying a transient failure.
+   *
+   * Each attempt goes through `runPlanNode` unchanged, so it gets its own run
+   * row, its own spans and its own context injection -- two attempts are two
+   * real runs and the audit says so, rather than the second quietly
+   * overwriting the first. `attempts` is persisted before each dispatch, so a
+   * restart resumes the count instead of restarting it.
+   */
+  private async runNodeWithRetries(
+    taskId: string,
+    nodeId: string,
+  ): Promise<GroupTaskStatus> {
+    for (;;) {
+      const attempt = await this.store.mutate((database) => {
+        const node = database.groupPlanNodes.find((item) => item.id === nodeId);
+        if (!node) return 0;
+        node.attempts += 1;
+        return node.attempts;
+      });
+
+      const status = await this.runPlanNode(taskId, nodeId);
+      if (status !== "failed" || attempt >= MAX_NODE_ATTEMPTS) return status;
+
+      const error =
+        this.store.snapshot().groupPlanNodes.find((item) => item.id === nodeId)
+          ?.error ?? "";
+      if (!isRetryableFailure(error)) return status;
+      if (this.activeTasks.get(taskId)?.cancelled) return status;
+
+      if (this.config.nodeEnv !== "test") {
+        console.warn(
+          "[runner] retrying node " +
+            nodeId +
+            " after a transient failure (attempt " +
+            attempt +
+            " of " +
+            MAX_NODE_ATTEMPTS +
+            "): " +
+            error,
+        );
+      }
+      // Clear the failure so the retry starts from a clean row; the previous
+      // attempt survives as its own run.
+      await this.store.mutate((database) => {
+        const node = database.groupPlanNodes.find((item) => item.id === nodeId);
+        if (!node) return;
+        node.status = "queued";
+        node.error = null;
+        node.completedAt = null;
+      });
+    }
   }
 
   private async runPlanNode(
@@ -857,6 +911,10 @@ export class GroupRunner {
           node.output = null;
           node.error = null;
           node.startedAt = null;
+          // A resume is a fresh decision by a human, so the retry budget starts
+          // over. Without this, a node that exhausted its attempts could never
+          // be resumed into a successful run.
+          node.attempts = 0;
           node.completedAt = null;
         }
       }
@@ -1104,6 +1162,37 @@ export class GroupRunner {
       }
     }
   }
+}
+
+/** Attempts per node, first try included. */
+export const MAX_NODE_ATTEMPTS = 2;
+
+/**
+ * Is this failure worth trying again?
+ *
+ * Retrying costs a full model run, so the default is NO. Only failures that
+ * are plausibly about the environment rather than the answer are retried: a
+ * run that completed and produced a poor result will produce the same poor
+ * result the second time, for the same tokens.
+ *
+ * Deliberately excluded: "Codex completed without an agent message" (the model
+ * answered, just emptily), "exceeded CODEX_MAX_OUTPUT_BYTES" (deterministic),
+ * anything about group membership, and `spawn ... ENOENT` (the binary is not
+ * there; that is a deployment fault and a second attempt cannot fix it).
+ */
+export function isRetryableFailure(message: string): boolean {
+  const text = message.toLowerCase();
+  if (text.includes("enoent")) return false;
+  if (text.includes("without an agent message")) return false;
+  if (text.includes("codex_max_output_bytes")) return false;
+  return (
+    text.includes("timed out") ||
+    text.includes("already has an active") ||
+    text.includes("econnreset") ||
+    text.includes("etimedout") ||
+    text.includes("socket hang up") ||
+    /exited with code (?!0)/.test(text)
+  );
 }
 
 /**

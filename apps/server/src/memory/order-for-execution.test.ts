@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { GroupPlanNode, GroupTaskStatus } from "../types.js";
-import { orderForExecution } from "./group-runner.js";
+import { isRetryableFailure, orderForExecution } from "./group-runner.js";
 
 /**
  * `chainFor()` used to sort by `createdAt` alone — but every node of a task is
@@ -30,6 +30,7 @@ function node(
     runtimeLocks: [],
     instruction: "",
     expectedOutput: "",
+    attempts: 0,
     // Identical for every node — exactly the condition that made the old
     // createdAt sort a no-op.
     createdAt: "2026-01-01T00:00:00.000Z",
@@ -94,5 +95,38 @@ describe("orderForExecution", () => {
 
   it("handles an empty task", () => {
     expect(orderForExecution([])).toEqual([]);
+  });
+});
+
+describe("isRetryableFailure", () => {
+  it("retries failures that are about the environment, not the answer", () => {
+    for (const message of [
+      "Codex timed out after 600000 ms",
+      "Runtime timed out after 600000 ms",
+      "Agent already has an active Codex process",
+      "Codex exited with code 1: connection reset",
+      "socket hang up",
+      "ETIMEDOUT",
+    ]) {
+      expect(isRetryableFailure(message)).toBe(true);
+    }
+  });
+
+  it("does not retry a failure a second run cannot fix", () => {
+    for (const message of [
+      // The model answered, just emptily. The same run gives the same answer.
+      "Codex completed without an agent message",
+      // Deterministic: the output will be just as large next time.
+      "Codex output exceeded CODEX_MAX_OUTPUT_BYTES",
+      // A deployment fault; the binary will still be missing.
+      "spawn codex ENOENT",
+      "This Agent is no longer a group member",
+    ]) {
+      expect(isRetryableFailure(message)).toBe(false);
+    }
+  });
+
+  it("treats a clean exit code 0 message as not retryable", () => {
+    expect(isRetryableFailure("Codex exited with code 0: fine")).toBe(false);
   });
 });

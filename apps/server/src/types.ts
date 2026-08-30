@@ -191,6 +191,16 @@ export interface GroupPlanNode {
    */
   instruction: string;
   expectedOutput: string;
+  /**
+   * How many times this node has been dispatched to the runner.
+   *
+   * Persisted, not in-memory, so a server restart mid-retry cannot loop
+   * forever. Every attempt gets its OWN `runs` row -- `runId` points at the
+   * latest, and `GroupTask.nodeRunIds` accumulates them all, so a retried node
+   * keeps a complete, auditable history rather than overwriting the attempt
+   * that failed.
+   */
+  attempts: number;
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;

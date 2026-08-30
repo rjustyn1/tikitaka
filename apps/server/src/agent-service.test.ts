@@ -396,6 +396,7 @@ function nodeFixture(task: GroupTask, agent: Agent): GroupPlanNode {
     runtimeLocks: [],
     instruction: "",
     expectedOutput: "",
+    attempts: 0,
     createdAt: "2026-01-01T00:00:00.000Z",
     startedAt: "2026-01-01T00:00:01.000Z",
     completedAt: null,

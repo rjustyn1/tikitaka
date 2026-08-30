@@ -8,6 +8,7 @@ import { JsonStore } from "../store.js";
 import { FakeRunner } from "../test-helpers.js";
 import type { Agent, TraceSpan } from "../types.js";
 import { WorkspaceManager } from "../workspace.js";
+import { MAX_NODE_ATTEMPTS } from "./group-runner.js";
 import type { MemoryPipeline } from "./pipeline.js";
 import { RecordingMemoryPipeline } from "../test-helpers.js";
 import type { GroupMember } from "../types.js";
@@ -559,6 +560,89 @@ describe("failure and cancellation", () => {
         .snapshot()
         .runtimeLocks.every((lock) => lock.releasedAt !== null),
     ).toBe(true);
+  });
+
+  it("retries a transient failure, keeping each attempt as its own run", async () => {
+    // A timeout is about the environment, not the answer, so it is worth one
+    // more try. Both attempts must survive in the audit.
+    let attemptsSeen = 0;
+    let backendId = "";
+    const runner = new FakeRunner({
+      failFor: (request) => {
+        if (request.agentId !== backendId) return null;
+        attemptsSeen += 1;
+        return attemptsSeen === 1 ? "Codex timed out after 600000 ms" : null;
+      },
+    });
+    const harness = await makeHarness(runner);
+    backendId = harness.backend.id;
+    const { task } = await runToCompletion(harness);
+    const response = harness.service.getGroupTask(task.id);
+
+    expect(response.task.status).toBe("completed");
+    expect(attemptsSeen).toBe(2);
+    const root = response.nodes[0]!;
+    expect(root.status).toBe("completed");
+    expect(root.attempts).toBe(2);
+
+    // Two attempts are two REAL runs: the failed one is not overwritten.
+    const runsForRoot = harness.store
+      .snapshot()
+      .runs.filter((run) => run.agentId === backendId);
+    expect(runsForRoot).toHaveLength(2);
+    expect(runsForRoot.filter((run) => run.status === "failed")).toHaveLength(1);
+    expect(runsForRoot.filter((run) => run.status === "completed")).toHaveLength(1);
+    // The node points at the successful attempt, and the task lists both.
+    expect(root.runId).toBe(
+      runsForRoot.find((run) => run.status === "completed")!.id,
+    );
+    expect(response.task.nodeRunIds).toEqual(
+      expect.arrayContaining(runsForRoot.map((run) => run.id)),
+    );
+  });
+
+  it("does not retry a failure that a second run cannot fix", async () => {
+    // The model answered; it just answered badly. Retrying burns tokens for
+    // the same result.
+    let calls = 0;
+    let backendId = "";
+    const runner = new FakeRunner({
+      failFor: (request) => {
+        if (request.agentId !== backendId) return null;
+        calls += 1;
+        return "Codex completed without an agent message";
+      },
+    });
+    const harness = await makeHarness(runner);
+    backendId = harness.backend.id;
+    const { task } = await runToCompletion(harness);
+
+    expect(calls).toBe(1);
+    expect(harness.service.getGroupTask(task.id).nodes[0]!.attempts).toBe(1);
+  });
+
+  it("gives up after the attempt cap and blocks downstream as usual", async () => {
+    let calls = 0;
+    let backendId = "";
+    const runner = new FakeRunner({
+      failFor: (request) => {
+        if (request.agentId !== backendId) return null;
+        calls += 1;
+        return "Codex timed out after 600000 ms";
+      },
+    });
+    const harness = await makeHarness(runner);
+    backendId = harness.backend.id;
+    const { task } = await runToCompletion(harness);
+    const response = harness.service.getGroupTask(task.id);
+
+    expect(calls).toBe(MAX_NODE_ATTEMPTS);
+    expect(response.nodes[0]!.status).toBe("failed");
+    expect(response.nodes[0]!.attempts).toBe(MAX_NODE_ATTEMPTS);
+    // Retry exhaustion behaves exactly like any other failure downstream.
+    expect(response.nodes.slice(1).every((n) => n.status === "cancelled")).toBe(
+      true,
+    );
   });
 
   it("cancels a running task, releasing leases and locks", async () => {

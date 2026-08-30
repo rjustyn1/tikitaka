@@ -507,6 +507,7 @@ export function buildPlanNodes(
       runtimeLocks: [...node.runtimeLocks],
       instruction: node.instruction,
       expectedOutput: node.expectedOutput,
+      attempts: 0,
       createdAt,
       startedAt: null,
       completedAt: null,
