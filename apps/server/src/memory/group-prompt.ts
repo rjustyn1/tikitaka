@@ -55,7 +55,12 @@ export function buildContextPacket(input: ContextPacketInput): ContextPacket {
 export interface TurnPromptInput {
   taskPrompt: string;
   node: GroupPlanNode;
-  template: ChainNodeTemplate | undefined;
+  /**
+   * @deprecated The node carries its own planner-written instruction now. Only
+   * consulted when `node.instruction` is empty, which is true for plan rows
+   * persisted before the planner landed.
+   */
+  template?: ChainNodeTemplate | undefined;
   agentName: string;
   agentDescription: string;
   role: string;
@@ -102,6 +107,8 @@ export function buildTurnPrompt(input: TurnPromptInput): string {
         : input.node.fileOwnershipHints.join(", ") || "none declared"),
     "Runtime locks: " +
       (input.node.runtimeLocks.join(", ") || "none"),
+    "Expected output: " +
+      (input.node.expectedOutput || "a written result for this step"),
     "",
   ];
 
@@ -134,7 +141,10 @@ export function buildTurnPrompt(input: TurnPromptInput): string {
     "project there. Everything outside ./code is your own private workspace.",
     "",
     "[Your turn]",
-    input.template?.instruction ??
+    // The planner wrote this per node, so it is the authority. The template is
+    // only a fallback for rows persisted before instructions were stored.
+    input.node.instruction.trim() ||
+      input.template?.instruction ||
       "Complete this plan node from your role.",
     "Respect the file ownership above and preserve other Agents' work. Stay",
     "within your own Agent identity; do not answer as another Agent.",

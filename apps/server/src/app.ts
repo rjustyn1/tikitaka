@@ -7,6 +7,10 @@ import { z } from "zod";
 import type { AppConfig } from "./config.js";
 import { HttpError } from "./errors.js";
 import type { AgentService } from "./agent-service.js";
+import {
+  MAX_GROUP_MEMBERS,
+  MIN_GROUP_MEMBERS,
+} from "./memory/group-chain.js";
 import type { RunTraceSummary, TraceSpan } from "./types.js";
 
 const agentIdParams = z.object({ id: z.string().uuid() });
@@ -34,15 +38,21 @@ const groupTaskParams = z.object({
 const noteIdParams = z.object({ id: z.string().uuid() });
 const taskIdParams = z.object({ id: z.string().uuid() });
 
+// A4's "exactly three, one per role" is gone. `role` is a free-form label the
+// UI can show; it no longer selects work, so it is optional and defaults to
+// "member". Assignment is the planner's job, from each Agent's description.
 const groupMemberBody = z.object({
   agentId: z.string().uuid(),
-  role: z.enum(["backend", "frontend", "security"]),
+  role: z.string().trim().min(1).max(40).default("member"),
 });
 
 const groupMembersBody = z
   .array(groupMemberBody)
-  .length(3)
+  .min(MIN_GROUP_MEMBERS)
+  .max(MAX_GROUP_MEMBERS)
   .superRefine((members, ctx) => {
+    // The one membership rule left. The A3 lease is not re-entrant, so an Agent
+    // listed twice could be asked to hold itself.
     const agentIds = new Set(members.map((member) => member.agentId));
     if (agentIds.size !== members.length) {
       ctx.addIssue({
@@ -50,21 +60,11 @@ const groupMembersBody = z
         message: "Each Agent can appear only once in a group",
       });
     }
-    const roles = new Set(members.map((member) => member.role));
-    for (const role of ["backend", "frontend", "security"] as const) {
-      if (!roles.has(role)) {
-        ctx.addIssue({
-          code: "custom",
-          message: "Group must include one " + role + " member",
-        });
-      }
-    }
   });
 
 const createGroupBody = z.object({
   name: z.string().trim().min(1).max(80),
   description: z.string().trim().max(500).optional(),
-  // A4 - exactly three members, one per role. Replaces memberAgentIds.
   members: groupMembersBody,
 });
 

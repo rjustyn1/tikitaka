@@ -1,195 +1,156 @@
 /**
- * The v1 plan template -- A4 in `middlewaredoc/DECISIONS.md`.
+ * Group membership rules, and the deterministic fallback plan.
  *
- * v1 is a hardcoded FIVE-NODE SEQUENTIAL CHAIN, not a DAG. It is built as a
- * degenerate DAG (`node[i].dependsOn = [node[i-1].id]`) so the data model and
- * every downstream consumer -- flush trigger, task buffer, ledger -- are
- * identical to what a real DAG would produce. Upgrading later is a planner
- * change, not a pipeline change, which is exactly the claim
- * `ARCHITECTURE.md` section 9 makes.
+ * WHAT CHANGED. This file used to hold `V1_CHAIN` -- A4's fixed five-node,
+ * three-role template that was the source of EVERY plan, for every task. A4 is
+ * superseded: `memory/planner.ts` now reads the task prompt and each Agent's
+ * description and decides the graph. What remains here is the membership
+ * boundary and a fallback for callers that do not have a planner to hand.
  *
- * Nodes bind to ROLES, never to Agent names or member-list order, so any three
- * Agents can play the demo.
+ * Membership is no longer role-shaped. `GROUP-CHAT-DESIGN.md`'s locked decision
+ * described membership as "explicit Agent toggles" with no fixed count; the
+ * exactly-three-one-per-role rule was A4 scope control, not the design. A group
+ * now holds any explicitly selected number of Agents, and the planner decides
+ * which of them a given task actually needs.
  */
 
-import { randomUUID } from "node:crypto";
 import { HttpError } from "../errors.js";
 import type { GroupPlanNode } from "../types.js";
 import type { AgentGroup, GroupMember, GroupRole } from "../types.js";
+import {
+  MAX_PLAN_NODES,
+  buildPlanNodes,
+  fallbackPlan,
+  type PlannerAgent,
+} from "./planner.js";
+
+/** Smallest useful group. One Agent is allowed: it is a valid degenerate plan. */
+export const MIN_GROUP_MEMBERS = 1;
+
+/**
+ * Membership cap. Higher than `MAX_PLAN_NODES` on purpose -- a group may carry
+ * more Agents than any single task uses, because the planner selects a subset.
+ */
+export const MAX_GROUP_MEMBERS = 12;
 
 export const MEMBERSHIP_MESSAGE =
-  "This plan needs one backend, one frontend, and one security member.";
+  "A group needs between " +
+  MIN_GROUP_MEMBERS +
+  " and " +
+  MAX_GROUP_MEMBERS +
+  " members.";
 
+/**
+ * Retained so `group-prompt.ts` keeps a stable type while `GroupRunner` still
+ * passes a template through. New code reads `node.instruction` instead.
+ *
+ * @deprecated Plans are planner-authored; there is no template table any more.
+ */
 export interface ChainNodeTemplate {
   nodeRole: string;
   role: GroupRole;
   readOnly: boolean;
   fileOwnershipHints: string[];
-  /**
-   * Lock ROWS are written per node so the UI can show which area a node held.
-   * Collision VALIDATION is STRETCH: it cannot fire while one node runs at a
-   * time (A4).
-   */
   runtimeLocks: string[];
   instruction: string;
   expectedOutput: string;
 }
 
 /**
- * Backend and Frontend each take two turns, so the demo still tells the
- * plan-then-implement story. Because the chain is sequential, node 4 starts
- * only after node 3 completes, so an Agent's two turns never overlap and the
- * A3 lease needs no re-entrancy.
+ * There is no template table any more, so there is nothing to look up.
+ *
+ * Kept as a no-op shim purely so `GroupRunner` compiles unchanged during the
+ * handoff; `buildTurnPrompt` already prefers the node's own persisted
+ * instruction, so removing the call site is a pure deletion.
+ *
+ * @deprecated Read `node.instruction`. Remove this call, then this function.
  */
-export const V1_CHAIN: readonly ChainNodeTemplate[] = [
-  {
-    nodeRole: "backend-contract",
-    role: "backend",
-    readOnly: false,
-    fileOwnershipHints: ["code/apps/server/**"],
-    runtimeLocks: ["code/apps/server/**"],
-    instruction:
-      "Propose the endpoint contract and the storage flow for this task. State the public request and response shape explicitly, and say what must NOT cross the boundary to other Agents.",
-    expectedOutput: "An endpoint contract and storage flow.",
-  },
-  {
-    nodeRole: "frontend-plan",
-    role: "frontend",
-    readOnly: true,
-    fileOwnershipHints: [],
-    runtimeLocks: [],
-    instruction:
-      "Plan the UI and API integration against the contract above. Ask for any public API detail you still need. Do not write code in this turn.",
-    expectedOutput: "A UI/API integration plan.",
-  },
-  {
-    nodeRole: "security-review",
-    role: "security",
-    readOnly: true,
-    fileOwnershipHints: [],
-    runtimeLocks: [],
-    instruction:
-      "Review auth, validation, and secret boundaries across the contract and the frontend plan. Call out anything that would leak a credential between Agents. Do not write code in this turn.",
-    expectedOutput: "A security review with explicit constraints.",
-  },
-  {
-    nodeRole: "backend-impl",
-    role: "backend",
-    readOnly: false,
-    fileOwnershipHints: ["code/apps/server/**"],
-    runtimeLocks: ["code/apps/server/**"],
-    instruction:
-      "Implement the backend changes under ./code/apps/server, honouring the security constraints raised above.",
-    expectedOutput: "Backend implementation in shared code.",
-  },
-  {
-    nodeRole: "frontend-impl",
-    role: "frontend",
-    readOnly: false,
-    fileOwnershipHints: ["code/apps/web/**"],
-    runtimeLocks: ["code/apps/web/**"],
-    instruction:
-      "Implement the frontend changes under ./code/apps/web against the implemented backend contract.",
-    expectedOutput: "Frontend implementation in shared code.",
-  },
-];
+export function templateFor(_nodeRole: string): ChainNodeTemplate | undefined {
+  return undefined;
+}
 
-/** The agent that plays a role, or a 409 naming what the plan needs. */
+/**
+ * The agent holding a role, or a 409.
+ *
+ * @deprecated Role lookup is not how work is assigned any more -- the planner
+ * assigns nodes to Agent ids directly. Kept for callers still migrating.
+ */
 export function resolveRole(
   members: readonly GroupMember[],
   role: GroupRole,
 ): string {
   const member = members.find((item) => item.role === role);
   if (!member) {
-    throw new HttpError(409, MEMBERSHIP_MESSAGE);
+    throw new HttpError(409, "No member of this group holds the " + role + " role.");
   }
   return member.agentId;
 }
 
 /**
- * Materialise the chain for one task.
+ * The deterministic fallback plan, materialised for one task.
  *
- * `allowedPlanNodeIds` carries every ancestor, which in a chain is simply every
- * earlier node. `contextSnapshotSeq` is left at 0 and stamped when the node
- * actually becomes runnable.
+ * SIGNATURE PRESERVED so `GroupRunner.startGroupTask()` keeps compiling and
+ * keeps working while Person 1 wires in the async `TaskPlanner`. It no longer
+ * stamps a constant: it produces one node per member, sequential, which is the
+ * same shape `TaskPlanner` degrades to when a model plan is unusable.
+ *
+ * It has only members, not Agent rows, so it has no descriptions to work from.
+ * That is exactly why it is the fallback and not the planner.
  */
 export function buildChainNodes(
   groupTaskId: string,
   members: readonly GroupMember[],
   createdAt: string,
 ): GroupPlanNode[] {
-  const nodes: GroupPlanNode[] = [];
-  const ancestors: string[] = [];
-  let previousId: string | null = null;
-
-  for (const template of V1_CHAIN) {
-    const id = randomUUID();
-    nodes.push({
-      id,
-      groupTaskId,
-      agentId: resolveRole(members, template.role),
-      kind: "work",
-      nodeRole: template.nodeRole,
-      dependsOn: previousId ? [previousId] : [],
-      contextSnapshotSeq: 0,
-      allowedPlanNodeIds: [...ancestors],
-      status: "queued",
-      runId: null,
-      output: null,
-      error: null,
-      readOnly: template.readOnly,
-      fileOwnershipHints: [...template.fileOwnershipHints],
-      runtimeLocks: [...template.runtimeLocks],
-      expectedOutput: template.expectedOutput,
-      createdAt,
-      startedAt: null,
-      completedAt: null,
-    });
-    ancestors.push(id);
-    previousId = id;
-  }
-
-  return nodes;
-}
-
-export function templateFor(nodeRole: string): ChainNodeTemplate | undefined {
-  return V1_CHAIN.find((template) => template.nodeRole === nodeRole);
+  const agents: PlannerAgent[] = members.map((member) => ({
+    id: member.agentId,
+    name: member.role || "member",
+    description: "",
+  }));
+  return buildPlanNodes(
+    groupTaskId,
+    fallbackPlan({ prompt: "", agents }).slice(0, MAX_PLAN_NODES),
+    createdAt,
+  );
 }
 
 // ---------------------------------------------------------------------------
-// A4 membership validation
-//
-// Moved here from memory/pending-contracts.ts during integration: these are
-// validation helpers, not contracts. The contracts (GroupRole, GroupMember,
-// AgentGroup.members) now live in types.ts, landed by Person 1.
+// Membership validation
 // ---------------------------------------------------------------------------
 
+/**
+ * The three v1 labels, kept only as defaults for callers that still need to
+ * name one (`pipeline.ts`'s synthetic group). They are no longer required, and
+ * no longer drive assignment.
+ */
 export const GROUP_ROLES: readonly GroupRole[] = [
   "backend",
   "frontend",
   "security",
 ];
 
-/** Membership from a stored group. `members` is authoritative post-A4. */
+/** Membership from a stored group. */
 export function readMembers(group: AgentGroup): GroupMember[] {
   return Array.isArray(group.members) ? group.members : [];
 }
 
-/** Roles present exactly once, with no Agent used twice. */
+/**
+ * The only two membership rules left: a workable size, and no Agent twice.
+ *
+ * Roles are free-form labels now. Two members may share one, or carry none --
+ * the planner reads descriptions, not labels, so a duplicate label costs
+ * nothing. A duplicated AGENT still does: the A3 lease is not re-entrant, so
+ * one Agent listed twice could be asked to hold itself.
+ */
 export function findMembershipError(
   members: readonly GroupMember[],
 ): string | null {
-  if (members.length !== GROUP_ROLES.length) {
+  if (members.length < MIN_GROUP_MEMBERS || members.length > MAX_GROUP_MEMBERS) {
     return MEMBERSHIP_MESSAGE;
   }
   const agentIds = new Set(members.map((member) => member.agentId));
   if (agentIds.size !== members.length) {
-    return "Each Agent may hold only one role in a group.";
-  }
-  for (const role of GROUP_ROLES) {
-    if (members.filter((member) => member.role === role).length !== 1) {
-      return MEMBERSHIP_MESSAGE;
-    }
+    return "Each Agent may appear only once in a group.";
   }
   return null;
 }

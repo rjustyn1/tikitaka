@@ -108,22 +108,48 @@ describe("group + memory routes", () => {
     await app.close();
   });
 
-  it("rejects duplicate group roles with 400", async () => {
+  it("accepts any number of members, with or without a role label", async () => {
+    // A4's exactly-three-one-per-role rule is gone: the planner assigns work
+    // from each Agent's description, so `role` is just a label with a default.
     const app = await createApp(loadConfig({ NODE_ENV: "test" }), groupService);
-    const rejected = await app.inject({
-      method: "POST",
-      url: "/api/groups",
-      headers: { "content-type": "application/json" },
-      payload: JSON.stringify({
-        name: "Bad Roles",
-        members: [
-          { agentId: randomUUID(), role: "backend" },
-          { agentId: randomUUID(), role: "backend" },
-          { agentId: randomUUID(), role: "security" },
-        ],
-      }),
-    });
-    expect(rejected.statusCode).toBe(400);
+    for (const members of [
+      [{ agentId: randomUUID() }],
+      [{ agentId: randomUUID(), role: "data" }, { agentId: randomUUID() }],
+      [
+        { agentId: randomUUID(), role: "backend" },
+        { agentId: randomUUID(), role: "backend" },
+      ],
+    ]) {
+      const created = await app.inject({
+        method: "POST",
+        url: "/api/groups",
+        headers: { "content-type": "application/json" },
+        payload: JSON.stringify({ name: "Any Shape", members }),
+      });
+      // Zod accepted the body; the stub service reports not-implemented.
+      expect(created.statusCode).toBe(501);
+    }
+    await app.close();
+  });
+
+  it("rejects an empty group and the same Agent listed twice with 400", async () => {
+    const app = await createApp(loadConfig({ NODE_ENV: "test" }), groupService);
+    const duplicated = randomUUID();
+    for (const members of [
+      [],
+      [
+        { agentId: duplicated, role: "backend" },
+        { agentId: duplicated, role: "frontend" },
+      ],
+    ]) {
+      const rejected = await app.inject({
+        method: "POST",
+        url: "/api/groups",
+        headers: { "content-type": "application/json" },
+        payload: JSON.stringify({ name: "Bad Members", members }),
+      });
+      expect(rejected.statusCode).toBe(400);
+    }
     await app.close();
   });
 
