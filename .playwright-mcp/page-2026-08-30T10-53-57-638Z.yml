@@ -1,0 +1,6 @@
+- main [ref=f2e3]:
+  - generic [ref=f2e4]:
+    - generic [ref=f2e5]: A
+    - text: Agent Launchpad
+    - heading "Connecting to the control plane" [level=1] [ref=f2e6]
+    - generic "Loading" [ref=f2e7]

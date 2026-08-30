@@ -1,0 +1,85 @@
+- generic [ref=f1e8]:
+  - complementary [ref=f1e9]:
+    - generic [ref=f1e10]:
+      - generic [ref=f1e11]: A
+      - generic [ref=f1e12]:
+        - strong [ref=f1e13]: Agent Launchpad
+        - generic [ref=f1e14]: ECS / Docker · Codex CLI
+    - tablist [ref=f1e15]:
+      - tab "Agents" [ref=f1e16] [cursor=pointer]
+      - tab "Teams" [active] [selected] [ref=f1e17] [cursor=pointer]
+    - button "＋ Create Agent" [ref=f1e18] [cursor=pointer]:
+      - generic [ref=f1e19]: ＋
+      - text: Create Agent
+    - navigation [ref=f1e20]:
+      - button "Backend Agent · Ops Agent · Security Agent" [ref=f1e21] [cursor=pointer]:
+        - generic [ref=f1e22]: P
+      - button "Backend Agent · Frontend Agent · Security Agent" [ref=f1e23] [cursor=pointer]:
+        - generic [ref=f1e24]: U
+  - main [ref=f1e25]:
+    - generic [ref=f1e26]:
+      - generic [ref=f1e27]:
+        - generic [ref=f1e28]:
+          - generic [ref=f1e29]:
+            - heading "Payments Team" [level=1] [ref=f1e31]
+            - paragraph [ref=f1e32]: Take card payments end to end.
+          - generic [ref=f1e33]:
+            - button "Edit team" [ref=f1e34] [cursor=pointer]
+            - button "New team" [ref=f1e35] [cursor=pointer]
+        - navigation [ref=f1e36]:
+          - button "Conversation" [ref=f1e37] [cursor=pointer]
+          - button "Plan" [disabled] [ref=f1e39]
+          - button "Context" [disabled] [ref=f1e40]
+          - button "Review" [disabled] [ref=f1e41]
+          - button "Ledger" [disabled] [ref=f1e42]
+          - button "Workspaces" [disabled] [ref=f1e43]
+          - button "Proof" [disabled] [ref=f1e44]
+        - generic [ref=f1e46]:
+          - generic [ref=f1e48]:
+            - generic [ref=f1e49]: ◎
+            - strong [ref=f1e50]: No conversation yet
+            - paragraph [ref=f1e51]: Give the team a goal below. Each Agent takes its turn on one shared codebase, and every turn lands here.
+          - generic [ref=f1e52]:
+            - textbox "Team goal" [ref=f1e53]:
+              - /placeholder: Give the team one goal — e.g. Plan and implement an upload feature.
+            - button "Start task" [disabled] [ref=f1e54]
+      - complementary "Team members" [ref=f1e55]:
+        - generic [ref=f1e56]:
+          - generic [ref=f1e57]: Members
+          - generic [ref=f1e58]: "3"
+        - article [ref=f1e59]:
+          - generic [ref=f1e60]:
+            - generic [ref=f1e61]: B
+            - generic [ref=f1e62]:
+              - strong [ref=f1e63]: Backend Agent
+              - generic [ref=f1e64]: backend
+          - paragraph [ref=f1e65]: Backend API and storage work.
+          - generic [ref=f1e66]: No step in this task
+          - generic [ref=f1e69]:
+            - text: Governed memory
+            - list [ref=f1e70]:
+              - listitem [ref=f1e71]:
+                - generic [ref=f1e72]: on match
+                - code [ref=f1e73]: hard-size-limit-and-error-contract-for-the-file--8802274d/SKILL.md
+        - article [ref=f1e74]:
+          - generic [ref=f1e75]:
+            - generic [ref=f1e76]: O
+            - generic [ref=f1e77]:
+              - strong [ref=f1e78]: Ops Agent
+              - generic [ref=f1e79]: frontend
+          - paragraph [ref=f1e80]: Deploys and runtime operations.
+          - generic [ref=f1e81]: No step in this task
+          - generic [ref=f1e84]:
+            - text: Governed memory
+            - paragraph [ref=f1e85]: Holds no governed memory
+        - article [ref=f1e86]:
+          - generic [ref=f1e87]:
+            - generic [ref=f1e88]: S
+            - generic [ref=f1e89]:
+              - strong [ref=f1e90]: Security Agent
+              - generic [ref=f1e91]: security
+          - paragraph [ref=f1e92]: Auth, validation, secret boundaries.
+          - generic [ref=f1e93]: No step in this task
+          - generic [ref=f1e96]:
+            - text: Governed memory
+            - paragraph [ref=f1e97]: Holds no governed memory

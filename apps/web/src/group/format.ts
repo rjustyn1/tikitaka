@@ -47,6 +47,19 @@ export function shortId(id: string): string {
   return id.slice(0, 8);
 }
 
+/**
+ * The tail of a landed-memory path — `upload-contract/SKILL.md`.
+ *
+ * The server records whatever separator its own filesystem uses, so a Windows
+ * host stores `C:\Users\…\.agents\skills\x\SKILL.md`. Splitting on "/" alone
+ * leaves the whole absolute path on screen, which is unreadable and leaks the
+ * operator's home directory into the demo. Split on both separators.
+ */
+export function fileTail(path: string, segments = 2): string {
+  const parts = path.split(/[\\/]+/).filter(Boolean);
+  return parts.slice(-segments).join("/");
+}
+
 export function roleOf(
   members: GroupMember[],
   agentId: string,

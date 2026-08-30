@@ -1,0 +1,78 @@
+- generic [ref=e8]:
+  - complementary [ref=e9]:
+    - generic [ref=e10]:
+      - generic [ref=e11]: A
+      - generic [ref=e12]:
+        - strong [ref=e13]: Agent Launchpad
+        - generic [ref=e14]: ECS / Docker · Codex CLI
+    - tablist [ref=e15]:
+      - tab "Agents" [active] [selected] [ref=e16] [cursor=pointer]
+      - tab "Teams" [ref=e17] [cursor=pointer]
+    - button "＋ Create Agent" [ref=e18] [cursor=pointer]:
+      - generic [ref=e19]: ＋
+      - text: Create Agent
+    - generic [ref=e306]:
+      - generic [ref=e307]: Your Agents
+      - generic [ref=e308]: "5"
+    - navigation [ref=e309]:
+      - button "F Frontend Agent User-facing upload UI." [ref=e310] [cursor=pointer]:
+        - generic [ref=e311]: F
+        - generic [ref=e312]:
+          - strong [ref=e313]: Frontend Agent
+          - generic [ref=e314]: User-facing upload UI.
+      - button "K kbjhj Coding Agent" [ref=e316] [cursor=pointer]:
+        - generic [ref=e317]: K
+        - generic [ref=e318]:
+          - strong [ref=e319]: kbjhj
+          - generic [ref=e320]: Coding Agent
+      - button "B Backend Agent Backend API and storage work." [ref=e322] [cursor=pointer]:
+        - generic [ref=e323]: B
+        - generic [ref=e324]:
+          - strong [ref=e325]: Backend Agent
+          - generic [ref=e326]: Backend API and storage work.
+      - button "S Security Agent Auth, validation, secret boundaries." [ref=e328] [cursor=pointer]:
+        - generic [ref=e329]: S
+        - generic [ref=e330]:
+          - strong [ref=e331]: Security Agent
+          - generic [ref=e332]: Auth, validation, secret boundaries.
+      - button "O Ops Agent Deploys and runtime operations." [ref=e334] [cursor=pointer]:
+        - generic [ref=e335]: O
+        - generic [ref=e336]:
+          - strong [ref=e337]: Ops Agent
+          - generic [ref=e338]: Deploys and runtime operations.
+    - generic [ref=e40]:
+      - text: Runtime
+      - strong [ref=e41]: Codex CLI in application container
+      - generic [ref=e42]: ep-20260826220956-9pbtp
+  - main [ref=e43]:
+    - generic [ref=e340]:
+      - generic [ref=e341]:
+        - generic [ref=e342]:
+          - heading "Frontend Agent" [level=1] [ref=e343]
+          - generic [ref=e344]: error
+        - paragraph [ref=e346]: User-facing upload UI.
+      - generic [ref=e347]:
+        - button "Settings" [ref=e348] [cursor=pointer]
+        - button "Stop" [ref=e349] [cursor=pointer]
+        - button "Delete" [ref=e350] [cursor=pointer]
+    - generic [ref=e351]:
+      - generic [ref=e352]:
+        - generic [ref=e353]:
+          - text: Playground
+          - heading "Build something with your Agent" [level=2] [ref=e354]
+        - generic [ref=e355]: Session connected
+      - generic [ref=e357]:
+        - article [ref=e358]:
+          - generic [ref=e359]:
+            - strong [ref=e360]: You
+            - generic [ref=e361]: 04:53 PM
+          - generic [ref=e362]: FWLKNIOAUWFENFAENO
+        - article [ref=e363]:
+          - strong [ref=e364]: Run failed
+          - generic [ref=e365]: "C:\\PROGRA~1\\Docker\\Docker\\resources\\bin\\docker.exe Runtime exited with code 1: exceeded retry limit, last status: 429 Too Many Requests, request id: 021788080038807e142d87b6a9bdf1f5f94f64260ca2a93fb374f"
+          - button "View trace (3 spans)" [ref=e366] [cursor=pointer]
+      - generic [ref=e367]:
+        - textbox "Describe what you want the Agent to do…" [ref=e368]
+        - generic [ref=e369]:
+          - generic [ref=e370]: Enter to send · Shift + Enter for newline · workspace-write
+          - button "Send message" [disabled] [ref=e371]: ↑

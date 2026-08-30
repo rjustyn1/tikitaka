@@ -1,0 +1,113 @@
+- generic [ref=e8]:
+  - complementary [ref=e9]:
+    - generic [ref=e10]:
+      - generic [ref=e11]: A
+      - generic [ref=e12]:
+        - strong [ref=e13]: Agent Launchpad
+        - generic [ref=e14]: ECS / Docker · Codex CLI
+    - tablist [ref=e15]:
+      - tab "Agents" [ref=e16] [cursor=pointer]
+      - tab "Teams" [active] [selected] [ref=e17] [cursor=pointer]
+    - button "＋ Create Agent" [ref=e18] [cursor=pointer]:
+      - generic [ref=e19]: ＋
+      - text: Create Agent
+    - generic [ref=e372]:
+      - generic [ref=e373]: Your Teams
+      - generic [ref=e374]: "2"
+    - navigation [ref=e375]:
+      - button "Payments Team 3 members" [ref=e376] [cursor=pointer]:
+        - generic [ref=e377]:
+          - strong [ref=e378]: Payments Team
+          - generic [ref=e379]: 3 members
+      - button "Upload Feature Team 3 members" [ref=e384] [cursor=pointer]:
+        - generic [ref=e385]:
+          - strong [ref=e386]: Upload Feature Team
+          - generic [ref=e387]: 3 members
+    - generic [ref=e40]:
+      - text: Runtime
+      - strong [ref=e41]: Codex CLI in application container
+      - generic [ref=e42]: ep-20260826220956-9pbtp
+  - main [ref=e43]:
+    - generic [ref=e392]:
+      - generic [ref=e393]:
+        - generic [ref=e394]:
+          - generic [ref=e395]:
+            - heading "Upload Feature Team" [level=1] [ref=e397]
+            - paragraph [ref=e398]: Ship the file upload endpoint end to end.
+          - generic [ref=e399]:
+            - button "Edit team" [ref=e400] [cursor=pointer]
+            - button "New team" [ref=e401] [cursor=pointer]
+        - navigation [ref=e402]:
+          - button "Conversation" [ref=e403] [cursor=pointer]
+          - button "Plan" [disabled] [ref=e405]
+          - button "Context" [disabled] [ref=e406]
+          - button "Review" [disabled] [ref=e407]
+          - button "Ledger" [disabled] [ref=e408]
+          - button "Workspaces" [disabled] [ref=e409]
+          - button "Proof" [disabled] [ref=e410]
+        - generic [ref=e412]:
+          - generic [ref=e414]:
+            - generic [ref=e415]: ◎
+            - strong [ref=e416]: No conversation yet
+            - paragraph [ref=e417]: Give the team a goal below. Each Agent takes its turn on one shared codebase, and every turn lands here.
+          - generic [ref=e418]:
+            - textbox "Team goal" [ref=e419]:
+              - /placeholder: Give the team one goal — e.g. Plan and implement an upload feature.
+            - button "Start task" [disabled] [ref=e420]
+        - generic [ref=e421]:
+          - heading "Task history" [level=3] [ref=e422]
+          - list [ref=e423]:
+            - listitem [ref=e424]:
+              - button "partial Add a tiny health check endpoint. Write your contribution as a file under ./code — the backend writes code/health-contract.md, the frontend writes code/health-client.md, security writes code/health-security.md. Keep each file under 15 lines. State one concrete constraint you are binding the others to. 8/30/2026, 4:21:18 PM" [ref=e425] [cursor=pointer]:
+                - generic [ref=e426]: partial
+                - generic [ref=e427]: Add a tiny health check endpoint. Write your contribution as a file under ./code — the backend writes code/health-contract.md, the frontend writes code/health-client.md, security writes code/health-security.md. Keep each file under 15 lines. State one concrete constraint you are binding the others to.
+                - generic [ref=e428]: 8/30/2026, 4:21:18 PM
+              - button "Resume" [ref=e429] [cursor=pointer]
+            - listitem [ref=e430]:
+              - button "completed Plan and implement an upload feature. 8/30/2026, 3:42:45 PM" [ref=e431] [cursor=pointer]:
+                - generic [ref=e432]: completed
+                - generic [ref=e433]: Plan and implement an upload feature.
+                - generic [ref=e434]: 8/30/2026, 3:42:45 PM
+      - complementary "Team members" [ref=e435]:
+        - generic [ref=e436]:
+          - generic [ref=e437]: Members
+          - generic [ref=e438]: "3"
+        - article [ref=e439]:
+          - generic [ref=e440]:
+            - generic [ref=e441]: B
+            - generic [ref=e442]:
+              - strong [ref=e443]: Backend Agent
+              - generic [ref=e444]: backend
+          - paragraph [ref=e445]: Backend API and storage work.
+          - generic [ref=e446]: No step in this task
+          - generic [ref=e449]:
+            - text: Governed memory
+            - list [ref=e450]:
+              - listitem [ref=e451]:
+                - generic [ref=e452]: on match
+                - code [ref=e453]: hard-size-limit-and-error-contract-for-the-file--8802274d/SKILL.md
+        - article [ref=e454]:
+          - generic [ref=e455]:
+            - generic [ref=e456]: F
+            - generic [ref=e457]:
+              - strong [ref=e458]: Frontend Agent
+              - generic [ref=e459]: frontend
+          - paragraph [ref=e460]: User-facing upload UI.
+          - generic [ref=e461]: No step in this task
+          - generic [ref=e464]:
+            - text: Governed memory
+            - list [ref=e465]:
+              - listitem [ref=e466]:
+                - generic [ref=e467]: on match
+                - code [ref=e468]: storage-key-layout-for-uploaded-files-eef5b279/SKILL.md
+        - article [ref=e469]:
+          - generic [ref=e470]:
+            - generic [ref=e471]: S
+            - generic [ref=e472]:
+              - strong [ref=e473]: Security Agent
+              - generic [ref=e474]: security
+          - paragraph [ref=e475]: Auth, validation, secret boundaries.
+          - generic [ref=e476]: No step in this task
+          - generic [ref=e479]:
+            - text: Governed memory
+            - paragraph [ref=e480]: Holds no governed memory

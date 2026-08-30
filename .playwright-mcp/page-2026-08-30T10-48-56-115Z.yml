@@ -1,0 +1,96 @@
+- generic [ref=e8]:
+  - complementary [ref=e9]:
+    - generic [ref=e10]:
+      - generic [ref=e11]: A
+      - generic [ref=e12]:
+        - strong [ref=e13]: Agent Launchpad
+        - generic [ref=e14]: ECS / Docker · Codex CLI
+    - tablist [ref=e15]:
+      - tab "Agents" [ref=e16] [cursor=pointer]
+      - tab "Teams" [active] [selected] [ref=e17] [cursor=pointer]
+    - button "＋ Create Agent" [ref=e18] [cursor=pointer]:
+      - generic [ref=e19]: ＋
+      - text: Create Agent
+    - generic [ref=e20]:
+      - generic [ref=e21]: Your Teams
+      - generic [ref=e22]: "2"
+    - navigation [ref=e23]:
+      - button "Payments Team 3 members" [ref=e24] [cursor=pointer]:
+        - generic [ref=e25]:
+          - strong [ref=e26]: Payments Team
+          - generic [ref=e27]: 3 members
+      - button "Upload Feature Team 3 members" [ref=e32] [cursor=pointer]:
+        - generic [ref=e33]:
+          - strong [ref=e34]: Upload Feature Team
+          - generic [ref=e35]: 3 members
+    - generic [ref=e40]:
+      - text: Runtime
+      - strong [ref=e41]: Codex CLI in application container
+      - generic [ref=e42]: ep-20260826220956-9pbtp
+  - main [ref=e43]:
+    - generic [ref=e44]:
+      - generic [ref=e45]:
+        - generic [ref=e46]:
+          - generic [ref=e47]:
+            - heading "Payments Team" [level=1] [ref=e49]
+            - paragraph [ref=e50]: Take card payments end to end.
+          - generic [ref=e51]:
+            - button "Edit team" [ref=e52] [cursor=pointer]
+            - button "New team" [ref=e53] [cursor=pointer]
+        - navigation [ref=e54]:
+          - button "Conversation" [ref=e55] [cursor=pointer]
+          - button "Plan" [disabled] [ref=e57]
+          - button "Context" [disabled] [ref=e58]
+          - button "Review" [disabled] [ref=e59]
+          - button "Ledger" [disabled] [ref=e60]
+          - button "Workspaces" [disabled] [ref=e61]
+          - button "Proof" [disabled] [ref=e62]
+        - generic [ref=e64]:
+          - generic [ref=e66]:
+            - generic [ref=e67]: ◎
+            - strong [ref=e68]: No conversation yet
+            - paragraph [ref=e69]: Give the team a goal below. Each Agent takes its turn on one shared codebase, and every turn lands here.
+          - generic [ref=e70]:
+            - textbox "Team goal" [ref=e71]:
+              - /placeholder: Give the team one goal — e.g. Plan and implement an upload feature.
+            - button "Start task" [disabled] [ref=e72]
+      - complementary "Team members" [ref=e73]:
+        - generic [ref=e74]:
+          - generic [ref=e75]: Members
+          - generic [ref=e76]: "3"
+        - article [ref=e77]:
+          - generic [ref=e78]:
+            - generic [ref=e79]: B
+            - generic [ref=e80]:
+              - strong [ref=e81]: Backend Agent
+              - generic [ref=e82]: backend
+          - paragraph [ref=e83]: Backend API and storage work.
+          - generic [ref=e84]: No step in this task
+          - generic [ref=e87]:
+            - text: Governed memory
+            - list [ref=e88]:
+              - listitem [ref=e89]:
+                - generic [ref=e90]: on match
+                - code [ref=e91]: C:\Users\Rog\Documents\Uni\All_project\Hackathon\CodeJam\workspaces\c16b3496-b2de-4a5b-ad28-cd73f36d8026\.agents\skills\hard-size-limit-and-error-contract-for-the-file--8802274d\SKILL.md
+        - article [ref=e92]:
+          - generic [ref=e93]:
+            - generic [ref=e94]: O
+            - generic [ref=e95]:
+              - strong [ref=e96]: Ops Agent
+              - generic [ref=e97]: frontend
+          - paragraph [ref=e98]: Deploys and runtime operations.
+          - generic [ref=e99]: No step in this task
+          - generic [ref=e102]:
+            - text: Governed memory
+            - paragraph [ref=e103]: Holds no governed memory
+        - article [ref=e104]:
+          - generic [ref=e105]:
+            - generic [ref=e106]: S
+            - generic [ref=e107]:
+              - strong [ref=e108]: Security Agent
+              - generic [ref=e109]: security
+          - paragraph [ref=e110]: Auth, validation, secret boundaries.
+          - generic [ref=e111]: No step in this task
+          - generic [ref=e114]:
+            - text: Governed memory
+            - paragraph [ref=e115]: Holds no governed memory

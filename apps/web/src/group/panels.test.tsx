@@ -7,6 +7,7 @@
  * outsider holding nothing rather than implying it was told to keep a secret.
  */
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type {
   Agent,
@@ -16,7 +17,12 @@ import type {
   GroupPlanNode,
   LandedMemoryFile,
 } from "../types";
-import { ContextPanel, LandedMemoryPanel, LedgerPanel } from "./panels";
+import {
+  ChainPanel,
+  ContextPanel,
+  LandedMemoryPanel,
+  LedgerPanel,
+} from "./panels";
 
 function agent(id: string, name: string): Agent {
   return {
@@ -233,5 +239,100 @@ describe("ledger reason wording", () => {
     const { withheldReason } = await import("./format");
     expect(withheldReason("granted")).not.toBe("granted");
     expect(withheldReason("granted")).toContain("routed");
+  });
+});
+
+/**
+ * The Plan tab's honesty constraint: it renders the instruction the server
+ * persisted, and when a row predates the planner it says so rather than
+ * substituting a template. Sitting under a tab labelled "Plan" with no
+ * instruction text is what made the security-review step read as planning.
+ */
+describe("ChainPanel", () => {
+  function planNode(
+    over: Partial<GroupPlanNode> & { id: string },
+  ): GroupPlanNode {
+    return {
+      groupTaskId: "t1",
+      agentId: "a1",
+      kind: "work",
+      nodeRole: "security-review",
+      dependsOn: [],
+      contextSnapshotSeq: 0,
+      allowedPlanNodeIds: [],
+      status: "completed",
+      runId: "r1",
+      output: null,
+      error: null,
+      readOnly: true,
+      fileOwnershipHints: [],
+      runtimeLocks: [],
+      expectedOutput: "A written verdict on the upload contract",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      completedAt: "2026-01-01T00:00:02.000Z",
+      ...over,
+    };
+  }
+
+  it("renders the instruction the planner persisted, not the role name alone", () => {
+    render(
+      <ChainPanel
+        nodes={[
+          planNode({
+            id: "n1",
+            instruction: "Review the upload contract for credential leakage.",
+          }),
+        ]}
+        agents={agents}
+        group={group}
+        onOpenTrace={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText("Review the upload contract for credential leakage."),
+    ).toBeInTheDocument();
+  });
+
+  it("renders the expected output alongside it", () => {
+    render(
+      <ChainPanel
+        nodes={[planNode({ id: "n1", instruction: "Review the contract." })]}
+        agents={agents}
+        group={group}
+        onOpenTrace={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText("A written verdict on the upload contract"),
+    ).toBeInTheDocument();
+  });
+
+  it("says the instruction was not recorded rather than inventing one", () => {
+    render(
+      <ChainPanel
+        nodes={[planNode({ id: "n1" })]}
+        agents={agents}
+        group={group}
+        onOpenTrace={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText("No instruction was recorded for this step."),
+    ).toBeInTheDocument();
+  });
+
+  it("opens the trace for the node's run", async () => {
+    const onOpenTrace = vi.fn();
+    render(
+      <ChainPanel
+        nodes={[planNode({ id: "n1", instruction: "Review." })]}
+        agents={agents}
+        group={group}
+        onOpenTrace={onOpenTrace}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Trace" }));
+    expect(onOpenTrace).toHaveBeenCalledWith("r1");
   });
 });
