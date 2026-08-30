@@ -72,7 +72,6 @@ describe("decideFlush", () => {
     expect(decision).toEqual({
       shouldFlush: true,
       reason: "completed",
-      sinkNodeIds: ["n4"],
     });
   });
 
@@ -95,7 +94,6 @@ describe("decideFlush", () => {
     expect(decision).toEqual({
       shouldFlush: true,
       reason: "partial",
-      sinkNodeIds: ["n4"],
     });
   });
 
@@ -179,9 +177,6 @@ describe("decideFlush", () => {
     nodes[2]!.status = "completed";
     const decision = decideFlush({ groupTask: makeTask(), planNodes: nodes });
     expect(decision).toMatchObject({ shouldFlush: true, reason: "completed" });
-    expect(
-      decision.shouldFlush ? [...decision.sinkNodeIds].sort() : [],
-    ).toEqual(["left", "right"]);
   });
 
   it("fails open on a dependency cycle instead of looping forever", () => {

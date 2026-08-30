@@ -35,6 +35,12 @@ const envSchema = z.object({
   MEMORY_ENABLED: z.enum(["true", "false"]).default("true"),
   MEMORY_EXTRACTOR: z.enum(["ark", "fake", "off"]).default("ark"),
   MEMORY_EXTRACT_TIMEOUT_MS: z.coerce.number().int().min(1000).default(30000),
+  // Topic segmentation. See memory/topic-segment.ts for how the drift default
+  // was calibrated -- it is measured against sample prompts, not guessed.
+  MEMORY_TOPIC_DRIFT_THRESHOLD: z.coerce.number().min(0).max(1).default(0.9),
+  MEMORY_SEGMENT_MAX_TASKS: z.coerce.number().int().min(1).default(8),
+  MEMORY_SEGMENT_MAX_CHARS: z.coerce.number().int().min(1000).default(120000),
+  MEMORY_SEGMENT_IDLE_MS: z.coerce.number().int().min(1000).default(1800000),
   REVIEW_ALL_SKILLS: z.enum(["true", "false"]).default("false"),
   SKILLS_DIR: z.enum([".agents/skills", ".codex/skills"]).default(".agents/skills"),
   APP_AUTH_TOKEN: z
@@ -91,6 +97,12 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
     memoryEnabled: env.MEMORY_ENABLED === "true",
     memoryExtractor: env.MEMORY_EXTRACTOR,
     memoryExtractTimeoutMs: env.MEMORY_EXTRACT_TIMEOUT_MS,
+    segmentPolicy: {
+      driftThreshold: env.MEMORY_TOPIC_DRIFT_THRESHOLD,
+      maxTasks: env.MEMORY_SEGMENT_MAX_TASKS,
+      maxChars: env.MEMORY_SEGMENT_MAX_CHARS,
+      idleMs: env.MEMORY_SEGMENT_IDLE_MS,
+    },
     reviewAllSkills: env.REVIEW_ALL_SKILLS === "true",
     skillsDir: env.SKILLS_DIR,
     authToken,

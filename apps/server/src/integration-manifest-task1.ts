@@ -36,6 +36,7 @@ export const integrationManifestTask1 = {
     "groups",
     "groupTasks",
     "groupMessages",
+    "topicSegments",
     "groupParticipants",
     "groupPlanNodes",
     "contextInjections",

@@ -5,7 +5,7 @@
 // Person 1. This file holds the in-flight shapes that flow between the memory
 // modules before anything is written to the store or disk.
 
-import type { GroupTaskStatus, MemorySeverity, TraceSpan } from "../types.js";
+import type { MemorySeverity, TraceSpan } from "../types.js";
 
 /**
  * A note as produced by the consolidator, before safety, review, or landing.
@@ -14,6 +14,13 @@ import type { GroupTaskStatus, MemorySeverity, TraceSpan } from "../types.js";
  */
 export interface CandidateMemoryNote {
   id: string;
+  /** The topic segment this note was extracted from. The real owner. */
+  segmentId: string;
+  /**
+   * The segment's LAST group task. Retained so review, ledger, landing and the
+   * existing per-task queries keep resolving unchanged after consolidation
+   * moved from the task to the segment.
+   */
   groupTaskId: string;
   content: string;
   severity: MemorySeverity;
@@ -45,16 +52,32 @@ export interface TaskBufferEntry {
   injectedDependencyNodeIds: string[];
 }
 
+/** One line of the group chat as the consolidator sees it. */
+export interface SegmentTranscriptLine {
+  seq: number;
+  speakerType: "human" | "agent";
+  agentId: string | null;
+  content: string;
+}
+
 /**
  * The reassembled, ordered input packet handed to the consolidator after a
- * group task reaches a flush point. Built by reading the store back — it is not
- * a second live copy of spans. See components/TASK-BUFFER.md.
+ * TOPIC SEGMENT closes. Built by reading the store back — it is not a second
+ * live copy of spans. See components/TASK-BUFFER.md.
+ *
+ * A segment spans one or more group tasks that stayed on one subject, so
+ * `entries` is the union across all of them and `transcript` is the whole group
+ * chat over the segment's seq range. Consolidating over the segment rather than
+ * per task is what lets the extractor see facts that only emerge across tasks.
  */
-export interface TaskBuffer {
-  groupTaskId: string;
+export interface SegmentBuffer {
+  segmentId: string;
   groupId: string;
-  prompt: string;
-  status: GroupTaskStatus;
-  orderedNodeIds: string[];
+  /** Every task prompt in the segment, in task order. */
+  prompts: string[];
+  groupTaskIds: string[];
+  /** The full group chat over the segment's range, oldest first. */
+  transcript: SegmentTranscriptLine[];
+  /** Every node across the segment's tasks, in execution order. */
   entries: TaskBufferEntry[];
 }

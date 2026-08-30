@@ -10,6 +10,7 @@ import type { Agent, TraceSpan } from "../types.js";
 import { WorkspaceManager } from "../workspace.js";
 import type { MemoryPipeline } from "./pipeline.js";
 import { RecordingMemoryPipeline } from "../test-helpers.js";
+import { SegmentBufferBuilder } from "./task-buffer.js";
 import type { GroupMember } from "../types.js";
 
 const temporaryDirectories: string[] = [];
@@ -57,6 +58,12 @@ async function makeHarness(
     CODEX_HOME: path.join(root, "codex"),
     ARK_API_KEY: "test-key",
     ARK_MODEL: "ep-test",
+    // FakeRunner echoes the injected transcript back as its output, so message
+    // content compounds run over run and a few nodes blow the real 120k char
+    // cap on their own. Raise it here so segment tests exercise topic drift
+    // rather than that fixture artifact; the cap itself is covered by
+    // topic-segment.test.ts.
+    MEMORY_SEGMENT_MAX_CHARS: "100000000",
   });
   const store = new JsonStore(path.join(root, "data", "db.json"));
   const service = new AgentService(
@@ -509,8 +516,14 @@ describe("failure and cancellation", () => {
     expect(
       harness.service.listAgents().every((agent) => agent.status !== "busy"),
     ).toBe(true);
-    // Partial work still reaches the memory pipeline.
-    expect(pipeline.calls).toHaveLength(1);
+    // Partial work joins the open topic segment rather than consolidating on
+    // the spot -- it reaches the pipeline when that segment closes.
+    expect(pipeline.calls).toHaveLength(0);
+    const segment = harness.store
+      .snapshot()
+      .topicSegments.find((item) => item.groupId === response.task.groupId)!;
+    expect(segment.status).toBe("open");
+    expect(segment.groupTaskIds).toContain(task.id);
   });
 
   it("cancels a running task, releasing leases and locks", async () => {
@@ -592,18 +605,198 @@ describe("failure and cancellation", () => {
 });
 
 describe("Bridge 4 - handover to the memory pipeline", () => {
-  it("calls the pipeline once with every sink node after the plan completes", async () => {
+  const UPLOAD = "Plan and implement an upload feature with storage and a contract.";
+  const SAME_TOPIC = "Add resumable upload support to that storage endpoint.";
+  const NEW_TOPIC = "Configure Kubernetes cluster autoscaling for production.";
+
+  /** Every group task opens or joins exactly one topic segment. */
+  function segmentsOf(harness: Harness, groupId: string) {
+    return harness.store
+      .snapshot()
+      .topicSegments.filter((segment) => segment.groupId === groupId);
+  }
+
+  it("does not consolidate when a task completes - the segment is still open", async () => {
     const pipeline = new RecordingMemoryPipeline();
     const harness = await makeHarness(new FakeRunner(), pipeline);
-    const { task } = await runToCompletion(harness);
-    const response = harness.service.getGroupTask(task.id);
+    const { group, task } = await runToCompletion(harness, UPLOAD);
 
-    expect(pipeline.calls).toHaveLength(1);
-    expect(pipeline.calls[0]).toEqual({
-      groupTaskId: task.id,
-      sinkNodeIds: [response.nodes[1]!.id, response.nodes[2]!.id],
+    // The subject has not changed, so there is nothing to consolidate yet.
+    expect(pipeline.calls).toHaveLength(0);
+    expect(segmentsOf(harness, group.id)).toHaveLength(1);
+    expect(segmentsOf(harness, group.id)[0]!.status).toBe("open");
+    // The task itself is still stamped, so it is never reconsidered.
+    expect(harness.service.getGroupTask(task.id).task.flushedAt).not.toBeNull();
+  });
+
+  it("keeps a follow-up on the same subject in one segment", async () => {
+    const pipeline = new RecordingMemoryPipeline();
+    const harness = await makeHarness(new FakeRunner(), pipeline);
+    const { group } = await runToCompletion(harness, UPLOAD);
+
+    const second = await harness.service.startGroupTask(group.id, SAME_TOPIC);
+    await settle(harness, second.id);
+
+    expect(pipeline.calls).toHaveLength(0);
+    const segments = segmentsOf(harness, group.id);
+    expect(segments).toHaveLength(1);
+    expect(segments[0]!.groupTaskIds).toHaveLength(2);
+  });
+
+  it("consolidates the whole segment when the subject changes", async () => {
+    const pipeline = new RecordingMemoryPipeline();
+    const harness = await makeHarness(new FakeRunner(), pipeline);
+    const { group, task } = await runToCompletion(harness, UPLOAD);
+
+    const second = await harness.service.startGroupTask(group.id, SAME_TOPIC);
+    await settle(harness, second.id);
+
+    // A prompt on a different subject closes the accumulated segment.
+    const third = await harness.service.startGroupTask(group.id, NEW_TOPIC);
+    await settle(harness, third.id);
+
+    // Consolidation is fire-and-forget, so wait for the hand-off rather than
+    // reading calls the instant settle() returns.
+    await expect.poll(() => pipeline.calls.length).toBe(1);
+
+    const segments = segmentsOf(harness, group.id);
+    expect(segments).toHaveLength(2);
+
+    const closed = segments.find((segment) => segment.status === "closed")!;
+    expect(closed.closeReason).toBe("topic_shift");
+    expect(closed.driftScore).toBeGreaterThan(0);
+    // Both upload tasks consolidated together -- the point of the feature.
+    expect(closed.groupTaskIds).toEqual([task.id, second.id]);
+
+    expect(pipeline.calls).toEqual([{ segmentId: closed.id }]);
+    await expect
+      .poll(
+        () =>
+          segmentsOf(harness, group.id).find((s) => s.id === closed.id)!
+            .flushedAt,
+      )
+      .not.toBeNull();
+
+    // The new subject starts a fresh, still-accumulating segment.
+    const open = segments.find((segment) => segment.status === "open")!;
+    expect(open.groupTaskIds).toEqual([third.id]);
+  });
+
+  it("consolidates each segment exactly once across repeated shifts", async () => {
+    // Long enough that the pooled Kubernetes segment clears MIN_EVIDENCE_TERMS
+    // and the return to uploads can be judged a shift.
+    const NEW_TOPIC_FOLLOWUP =
+      "Tune the Kubernetes autoscaling thresholds, node pool sizing, and " +
+      "scheduler priorities across the production cluster.";
+    const pipeline = new RecordingMemoryPipeline();
+    const harness = await makeHarness(new FakeRunner(), pipeline);
+    const { group } = await runToCompletion(harness, UPLOAD);
+
+    // Two prompts per subject, so each pooled segment clears MIN_EVIDENCE_TERMS
+    // and the following prompt can actually be judged a shift.
+    for (const prompt of [SAME_TOPIC, NEW_TOPIC, NEW_TOPIC_FOLLOWUP, UPLOAD]) {
+      const task = await harness.service.startGroupTask(group.id, prompt);
+      await settle(harness, task.id);
+    }
+
+    // Two shifts: upload -> kubernetes, kubernetes -> upload.
+    await expect.poll(() => pipeline.calls.length).toBe(2);
+    const segmentIds = pipeline.calls.map((call) => call.segmentId);
+    expect(new Set(segmentIds).size).toBe(2);
+
+    const closed = segmentsOf(harness, group.id).filter(
+      (segment) => segment.status === "closed",
+    );
+    expect(closed).toHaveLength(2);
+    expect(closed.every((segment) => segment.closeReason === "topic_shift")).toBe(true);
+    expect(closed.every((segment) => segment.groupTaskIds.length === 2)).toBe(true);
+    // Five sequential group tasks, each re-injecting the growing transcript.
+  }, 30_000);
+
+  it("captures the prior chat, and only the prior chat, the moment the subject changes", async () => {
+    const pipeline = new RecordingMemoryPipeline();
+    const harness = await makeHarness(new FakeRunner(), pipeline);
+    const { group } = await runToCompletion(harness, UPLOAD);
+    const second = await harness.service.startGroupTask(group.id, SAME_TOPIC);
+    await settle(harness, second.id);
+
+    const beforeShift = harness.store
+      .snapshot()
+      .groupMessages.filter((message) => message.groupId === group.id);
+    expect(beforeShift.length).toBeGreaterThan(4);
+
+    const third = await harness.service.startGroupTask(group.id, NEW_TOPIC);
+
+    // The boundary is recorded in the SAME transaction as the off-topic prompt,
+    // so it is already durable before the new task has run anything.
+    const closed = segmentsOf(harness, group.id).find(
+      (segment) => segment.status === "closed",
+    )!;
+    expect(closed.closeReason).toBe("topic_shift");
+    // Everything up to (not including) the off-topic prompt.
+    expect(closed.endSeq).toBe(Math.max(...beforeShift.map((m) => m.seq)));
+
+    // What the consolidator actually receives.
+    const buffer = new SegmentBufferBuilder(harness.store).build({
+      segmentId: closed.id,
     });
-    expect(response.task.flushedAt).not.toBeNull();
+    // Every human prompt in the segment survives verbatim, INDEPENDENT of the
+    // transcript. This matters: the transcript trims oldest-first under budget
+    // pressure, so the prompt that defined the topic would otherwise be the
+    // first thing dropped. Carrying prompts in the envelope is what guarantees
+    // the consolidator always knows what the topic was.
+    expect(buffer.prompts).toEqual([UPLOAD, SAME_TOPIC]);
+    expect(buffer.transcript.length).toBeGreaterThan(0);
+    // The off-topic prompt belongs to the NEXT segment and must not leak in.
+    expect(buffer.transcript.map((line) => line.content)).not.toContain(NEW_TOPIC);
+    // Whatever survived trimming is inside the segment's range.
+    expect(Math.max(...buffer.transcript.map((line) => line.seq))).toBeLessThanOrEqual(
+      closed.endSeq!,
+    );
+
+    await settle(harness, third.id);
+
+    // Agent turns from the new task carry higher seqs and stay out too, even
+    // though consolidation runs concurrently with that task.
+    const afterBuffer = new SegmentBufferBuilder(harness.store).build({
+      segmentId: closed.id,
+    });
+    expect(afterBuffer.transcript).toEqual(buffer.transcript);
+    expect(afterBuffer.groupTaskIds).not.toContain(third.id);
+  });
+
+  it("consolidates a quiet segment on the idle sweep, so the last topic is not lost", async () => {
+    const pipeline = new RecordingMemoryPipeline();
+    const harness = await makeHarness(new FakeRunner(), pipeline);
+    const { group } = await runToCompletion(harness, UPLOAD);
+
+    // Nothing has closed the segment: the user simply stopped working.
+    expect(pipeline.calls).toHaveLength(0);
+
+    // Age the transcript past the idle window.
+    const stale = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    await harness.store.mutate((db) => {
+      for (const message of db.groupMessages) message.createdAt = stale;
+    });
+
+    harness.service.sweepIdleSegments(group.id);
+
+    await expect.poll(() => pipeline.calls.length).toBe(1);
+    const closed = segmentsOf(harness, group.id)[0]!;
+    expect(closed.status).toBe("closed");
+    expect(closed.closeReason).toBe("idle");
+  });
+
+  it("leaves an active segment alone on the idle sweep", async () => {
+    const pipeline = new RecordingMemoryPipeline();
+    const harness = await makeHarness(new FakeRunner(), pipeline);
+    const { group } = await runToCompletion(harness, UPLOAD);
+
+    harness.service.sweepIdleSegments(group.id);
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(pipeline.calls).toHaveLength(0);
+    expect(segmentsOf(harness, group.id)[0]!.status).toBe("open");
   });
 
   it("never fails a completed task when the pipeline throws", async () => {
@@ -614,11 +807,27 @@ describe("Bridge 4 - handover to the memory pipeline", () => {
       async resetAutoNotes() {},
     };
     const harness = await makeHarness(new FakeRunner(), exploding);
-    const { task } = await runToCompletion(harness);
-    const response = harness.service.getGroupTask(task.id);
+    const { group } = await runToCompletion(harness, UPLOAD);
+    // Two prompts, so the pooled segment clears MIN_EVIDENCE_TERMS and the
+    // third can actually be judged a shift.
+    const second = await harness.service.startGroupTask(group.id, SAME_TOPIC);
+    await settle(harness, second.id);
+    const third = await harness.service.startGroupTask(group.id, NEW_TOPIC);
+    await settle(harness, third.id);
 
-    expect(response.task.status).toBe("completed");
-    expect(response.task.flushedAt).toBeNull();
+    expect(harness.service.getGroupTask(third.id).task.status).toBe("completed");
+    // The failed extraction leaves the segment unflushed so it can be retried.
+    await expect
+      .poll(() =>
+        segmentsOf(harness, group.id).some(
+          (segment) => segment.status === "closed",
+        ),
+      )
+      .toBe(true);
+    const closed = segmentsOf(harness, group.id).find(
+      (segment) => segment.status === "closed",
+    )!;
+    expect(closed.flushedAt).toBeNull();
   });
 });
 
@@ -671,9 +880,16 @@ describe("group task resume", () => {
       (node) => node.id === firstCompletedBefore.id,
     )!;
     expect(firstCompletedAfter.runId).toBe(firstCompletedBefore.runId);
-    // The memory pipeline was asked to reset auto notes, then flushed again.
+    // The memory pipeline was asked to reset auto notes for the resumed task.
     expect(pipeline.resetCalls).toContain(task.id);
-    expect(pipeline.calls.length).toBeGreaterThanOrEqual(2);
+    // Consolidation is owned by the segment now, so the resumed task rejoins
+    // its still-open segment instead of triggering a second per-task flush.
+    expect(pipeline.calls).toHaveLength(0);
+    const segment = harness.store
+      .snapshot()
+      .topicSegments.find((item) => item.groupTaskIds.includes(task.id))!;
+    expect(segment.status).toBe("open");
+    expect(segment.flushedAt).toBeNull();
   });
 
   it("rejects resuming a completed task", async () => {

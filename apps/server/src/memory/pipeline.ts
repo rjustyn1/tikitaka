@@ -4,7 +4,7 @@
 // task stays completed/partial.
 //
 //   runMemoryPipeline()
-//     -> TaskBufferBuilder.build()
+//     -> SegmentBufferBuilder.build()
 //     -> Consolidator.consolidate()
 //     -> evaluateNoteSafety()  (per candidate)
 //     -> ReviewService.processCandidate()  (auto-land clean normals, park risky)
@@ -23,12 +23,16 @@ import { LandingService } from "./landing.js";
 import { LedgerService } from "./ledger.js";
 import { ReviewService } from "./review.js";
 import { evaluateNoteSafety } from "./safety.js";
-import { TaskBufferBuilder } from "./task-buffer.js";
+import { SegmentBufferBuilder } from "./task-buffer.js";
 
 const now = () => new Date().toISOString();
 
 export interface MemoryPipeline {
-  runMemoryPipeline(groupTaskId: string, sinkNodeIds: string[]): Promise<void>;
+  /**
+   * Consolidate one CLOSED topic segment. Keyed on the segment, not a task:
+   * a segment spans every task that stayed on one subject, which is the point.
+   */
+  runMemoryPipeline(segmentId: string): Promise<void>;
   /**
    * Called when a task is RESUMED. Removes the auto-generated notes (and their
    * files + grant rows) from the earlier partial flush, so the final flush over
@@ -59,7 +63,7 @@ export interface MemoryPipelineOptions {
 export class RealMemoryPipeline implements MemoryPipeline {
   private readonly consolidator: Consolidator;
   private readonly review: ReviewService;
-  private readonly buffers: TaskBufferBuilder;
+  private readonly buffers: SegmentBufferBuilder;
   private readonly landing: LandingService;
   private readonly onError: (message: string, error: unknown) => void;
 
@@ -77,22 +81,21 @@ export class RealMemoryPipeline implements MemoryPipeline {
       ledger,
       options.reviewAllSkills ?? false,
     );
-    this.buffers = new TaskBufferBuilder(store);
+    this.buffers = new SegmentBufferBuilder(store);
     this.onError =
       options.onError ?? ((message, error) => console.error(message, error));
   }
 
-  async runMemoryPipeline(
-    groupTaskId: string,
-    sinkNodeIds: string[],
-  ): Promise<void> {
+  async runMemoryPipeline(segmentId: string): Promise<void> {
     try {
-      const buffer = this.buffers.build({ groupTaskId, sinkNodeIds });
+      const buffer = this.buffers.build({ segmentId });
       const db = this.store.snapshot();
 
+      // Every agent that worked anywhere in the segment, not just in one task.
+      const segmentTaskIds = new Set(buffer.groupTaskIds);
       const participantIds = new Set(
         db.groupPlanNodes
-          .filter((node) => node.groupTaskId === groupTaskId)
+          .filter((node) => segmentTaskIds.has(node.groupTaskId))
           .map((node) => node.agentId),
       );
       const members: Agent[] = db.agents.filter((agent) =>
@@ -103,7 +106,7 @@ export class RealMemoryPipeline implements MemoryPipeline {
         syntheticGroup(buffer.groupId, members);
 
       const candidates = await this.consolidator.consolidate({
-        taskBuffer: buffer,
+        segmentBuffer: buffer,
         group,
         members,
       });
@@ -114,20 +117,27 @@ export class RealMemoryPipeline implements MemoryPipeline {
         // redacted content; pass the pre-redaction candidate.
         await this.review.processCandidate(candidate, safety);
       }
-      // Note: GroupTask.flushedAt is stamped by the GroupRunner after this
-      // returns (it owns the task lifecycle and stamps it even if extraction
+      // Note: TopicSegment.flushedAt is stamped by the GroupRunner after this
+      // returns (it owns segment lifecycle and stamps it even if extraction
       // produced nothing), so the pipeline does not set it here.
     } catch (error) {
       // Memory must never fail the completed group task.
-      this.onError(`Memory pipeline failed for task ${groupTaskId}`, error);
+      this.onError(`Memory pipeline failed for segment ${segmentId}`, error);
     }
   }
 
   async resetAutoNotes(groupTaskId: string): Promise<void> {
     try {
       const db = this.store.snapshot();
-      const taskNotes = db.notes.filter(
-        (note) => note.groupTaskId === groupTaskId,
+      // Resume hands us a task id, but consolidation is owned by the segment,
+      // so clear the whole segment's auto notes and reopen it. The resumed task
+      // then rejoins it and the eventual re-flush covers the full segment.
+      const segment = db.topicSegments.find((item) =>
+        item.groupTaskIds.includes(groupTaskId),
+      );
+      const scopedTaskIds = new Set(segment?.groupTaskIds ?? [groupTaskId]);
+      const taskNotes = db.notes.filter((note) =>
+        scopedTaskIds.has(note.groupTaskId),
       );
 
       // A note is human-decided if a person explicitly acted on it: a review
@@ -143,28 +153,52 @@ export class RealMemoryPipeline implements MemoryPipeline {
       const autoNotes = taskNotes.filter(
         (note) => !humanDecided(note.id, note.status),
       );
-      if (autoNotes.length === 0) return;
-
       // Remove any landed files from disk (revokeMemory does not touch the
       // ledger; it only deletes files and marks landedMemoryFiles rows).
       for (const note of autoNotes) {
         await this.landing.revokeMemory(note);
       }
 
-      const autoIds = new Set(autoNotes.map((note) => note.id));
-      await this.store.mutate((database) => {
-        database.notes = database.notes.filter((note) => !autoIds.has(note.id));
-        database.grants = database.grants.filter(
-          (grant) => !autoIds.has(grant.noteId),
-        );
-        database.landedMemoryFiles = database.landedMemoryFiles.filter(
-          (file) => !autoIds.has(file.noteId),
-        );
-      });
+      if (autoNotes.length > 0) {
+        const autoIds = new Set(autoNotes.map((note) => note.id));
+        await this.store.mutate((database) => {
+          database.notes = database.notes.filter((note) => !autoIds.has(note.id));
+          database.grants = database.grants.filter(
+            (grant) => !autoIds.has(grant.noteId),
+          );
+          database.landedMemoryFiles = database.landedMemoryFiles.filter(
+            (file) => !autoIds.has(file.noteId),
+          );
+        });
+      }
+
+      // Always reopen, even when the earlier flush produced nothing to clean
+      // up: the segment must be able to consolidate again after the resume.
+      await this.reopenSegment(segment?.id);
     } catch (error) {
       // Resetting notes must never block a resume.
       this.onError(`Failed to reset auto notes for task ${groupTaskId}`, error);
     }
+  }
+
+  /**
+   * Put a segment back in the accumulating state so a resumed task rejoins it
+   * and the eventual re-flush is authoritative over the whole segment.
+   */
+  private async reopenSegment(segmentId: string | undefined): Promise<void> {
+    if (!segmentId) return;
+    await this.store.mutate((database) => {
+      const segment = database.topicSegments.find(
+        (item) => item.id === segmentId,
+      );
+      if (!segment) return;
+      segment.status = "open";
+      segment.endSeq = null;
+      segment.closeReason = null;
+      segment.driftScore = null;
+      segment.closedAt = null;
+      segment.flushedAt = null;
+    });
   }
 }
 

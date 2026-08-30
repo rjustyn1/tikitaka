@@ -34,6 +34,11 @@ beforeEach(async () => {
       AGENT_WORKSPACE_ROOT: path.join(root, "workspaces"),
       CODEX_HOME: path.join(root, "codex-home"),
       MEMORY_EXTRACTOR: "fake",
+      // Consolidation is per TOPIC SEGMENT, and a segment normally stays open
+      // until the subject changes. One task per segment keeps this end-to-end
+      // test a single-task scenario; segment accumulation across tasks is
+      // covered in group-runner.test.ts.
+      MEMORY_SEGMENT_MAX_TASKS: "1",
     } as NodeJS.ProcessEnv),
   };
   store = new JsonStore(path.join(root, "data", "launchpad.json"));
@@ -56,12 +61,15 @@ async function waitForTerminal(taskId: string): Promise<GroupTaskStatus> {
   for (let i = 0; i < 200; i += 1) {
     const status = service.getGroupTask(taskId).task.status;
     // NOTE for consumers: the task status flips to terminal BEFORE the memory
-    // pipeline runs -- finishTask persists the status, then calls maybeFlush.
-    // So "status === completed" does NOT mean notes exist yet. Wait on
-    // flushedAt when you care about governed memory.
+    // pipeline runs, and memory is keyed on the TOPIC SEGMENT rather than the
+    // task. So "status === completed" does NOT mean notes exist yet -- wait on
+    // the owning TopicSegment.flushedAt when you care about governed memory.
     if (TERMINAL.includes(status)) {
       for (let j = 0; j < 200; j += 1) {
-        if (store.snapshot().groupTasks.find((t) => t.id === taskId)?.flushedAt) break;
+        const segment = store
+          .snapshot()
+          .topicSegments.find((item) => item.groupTaskIds.includes(taskId));
+        if (segment?.flushedAt) break;
         await new Promise((resolve) => setTimeout(resolve, 25));
       }
       return status;

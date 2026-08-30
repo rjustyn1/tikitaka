@@ -48,6 +48,19 @@ async function seededStore() {
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     db.groupTasks.push(task());
+    db.topicSegments.push({
+      id: "seg-1",
+      groupId: "group-1",
+      status: "closed",
+      startSeq: 1,
+      endSeq: 9,
+      groupTaskIds: ["task-1"],
+      closeReason: "topic_shift",
+      driftScore: 0.95,
+      flushedAt: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      closedAt: "2026-01-01T01:00:00.000Z",
+    });
     db.groupPlanNodes.push(
       planNode("n1", AGENT_A, RUN_A),
       planNode("n2", AGENT_B, RUN_B),
@@ -138,7 +151,7 @@ describe("RealMemoryPipeline", () => {
     const { store } = await seededStore();
     const pipeline = new RealMemoryPipeline(store, new FakeExtractorClient());
 
-    await pipeline.runMemoryPipeline("task-1", ["n2"]);
+    await pipeline.runMemoryPipeline("seg-1");
 
     const db = store.snapshot();
     // Fake emits one severe (parked pending) + one normal (auto-active).
@@ -168,7 +181,7 @@ describe("RealMemoryPipeline", () => {
     });
 
     await expect(
-      pipeline.runMemoryPipeline("task-1", ["n2"]),
+      pipeline.runMemoryPipeline("seg-1"),
     ).resolves.toBeUndefined();
 
     // Consolidator swallows the extractor error itself, so zero notes and no
@@ -184,7 +197,7 @@ describe("RealMemoryPipeline", () => {
       onError: (message) => errors.push(message),
     });
 
-    await pipeline.runMemoryPipeline("does-not-exist", []);
+    await pipeline.runMemoryPipeline("does-not-exist");
     expect(errors).toHaveLength(1);
     expect(errors[0]).toContain("does-not-exist");
   });
