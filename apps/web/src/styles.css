@@ -2282,14 +2282,3 @@ textarea:focus {
   color: var(--muted);
 }
 .chain-dep-entry { font-style: italic; }
-
-/* The derived, read-only role label in the team editor. */
-.role-chip {
-  flex: none;
-  font-size: 11px;
-  color: var(--muted);
-  background: #ecebe6;
-  border-radius: 6px;
-  padding: 3px 9px;
-  text-transform: capitalize;
-}

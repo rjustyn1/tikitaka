@@ -57,7 +57,7 @@ describe("GroupEditor", () => {
     expect(submit).toBeEnabled();
   });
 
-  it("submits the server membership shape, labelling each Agent from itself", () => {
+  it("submits the server membership shape, defaulting each label from the Agent", () => {
     const onSubmit = renderEditor();
     fireEvent.change(screen.getByPlaceholderText("Upload Feature Team"), {
       target: { value: "Upload Feature Team" },
@@ -77,18 +77,49 @@ describe("GroupEditor", () => {
     });
   });
 
-  it("offers no role picker at all", () => {
-    // The planner reads the Agent's description, never a role label, so a
-    // picker was an authoritative-looking control that changed nothing.
+  it("offers exactly three role labels, and no free text", () => {
     renderEditor();
     fireEvent.click(screen.getAllByRole("checkbox")[0] as HTMLElement);
-    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(/^Role for /)).not.toBeInTheDocument();
+    const picker = screen.getByLabelText("Role for Backend Agent");
+    expect(
+      [...(picker as HTMLSelectElement).options].map((option) => option.value),
+    ).toEqual(["backend", "frontend", "security"]);
   });
 
-  it("repairs a stored label that contradicts its Agent, on save", () => {
-    // The bug this replaces: a Security Agent saved as "frontend", which then
-    // drove the wrong colour dot everywhere it appeared.
+  it("lets a label be changed, and submits the change", () => {
+    const onSubmit = renderEditor();
+    fireEvent.change(screen.getByPlaceholderText("Upload Feature Team"), {
+      target: { value: "Team" },
+    });
+    fireEvent.click(screen.getAllByRole("checkbox")[0] as HTMLElement);
+    fireEvent.change(screen.getByLabelText("Role for Backend Agent"), {
+      target: { value: "security" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create team" }));
+    expect(onSubmit.mock.calls[0]?.[0].members).toEqual([
+      { agentId: "a1", role: "security" },
+    ]);
+  });
+
+  it("defaults an Agent whose name is not one of the three", () => {
+    // "Ops Agent" derives to "ops", which is not offered, so it starts on the
+    // first option rather than being added as a fourth.
+    const onSubmit = vi.fn();
+    renderEditor(onSubmit, [agent("a4", "Ops Agent")]);
+    fireEvent.change(screen.getByPlaceholderText("Upload Feature Team"), {
+      target: { value: "Team" },
+    });
+    fireEvent.click(screen.getAllByRole("checkbox")[0] as HTMLElement);
+    fireEvent.click(screen.getByRole("button", { name: "Create team" }));
+    expect(onSubmit.mock.calls[0]?.[0].members).toEqual([
+      { agentId: "a4", role: "backend" },
+    ]);
+  });
+
+  it("keeps a stored label, and clamps one outside the three", () => {
+    // An edit form shows what is actually saved: a3 stays "frontend" so the
+    // human can see it and change it. A legacy label outside the three has no
+    // option to sit on, so it is clamped to the Agent's own default.
     const onSubmit = vi.fn();
     render(
       <GroupEditor
@@ -99,7 +130,7 @@ describe("GroupEditor", () => {
           description: "Building a todo website",
           members: [
             { agentId: "a3", role: "frontend" },
-            { agentId: "a2", role: "security" },
+            { agentId: "a2", role: "member" },
           ],
           activeTaskId: null,
           createdAt: new Date().toISOString(),
@@ -112,23 +143,12 @@ describe("GroupEditor", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Save team" }));
     expect(onSubmit.mock.calls[0]?.[0].members).toEqual([
-      { agentId: "a3", role: "security" },
+      { agentId: "a3", role: "frontend" },
       { agentId: "a2", role: "frontend" },
     ]);
   });
 
-  it("falls back to \"member\" for a name with no usable label in it", () => {
-    const onSubmit = vi.fn();
-    renderEditor(onSubmit, [agent("a9", "Agent")]);
-    fireEvent.change(screen.getByPlaceholderText("Upload Feature Team"), {
-      target: { value: "Team" },
-    });
-    fireEvent.click(screen.getAllByRole("checkbox")[0] as HTMLElement);
-    fireEvent.click(screen.getByRole("button", { name: "Create team" }));
-    expect(onSubmit.mock.calls[0]?.[0].members).toEqual([
-      { agentId: "a9", role: "member" },
-    ]);
-  });
+
 
   it("caps membership at twelve Agents", () => {
     const candidates = Array.from({ length: 13 }, (_, index) =>

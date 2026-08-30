@@ -16,6 +16,26 @@ import { deriveRole } from "./format";
 
 const MAX_MEMBERS = 12;
 
+/**
+ * The only labels a team member may carry. Free text and "member" are gone:
+ * the label is cosmetic (the planner reads each Agent's `description`, never
+ * this), so a closed set of three keeps every dot and caption in the sidebar,
+ * member rail and chat to a known colour.
+ */
+const ROLE_OPTIONS = ["backend", "frontend", "security"] as const;
+
+/**
+ * The label to start an Agent on: its own name when that is one of the three,
+ * otherwise the first option. A human can always change it -- that is what the
+ * picker is for -- but the default never contradicts the Agent it is on.
+ */
+function defaultRole(agentName: string): string {
+  const derived = deriveRole(agentName);
+  return (ROLE_OPTIONS as readonly string[]).includes(derived)
+    ? derived
+    : ROLE_OPTIONS[0];
+}
+
 interface Props {
   agents: Agent[];
   group: AgentGroup | null;
@@ -31,21 +51,36 @@ interface Props {
 export function GroupEditor({ agents, group, busy, onCancel, onSubmit }: Props) {
   const [name, setName] = useState(group?.name ?? "");
   const [description, setDescription] = useState(group?.description ?? "");
+  // Ordered so the submitted roster keeps the order Agents were picked in.
   const [selected, setSelected] = useState<string[]>(
     () => (group?.members ?? []).map((member) => member.agentId),
   );
+  const [roles, setRoles] = useState<Record<string, string>>(() => {
+    const initial: Record<string, string> = {};
+    for (const member of group?.members ?? []) {
+      const stored = member.role?.trim().toLowerCase() ?? "";
+      // A stored label outside the three (legacy "member", or a name-derived
+      // one) is clamped rather than added as a fourth option.
+      initial[member.agentId] = (ROLE_OPTIONS as readonly string[]).includes(
+        stored,
+      )
+        ? stored
+        : defaultRole(
+            agents.find((agent) => agent.id === member.agentId)?.name ?? "",
+          );
+    }
+    return initial;
+  });
 
-  // Saving re-derives every label, so editing a team also repairs one whose
-  // stored labels were wrong before.
   const members = useMemo<GroupMember[]>(
     () =>
       selected.map((agentId) => ({
         agentId,
-        role: deriveRole(
-          agents.find((agent) => agent.id === agentId)?.name ?? "",
-        ),
+        role:
+          roles[agentId] ??
+          defaultRole(agents.find((agent) => agent.id === agentId)?.name ?? ""),
       })),
-    [selected, agents],
+    [selected, roles, agents],
   );
 
   const valid =
@@ -54,13 +89,27 @@ export function GroupEditor({ agents, group, busy, onCancel, onSubmit }: Props) 
     members.length <= MAX_MEMBERS;
 
   const toggle = (agentId: string) => {
-    setSelected((previous) =>
-      previous.includes(agentId)
-        ? previous.filter((id) => id !== agentId)
-        : previous.length < MAX_MEMBERS
-          ? [...previous, agentId]
-          : previous,
-    );
+    setSelected((previous) => {
+      if (previous.includes(agentId)) {
+        return previous.filter((id) => id !== agentId);
+      }
+      if (previous.length >= MAX_MEMBERS) return previous;
+      setRoles((current) =>
+        Object.hasOwn(current, agentId)
+          ? current
+          : {
+              ...current,
+              [agentId]: defaultRole(
+                agents.find((agent) => agent.id === agentId)?.name ?? "",
+              ),
+            },
+      );
+      return [...previous, agentId];
+    });
+  };
+
+  const assignRole = (agentId: string, role: string) => {
+    setRoles((previous) => ({ ...previous, [agentId]: role }));
   };
 
   const submit = (event: React.FormEvent) => {
@@ -81,7 +130,8 @@ export function GroupEditor({ agents, group, busy, onCancel, onSubmit }: Props) 
           <h2>{group ? "Update membership" : "Assemble a team"}</h2>
           <p>
             Pick the Agents on this team. The planner reads each Agent's own
-            description and decides who works on each task.
+            description and decides who works on each task — the role label is
+            only how each Agent is shown.
           </p>
         </div>
 
@@ -154,7 +204,22 @@ export function GroupEditor({ agents, group, busy, onCancel, onSubmit }: Props) 
                     </span>
                   </label>
                   {picked && (
-                    <span className="role-chip">{deriveRole(agent.name)}</span>
+                    <select
+                      className="role-select"
+                      aria-label={"Role for " + agent.name}
+                      value={
+                        roles[agent.id] ?? defaultRole(agent.name)
+                      }
+                      onChange={(event) =>
+                        assignRole(agent.id, event.target.value)
+                      }
+                    >
+                      {ROLE_OPTIONS.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
                   )}
                 </div>
               );
