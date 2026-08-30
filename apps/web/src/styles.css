@@ -2282,3 +2282,14 @@ textarea:focus {
   color: var(--muted);
 }
 .chain-dep-entry { font-style: italic; }
+
+/* How many Agents the Live Terminal is merging, shown only when several run. */
+.live-terminal-count {
+  margin-left: 7px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--green);
+  background: rgba(255, 255, 255, 0.09);
+  border-radius: 5px;
+  padding: 1px 6px;
+}

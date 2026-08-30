@@ -332,6 +332,34 @@ describe("ChainPanel", () => {
     expect(screen.queryByText(/This plan branches/)).not.toBeInTheDocument();
   });
 
+  it("flags a node that needed more than one attempt", () => {
+    render(
+      <ChainPanel
+        nodes={[planNode({ id: "n1", instruction: "x", attempts: 2 })]}
+        agents={agents}
+        group={group}
+        onOpenTrace={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("attempt 2")).toBeInTheDocument();
+  });
+
+  it("says nothing about attempts for a node that worked first time", () => {
+    render(
+      <ChainPanel
+        nodes={[
+          planNode({ id: "n1", instruction: "x", attempts: 1 }),
+          // A row written before retries existed carries no attempts at all.
+          planNode({ id: "n2", nodeRole: "older", instruction: "x" }),
+        ]}
+        agents={agents}
+        group={group}
+        onOpenTrace={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText(/^attempt /)).not.toBeInTheDocument();
+  });
+
   it("renders the instruction the planner persisted, not the role name alone", () => {
     render(
       <ChainPanel

@@ -179,6 +179,15 @@ export interface GroupPlanNode {
    * instruction is a fact about the row, not a gap to paper over.
    */
   instruction?: string;
+  /**
+   * How many times this node was dispatched to the runner. `1` is the normal
+   * case; anything higher means a transient failure was retried, and each
+   * attempt left its own run row behind.
+   *
+   * Optional on the read side only because rows written before retries landed
+   * carry no such field.
+   */
+  attempts?: number;
   expectedOutput: string;
   createdAt: string;
   startedAt: string | null;

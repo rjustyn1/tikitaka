@@ -7,10 +7,14 @@
  * liveness ("Security is scanning… Backend opened port 8080…"), not the full
  * reasoning tree. Open the Trace panel from a node for the detail.
  *
- * Scope note: a group task runs one node at a time (see `group-runner.ts`), so
- * "live" means the trace of the currently-running node's run. When the parallel
- * executor lands, this becomes a merge across the running set — the line shape
- * (`[time] Agent: text`) already carries the agent, so the merge is additive.
+ * Scope note: a group task runs INDEPENDENT BRANCHES CONCURRENTLY
+ * (`group-runner.ts`'s ready-set scheduler), so "live" is a merge across every
+ * running node's run, not a single one. The line shape (`[time] Agent: text`)
+ * already carries the agent, so the merge needed no new line format.
+ *
+ * The merge sorts by TIMESTAMP, not by `seq`: seq is per-run, so ordering a
+ * merged feed by it would interleave two agents' lines as 1,1,2,2 regardless of
+ * when anything actually happened.
  */
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
@@ -58,42 +62,53 @@ function lineFor(span: TraceSpan): { text: string; tone: string } {
 }
 
 export function LiveTerminal({
-  runId,
+  runIds,
   agents,
   running,
 }: {
-  /** The run whose trace to stream — the active node's run, or the latest one. */
-  runId: string | null;
+  /**
+   * Every run to stream: the runs of all nodes running right now, or the most
+   * recent run once nothing is live.
+   */
+  runIds: string[];
   agents: Agent[];
   running: boolean;
 }) {
   const [spans, setSpans] = useState<TraceSpan[]>([]);
   const [failed, setFailed] = useState(false);
+  const [liveCount, setLiveCount] = useState(0);
   const feedRef = useRef<HTMLDivElement>(null);
   const pinnedToBottom = useRef(true);
 
   // Poll the active run's trace. Same cadence as the rest of the app (~900ms),
   // and only while the task is running; a terminal run is fetched once.
+  // `runIds` is a fresh array every render, so the effect keys off its contents.
+  const runKey = runIds.join(",");
   useEffect(() => {
-    if (!runId) {
+    const ids = runKey ? runKey.split(",") : [];
+    if (ids.length === 0) {
       setSpans([]);
+      setLiveCount(0);
       return;
     }
     let current = true;
     let timer: number | undefined;
     const refresh = async () => {
-      try {
-        const result = await api.trace(runId);
-        if (!current) return;
-        setSpans(result.spans);
-        setFailed(false);
-        if (running && ["queued", "running"].includes(result.run.status)) {
-          timer = window.setTimeout(() => void refresh(), 900);
-        }
-      } catch {
-        if (!current) return;
-        setFailed(true);
-        if (running) timer = window.setTimeout(() => void refresh(), 1500);
+      // One failing run must not blank the whole feed, so each is settled
+      // independently and the rest still render.
+      const results = await Promise.allSettled(ids.map((id) => api.trace(id)));
+      if (!current) return;
+      const ok = results.flatMap((result) =>
+        result.status === "fulfilled" ? [result.value] : [],
+      );
+      setFailed(ok.length === 0);
+      setSpans(ok.flatMap((result) => result.spans));
+      const active = ok.filter((result) =>
+        ["queued", "running"].includes(result.run.status),
+      ).length;
+      setLiveCount(active);
+      if (running && (active > 0 || ok.length === 0)) {
+        timer = window.setTimeout(() => void refresh(), ok.length === 0 ? 1500 : 900);
       }
     };
     void refresh();
@@ -101,7 +116,7 @@ export function LiveTerminal({
       current = false;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [runId, running]);
+  }, [runKey, running]);
 
   // Keep the newest line in view, but only if the reader has not scrolled up to
   // read history — the same courtesy a real terminal extends.
@@ -118,12 +133,25 @@ export function LiveTerminal({
       el.scrollHeight - el.scrollTop - el.clientHeight < 24;
   };
 
-  const ordered = [...spans].sort((left, right) => left.seq - right.seq);
+  // Merged across runs, so time is the only ordering that means anything.
+  // `seq` breaks ties within one run, where two spans can share a timestamp.
+  const ordered = [...spans].sort((left, right) => {
+    if (left.startedAt !== right.startedAt) {
+      return left.startedAt < right.startedAt ? -1 : 1;
+    }
+    if (left.runId !== right.runId) return left.runId < right.runId ? -1 : 1;
+    return left.seq - right.seq;
+  });
 
   return (
     <section className="live-terminal" aria-label="Live terminal">
       <div className="live-terminal-head">
-        <span className="live-terminal-title">Live Terminal</span>
+        <span className="live-terminal-title">
+          Live Terminal
+          {liveCount > 1 && (
+            <span className="live-terminal-count">{liveCount} agents</span>
+          )}
+        </span>
         <span
           className={"live-terminal-pip " + (running ? "is-live" : "is-idle")}
           aria-label={running ? "Live" : "Idle"}
@@ -135,7 +163,7 @@ export function LiveTerminal({
             {failed
               ? "Trace unavailable."
               : running
-                ? "Waiting for the active Agent…"
+                ? "Waiting for the active Agents…"
                 : "No activity yet. Start a task to watch the team work."}
           </p>
         ) : (

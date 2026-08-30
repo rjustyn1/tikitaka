@@ -154,17 +154,18 @@ export function GroupWorkspace({
   const task = state.task?.task ?? null;
   const running = task !== null && !isTerminal(task.status);
 
-  // The run the Live Terminal streams: the node running right now, else the
-  // most recent node that produced a run so the panel shows the last activity
-  // rather than going blank the moment a task finishes.
-  const liveRunId =
-    (state.task?.nodes.find(
-      (node) => node.status === "running" && node.runId,
-    )?.runId ??
-      [...(state.task?.nodes ?? [])]
-        .reverse()
-        .find((node) => node.runId)?.runId) ??
-    null;
+  // The runs the Live Terminal streams: EVERY node running right now, because
+  // independent branches run concurrently — picking the first one narrated one
+  // agent while three others worked in silence. Falls back to the most recent
+  // run so the panel does not blank the moment a task finishes.
+  const runningRunIds = (state.task?.nodes ?? [])
+    .filter((node) => node.status === "running" && node.runId)
+    .map((node) => node.runId as string);
+  const lastRunId = [...(state.task?.nodes ?? [])]
+    .reverse()
+    .find((node) => node.runId)?.runId;
+  const liveRunIds =
+    runningRunIds.length > 0 ? runningRunIds : lastRunId ? [lastRunId] : [];
 
   // The rail reads each member's workspace through the API. Bump the revision
   // — never poll — whenever something could have changed one: a different
@@ -678,7 +679,7 @@ export function GroupWorkspace({
         {group && (
           <div className="cc-rail">
             <LiveTerminal
-              runId={liveRunId}
+              runIds={liveRunIds}
               agents={agents}
               running={running}
             />

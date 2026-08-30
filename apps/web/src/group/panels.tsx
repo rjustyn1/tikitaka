@@ -113,6 +113,16 @@ export function ChainPanel({
               <Pill tone={statusTone(node.status)}>{node.status}</Pill>
               {node.kind === "join" && <Pill tone="ok">join</Pill>}
               {node.readOnly && <Pill tone="idle">read-only</Pill>}
+              {/*
+                A retried node succeeded on a later try. Worth showing: the run
+                the Trace button opens is the LAST attempt, and the earlier
+                failed one is a separate run row behind it.
+              */}
+              {(node.attempts ?? 1) > 1 && (
+                <Pill tone="warn">
+                  {"attempt " + node.attempts}
+                </Pill>
+              )}
             </div>
             {/*
               The graph, not just the order. The plan is a DAG — steps fan out
