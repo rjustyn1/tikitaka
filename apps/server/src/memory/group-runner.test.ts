@@ -9,6 +9,7 @@ import { FakeRunner } from "../test-helpers.js";
 import type { Agent, TraceSpan } from "../types.js";
 import { WorkspaceManager } from "../workspace.js";
 import { MAX_NODE_ATTEMPTS } from "./group-runner.js";
+import { TaskPlanner } from "./planner.js";
 import type { MemoryPipeline } from "./pipeline.js";
 import { RecordingMemoryPipeline } from "../test-helpers.js";
 import type { GroupMember } from "../types.js";
@@ -48,6 +49,7 @@ interface Harness {
 async function makeHarness(
   runner: FakeRunner = new FakeRunner(),
   pipeline: MemoryPipeline & { calls?: unknown } = new RecordingMemoryPipeline(),
+  extra: { planJson?: string; maxParallel?: number } = {},
 ): Promise<Harness> {
   const root = await mkdtemp(path.join(tmpdir(), "launchpad-group-"));
   temporaryDirectories.push(root);
@@ -58,6 +60,9 @@ async function makeHarness(
     CODEX_HOME: path.join(root, "codex"),
     ARK_API_KEY: "test-key",
     ARK_MODEL: "ep-test",
+    ...(extra.maxParallel === undefined
+      ? {}
+      : { GROUP_MAX_PARALLEL_NODES: String(extra.maxParallel) }),
   });
   const store = new JsonStore(path.join(root, "data", "db.json"));
   const service = new AgentService(
@@ -66,6 +71,13 @@ async function makeHarness(
     new WorkspaceManager(path.join(root, "workspaces"), "local-process"),
     runner,
     pipeline,
+    extra.planJson === undefined
+      ? undefined
+      : new TaskPlanner({
+          async extract() {
+            return { rawText: extra.planJson as string };
+          },
+        }),
   );
   await service.initialize();
 
@@ -479,6 +491,120 @@ describe("A3 - solo and group runs contend for one lease", () => {
     expect(harness.service.getGroupTask(task.id).task.status).toBe("completed");
     // The lease is handed back, so solo work resumes normally.
     expect(harness.service.getAgent(harness.backend.id).status).toBe("ready");
+  });
+});
+
+describe("parallel execution", () => {
+  /** Fan-out where the two branches own DIFFERENT areas of the shared tree. */
+  const disjointPlan = JSON.stringify({
+    nodes: [
+      { agent: 1, nodeRole: "contract", instruction: "x", expectedOutput: "y",
+        dependsOn: [], area: "none", writes: false },
+      { agent: 2, nodeRole: "web-work", instruction: "x", expectedOutput: "y",
+        dependsOn: [0], area: "web", writes: true },
+      { agent: 3, nodeRole: "server-work", instruction: "x", expectedOutput: "y",
+        dependsOn: [0], area: "server", writes: true },
+    ],
+  });
+
+  /** The same fan-out, but both branches claim the whole tree. */
+  const overlappingPlan = JSON.stringify({
+    nodes: [
+      { agent: 1, nodeRole: "contract", instruction: "x", expectedOutput: "y",
+        dependsOn: [], area: "none", writes: false },
+      { agent: 2, nodeRole: "all-a", instruction: "x", expectedOutput: "y",
+        dependsOn: [0], area: "all", writes: true },
+      { agent: 3, nodeRole: "all-b", instruction: "x", expectedOutput: "y",
+        dependsOn: [0], area: "all", writes: true },
+    ],
+  });
+
+  /** Fan-out where BOTH branches belong to the same Agent. */
+  const sameAgentPlan = JSON.stringify({
+    nodes: [
+      { agent: 1, nodeRole: "contract", instruction: "x", expectedOutput: "y",
+        dependsOn: [], area: "none", writes: false },
+      { agent: 2, nodeRole: "web-a", instruction: "x", expectedOutput: "y",
+        dependsOn: [0], area: "web", writes: true },
+      { agent: 2, nodeRole: "docs-a", instruction: "x", expectedOutput: "y",
+        dependsOn: [0], area: "docs", writes: true },
+    ],
+  });
+
+  /**
+   * Records the greatest number of runs in flight at once.
+   *
+   * Counting cumulative requests cannot tell "ran together" from "ran one after
+   * the other"; holding each run open for a beat and watching the peak can.
+   */
+  class ConcurrencyRunner extends FakeRunner {
+    inFlight = 0;
+    peak = 0;
+    override async run(request: Parameters<FakeRunner["run"]>[0]) {
+      this.inFlight += 1;
+      this.peak = Math.max(this.peak, this.inFlight);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        return await super.run(request);
+      } finally {
+        this.inFlight -= 1;
+      }
+    }
+  }
+
+  async function peakConcurrency(planJson: string, maxParallel?: number) {
+    const runner = new ConcurrencyRunner();
+    const harness = await makeHarness(runner, new RecordingMemoryPipeline(), {
+      planJson,
+      ...(maxParallel === undefined ? {} : { maxParallel }),
+    });
+    const group = await harness.service.createGroup({
+      name: "Upload Feature Team",
+      members: harness.members,
+    });
+    const task = await harness.service.startGroupTask(group.id, "Plan it.");
+    await settle(harness, task.id);
+    return { peak: runner.peak, harness, task };
+  }
+
+  it("runs independent branches at the same time when their areas are disjoint", async () => {
+    const { peak, harness, task } = await peakConcurrency(disjointPlan);
+    expect(peak).toBe(2);
+    expect(
+      harness.service
+        .getGroupTask(task.id)
+        .nodes.every((node) => node.status === "completed"),
+    ).toBe(true);
+  });
+
+  it("serialises two branches that claim overlapping ground", async () => {
+    // The runtime-lock collision rule. Both want code/**, so one waits even
+    // though the DAG says they are independent.
+    const { peak, harness, task } = await peakConcurrency(overlappingPlan);
+    expect(peak).toBe(1);
+    expect(
+      harness.service
+        .getGroupTask(task.id)
+        .nodes.every((node) => node.status === "completed"),
+    ).toBe(true);
+  });
+
+  it("never overlaps two nodes held by the same Agent", async () => {
+    // The A3 lease is not re-entrant. Areas are disjoint here, so the Agent
+    // rule is the only thing that can hold the second node back.
+    const { peak, harness, task } = await peakConcurrency(sameAgentPlan);
+    expect(peak).toBe(1);
+    expect(
+      harness.service
+        .getGroupTask(task.id)
+        .nodes.every((node) => node.status === "completed"),
+    ).toBe(true);
+  });
+
+  it("restores strictly sequential execution at GROUP_MAX_PARALLEL_NODES=1", async () => {
+    const { peak, harness, task } = await peakConcurrency(disjointPlan, 1);
+    expect(peak).toBe(1);
+    expect(harness.service.getGroupTask(task.id).task.status).toBe("completed");
   });
 });
 

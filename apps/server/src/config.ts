@@ -32,6 +32,11 @@ const envSchema = z.object({
     .max(48)
     .regex(/^[a-zA-Z0-9_.-]+$/)
     .default("default"),
+  // Parallel plan nodes per group task. 1 restores strictly sequential
+  // execution. Safety does not depend on this number: the scheduler also
+  // refuses to overlap two nodes held by one Agent (the A3 lease is not
+  // re-entrant) or two nodes whose runtime locks overlap.
+  GROUP_MAX_PARALLEL_NODES: z.coerce.number().int().min(1).max(8).default(4),
   MEMORY_ENABLED: z.enum(["true", "false"]).default("true"),
   MEMORY_EXTRACTOR: z.enum(["ark", "fake", "off"]).default("ark"),
   MEMORY_EXTRACT_TIMEOUT_MS: z.coerce.number().int().min(1000).default(30000),
@@ -88,6 +93,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
     containerPidsLimit: env.CONTAINER_PIDS_LIMIT,
     containerUser: env.CONTAINER_USER?.trim() || defaultContainerUser,
     runtimeInstanceId: env.RUNTIME_INSTANCE_ID,
+    groupMaxParallelNodes: env.GROUP_MAX_PARALLEL_NODES,
     memoryEnabled: env.MEMORY_ENABLED === "true",
     memoryExtractor: env.MEMORY_EXTRACTOR,
     memoryExtractTimeoutMs: env.MEMORY_EXTRACT_TIMEOUT_MS,

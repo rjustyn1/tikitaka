@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { GroupPlanNode, GroupTaskStatus } from "../types.js";
-import { isRetryableFailure, orderForExecution } from "./group-runner.js";
+import {
+  isRetryableFailure,
+  locksConflict,
+  orderForExecution,
+} from "./group-runner.js";
 
 /**
  * `chainFor()` used to sort by `createdAt` alone — but every node of a task is
@@ -128,5 +132,42 @@ describe("isRetryableFailure", () => {
 
   it("treats a clean exit code 0 message as not retryable", () => {
     expect(isRetryableFailure("Codex exited with code 0: fine")).toBe(false);
+  });
+});
+
+describe("locksConflict — the runtime-lock collision rule", () => {
+  it("lets disjoint areas of the shared tree run together", () => {
+    expect(
+      locksConflict(["code/apps/server/**"], ["code/apps/web/**"]),
+    ).toBe(false);
+  });
+
+  it("blocks two nodes claiming the same area", () => {
+    expect(
+      locksConflict(["code/apps/server/**"], ["code/apps/server/**"]),
+    ).toBe(true);
+  });
+
+  it("blocks a broad claim that CONTAINS a narrow one", () => {
+    // String equality would miss this, and it is the dangerous case: `code/**`
+    // and `code/apps/server/**` overlap on disk.
+    expect(locksConflict(["code/**"], ["code/apps/server/**"])).toBe(true);
+    expect(locksConflict(["code/apps/server/**"], ["code/**"])).toBe(true);
+  });
+
+  it("never blocks a read-only node, which declares no locks", () => {
+    expect(locksConflict([], ["code/**"])).toBe(false);
+    expect(locksConflict(["code/**"], [])).toBe(false);
+  });
+
+  it("treats a bare wildcard as covering everything", () => {
+    expect(locksConflict(["**"], ["code/apps/web/**"])).toBe(true);
+  });
+
+  it("does not confuse sibling directories with a shared prefix", () => {
+    // "code/apps/webhooks" must not look like it is inside "code/apps/web".
+    expect(
+      locksConflict(["code/apps/web/**"], ["code/apps/webhooks/**"]),
+    ).toBe(false);
   });
 });

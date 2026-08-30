@@ -365,42 +365,94 @@ export class GroupRunner {
       }
     });
 
-    // Execution stays SEQUENTIAL. The planner emits a real DAG now, so running
-    // independent branches concurrently looks like the obvious next step -- it
-    // is not, and three things block it: the A3 agent lease is not re-entrant
-    // (one Agent can hold several nodes), runtime-lock COLLISION validation is
-    // still STRETCH (sequential execution is the only reason that has been
-    // safe), and every branch writes one shared `./code` tree. Containment
-    // below gets the correctness win without any of that.
+    /*
+     * A ready-set scheduler over the planner's DAG.
+     *
+     * Independent branches run CONCURRENTLY, but three constraints decide what
+     * may overlap, and every one of them is a real hazard rather than caution:
+     *
+     *  1. AGENT. The A3 lease is not re-entrant, and the planner may give one
+     *     Agent several nodes, so two nodes for the same Agent never overlap.
+     *  2. LOCKS. Every branch writes one shared `./code` tree, so two nodes
+     *     whose runtime locks overlap never run together (`locksConflict`).
+     *     Read-only nodes declare no locks and so never block anything.
+     *  3. WIDTH. `GROUP_MAX_PARALLEL_NODES` caps how many run at once; 1
+     *     restores strictly sequential execution.
+     *
+     * Containment still applies: a failure blocks only what transitively
+     * depends on it, and independent branches keep running.
+     */
     const chain = this.chainFor(taskId);
     const byId = new Map(chain.map((node) => [node.id, node]));
+    const maxParallel = Math.max(1, this.config.groupMaxParallelNodes);
 
-    for (const node of chain) {
-      if (this.activeTasks.get(taskId)?.cancelled) break;
-      // Resume: a node that already completed in an earlier run is not re-run;
-      // its output is reused. On a first run every node is queued, so this is a
-      // no-op there.
-      if (node.status === "completed") continue;
+    const settled = new Set<string>();
+    const inFlight = new Map<string, Promise<string>>();
+    const busyAgents = new Set<string>();
+    const heldLocks = new Map<string, readonly string[]>();
 
-      // CONTAINMENT. A failure blocks only what transitively depends on it, not
-      // the rest of the task. This loop used to `break` on any failure, which
-      // was right while every node depended on the one before it, and wrong the
-      // moment the planner could emit fan-out: a sibling branch that never
-      // touched the failed node would be abandoned with it.
-      const blocker = findFailedAncestor(node, byId);
-      if (blocker) {
-        await this.blockNode(node.id, blocker);
-        // Keep the local view in step so this node, now settled, correctly
-        // blocks ITS descendants on later iterations.
-        node.status = "cancelled";
-        continue;
+    const isReady = (node: GroupPlanNode): boolean =>
+      node.dependsOn.every((id) => byId.get(id)?.status === "completed");
+
+    while (!this.activeTasks.get(taskId)?.cancelled) {
+      for (const node of chain) {
+        if (settled.has(node.id) || inFlight.has(node.id)) continue;
+        // Resume: a node that already completed in an earlier run is not
+        // re-run; its output is reused.
+        if (node.status === "completed") {
+          settled.add(node.id);
+          continue;
+        }
+        const blocker = findFailedAncestor(node, byId);
+        if (blocker) {
+          await this.blockNode(node.id, blocker);
+          // Keep the local view in step so this node, now settled, correctly
+          // blocks ITS descendants.
+          node.status = "cancelled";
+          settled.add(node.id);
+          continue;
+        }
+        if (!isReady(node)) continue;
+        if (inFlight.size >= maxParallel) break;
+        if (busyAgents.has(node.agentId)) continue;
+        if (
+          [...heldLocks.values()].some((held) =>
+            locksConflict(node.runtimeLocks, held),
+          )
+        ) {
+          continue;
+        }
+
+        busyAgents.add(node.agentId);
+        heldLocks.set(node.id, node.runtimeLocks);
+        inFlight.set(
+          node.id,
+          this.runNodeWithRetries(taskId, node.id)
+            .catch(() => "failed" as GroupTaskStatus)
+            .then((status) => {
+              // `chain` is a deep clone of the snapshot, so this mutates
+              // nothing persisted -- it only lets the next pass see the result.
+              node.status = status;
+              return node.id;
+            }),
+        );
       }
 
-      // `chain` is a deep clone from the store snapshot, so writing the result
-      // back here mutates nothing persisted -- it only lets `findFailedAncestor`
-      // above see failures that happened during this very loop.
-      node.status = await this.runNodeWithRetries(taskId, node.id);
+      // Nothing running and nothing dispatchable: the task is done, or what
+      // remains can never become ready (a cycle `orderForExecution` tolerated).
+      if (inFlight.size === 0) break;
+
+      const finishedId = await Promise.race([...inFlight.values()]);
+      const finished = byId.get(finishedId);
+      inFlight.delete(finishedId);
+      heldLocks.delete(finishedId);
+      settled.add(finishedId);
+      if (finished) busyAgents.delete(finished.agentId);
     }
+
+    // A cancel breaks the loop with work still running; those runs are being
+    // killed by cancelGroupTask, but the task is not finished until they land.
+    await Promise.allSettled([...inFlight.values()]);
 
     await this.finishGroupTask(taskId);
   }
@@ -1162,6 +1214,36 @@ export class GroupRunner {
       }
     }
   }
+}
+
+/**
+ * Do two nodes claim overlapping ground in the shared `./code` tree?
+ *
+ * This is the runtime-lock COLLISION validation the docs defer as STRETCH. It
+ * was safe to defer only while execution was sequential; running two nodes at
+ * once makes it the thing that keeps concurrent writers from colliding.
+ *
+ * Lock keys are globs (`code/apps/server/**`), so string equality is not
+ * enough: `code/**` contains `code/apps/server/**`. Both are reduced to their
+ * directory prefix and compared for containment in either direction. A
+ * read-only node declares no locks and therefore never conflicts.
+ */
+export function locksConflict(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
+  const prefix = (key: string): string =>
+    key.replace(/\*+$/, "").replace(/\/+$/, "");
+  for (const a of left) {
+    const pa = prefix(a);
+    for (const b of right) {
+      const pb = prefix(b);
+      // An empty prefix came from a bare `**`: it covers everything.
+      if (pa === "" || pb === "" || pa === pb) return true;
+      if (pa.startsWith(pb + "/") || pb.startsWith(pa + "/")) return true;
+    }
+  }
+  return false;
 }
 
 /** Attempts per node, first try included. */
