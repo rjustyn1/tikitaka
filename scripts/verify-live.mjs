@@ -166,7 +166,7 @@ if (notes.length > 0) {
     note(kept.length + " usable spans reached the buffer, so the extractor ran.");
     note("The consolidator returned nothing, or every candidate failed validation.");
     note("Notes must cite sourceRunIds and sourceSpanIds that exist in the buffer.");
-    note("MEMORY_EXTRACTOR=" + (process.env.MEMORY_EXTRACTOR ?? "fake") +
+    note("MEMORY_EXTRACTOR=" + (process.env.MEMORY_EXTRACTOR ?? "ark") +
       " — 'off' always returns zero notes.");
   }
   if (!task.flushedAt) {

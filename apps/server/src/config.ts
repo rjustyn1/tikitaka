@@ -33,8 +33,7 @@ const envSchema = z.object({
     .regex(/^[a-zA-Z0-9_.-]+$/)
     .default("default"),
   MEMORY_ENABLED: z.enum(["true", "false"]).default("true"),
-  // Offline by default: live Ark extraction must be an explicit environment choice.
-  MEMORY_EXTRACTOR: z.enum(["ark", "fake", "off"]).default("fake"),
+  MEMORY_EXTRACTOR: z.enum(["ark", "fake", "off"]).default("ark"),
   MEMORY_EXTRACT_TIMEOUT_MS: z.coerce.number().int().min(1000).default(30000),
   REVIEW_ALL_SKILLS: z.enum(["true", "false"]).default("false"),
   SKILLS_DIR: z.enum([".agents/skills", ".codex/skills"]).default(".agents/skills"),

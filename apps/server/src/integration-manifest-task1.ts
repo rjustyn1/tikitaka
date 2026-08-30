@@ -70,7 +70,7 @@ export const integrationManifestTask1 = {
     person3: [
       "Use listNotes/reviewNote/revokeNote/listAgentMemory/listTaskGrants route shapes",
       "Import replaceManagedBlock/removeManagedBlock from workspace.ts for landed memory",
-      "Keep MEMORY_EXTRACTOR=fake as the offline default for npm run check",
+      "Keep MEMORY_EXTRACTOR=ark as the application default; offline tests opt into fake explicitly",
     ],
     person4: [
       "Use apps/web/src/types.ts DTOs only",

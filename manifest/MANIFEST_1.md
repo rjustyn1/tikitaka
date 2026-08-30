@@ -63,7 +63,8 @@ an implementation handoff, not a replacement for `TODO.md`, `PLAN.md`, or
 - `AgentGroup.members` is the active role-bound membership shape. No new
   `memberAgentIds` compatibility field was introduced.
 - The exact memory configuration keys already present in `config.ts` remain
-  unchanged, including `MEMORY_EXTRACTOR=fake` as the offline default.
+  unchanged. `MEMORY_EXTRACTOR` defaults to `ark`; offline tests opt into
+  `fake` explicitly.
 - `workspace.ts` continues to export the pure managed-block helpers and
   `writeInstructions()` continues to preserve `<!-- memory:* -->` blocks.
 - `TODO.md`, `types.ts`, `config.ts`, `app.ts`, and `apps/web/**` were not
@@ -95,8 +96,8 @@ spans before the memory flush boundary.
 - `workspace-memory.ts` imports and re-exports `replaceManagedBlock` and
   `removeManagedBlock` from `workspace.ts`; there is one managed-block
   implementation shared by group charters and governed-memory landing.
-- Keep memory extraction on `fake` for offline checks. Real Ark extraction is
-  an explicit environment choice.
+- Memory extraction defaults to `ark`. Offline checks and demos must select
+  `MEMORY_EXTRACTOR=fake` explicitly.
 - The runtime calls the memory pipeline only after the existing flush decision;
   active trace persistence does not implicitly trigger consolidation.
 
@@ -120,8 +121,8 @@ spans before the memory flush boundary.
 - `CODEX_HOME/skills` must not contain governed `memory-*` entries.
 - Local-process group runs require a writable workspace root for symlinks;
   container runs require a writable bind-mounted workspace and Codex home.
-- Keep `MEMORY_EXTRACTOR=fake` unless a live Ark key and model are deliberately
-  configured.
+- The default Ark extractor requires a valid Ark key and model for live tasks;
+  select `MEMORY_EXTRACTOR=fake` explicitly for offline operation.
 
 ### Integration requirements
 

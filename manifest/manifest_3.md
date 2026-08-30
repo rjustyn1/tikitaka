@@ -10,11 +10,9 @@ a live Ark model (the offline path — tests/demo — is fully exercised).
 ## Integration resolution
 
 Person 1 integrated this work after the Person 2 planner. The provenance-index,
-single-config-source, and required pipeline-config changes were retained. The
-`MEMORY_EXTRACTOR` schema default was restored to `fake`, per `SPEC.md` and the
-Person 1 config contract, so `npm run check` cannot make an implicit network
-request. A live/demo environment can still opt into Ark explicitly with
-`MEMORY_EXTRACTOR=ark` and valid `ARK_*` values.
+single-config-source, and required pipeline-config changes were retained.
+`MEMORY_EXTRACTOR` defaults to `ark`; offline tests and demos opt into `fake`
+explicitly.
 
 ---
 
@@ -83,9 +81,8 @@ gone (replaced earlier by a 120s fallback constant).
   + fake expectations.
 
 ### Item 4 — Fake extraction explicit & safe
-- **`config.ts`**: Person 3 proposed changing the schema default from `fake` to
-  `ark`; integration retained `fake` as the required offline default. Real Ark
-  extraction is still an explicit `MEMORY_EXTRACTOR=ark` choice.
+- **`config.ts`**: `MEMORY_EXTRACTOR` defaults to `ark`. Offline tests and demos
+  select `fake` explicitly.
 - **`extractor-client.ts`**: loud `TEST/DEMO ONLY — NOT a real extractor` doc
   block on `FakeExtractorClient` (canned + topic-blind warning).
 - **`.env.example`**: already had `MEMORY_EXTRACTOR=ark` and
@@ -117,9 +114,8 @@ apps/server/src/memory/pipeline.ts
    built a custom `ExtractorClient` or asserted on the old prompt/JSON shape,
    update it. The **persisted** note fields are unchanged, so store/API/web need
    nothing.
-4. **Default extractor remains `fake` after integration.** Set
-   `MEMORY_EXTRACTOR=ark` explicitly for live extraction and provide valid
-   `ARK_*` configuration.
+4. **Default extractor is `ark`.** Provide valid `ARK_*` configuration for live
+   extraction, or set `MEMORY_EXTRACTOR=fake` explicitly when offline.
 5. Re-run `npm run check` after merge (full check happens post-integration per the
    README concurrency rules).
 

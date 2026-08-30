@@ -24,7 +24,7 @@ const workspaces = new WorkspaceManager(
 );
 const runner = createRunner(config);
 // W1 + W2 - the real governed-memory pipeline, with Person 1 config.
-// MEMORY_EXTRACTOR defaults to "fake", so nothing here reaches the network.
+// MEMORY_EXTRACTOR defaults to "ark"; offline environments must select "fake".
 const memoryPipeline = createMemoryPipeline(store, config, {
   reviewAllSkills: config.reviewAllSkills,
 });
