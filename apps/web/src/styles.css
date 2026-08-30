@@ -412,6 +412,11 @@ button {
   cursor: pointer;
 }
 
+.error-banner .error-action {
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .agent-header {
   max-width: 1180px;
   margin: 0 auto 18px;
@@ -1159,6 +1164,7 @@ textarea:focus {
 .role-backend { background: var(--purple); }
 .role-frontend { background: #2f8fbf; }
 .role-security { background: #c07a2b; }
+.role-member { background: #69707d; }
 
 .muted-note { color: var(--muted); font-size: 12px; margin: 0; }
 .panel-note {
@@ -1456,6 +1462,14 @@ textarea:focus {
 .roster-copy { display: flex; flex-direction: column; min-width: 0; }
 .roster-copy strong { font-size: 13px; }
 .roster-copy span { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.role-label-input {
+  width: min(160px, 100%);
+  height: 32px;
+  margin-top: 0;
+  flex: 0 1 160px;
+  font-size: 12px;
+}
+.role-label-input:disabled { opacity: 0.45; }
 .role-picker { display: flex; gap: 4px; }
 .role-chip {
   border: 1px solid var(--line);
@@ -1688,6 +1702,7 @@ textarea:focus {
 .role-bg-backend { background: var(--purple); }
 .role-bg-frontend { background: #2f8fbf; }
 .role-bg-security { background: #c07a2b; }
+.role-bg-member { background: #69707d; }
 .member-name { display: flex; flex-direction: column; min-width: 0; }
 .member-name strong { font-size: 13px; font-weight: 600; }
 .member-role {
@@ -1700,6 +1715,7 @@ textarea:focus {
 .role-text-backend { color: var(--purple-dark); }
 .role-text-frontend { color: #23708f; }
 .role-text-security { color: #96601f; }
+.role-text-member { color: var(--muted); }
 .member-description {
   margin: 9px 0 0;
   font-size: 12px;

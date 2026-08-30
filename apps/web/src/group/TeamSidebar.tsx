@@ -10,7 +10,7 @@
  * member rail by colour alone.
  */
 import type { Agent, AgentGroup } from "../types";
-import { agentName } from "./format";
+import { agentName, roleClass } from "./format";
 
 export function TeamSidebar({
   groups,
@@ -63,7 +63,7 @@ export function TeamSidebar({
               {group.members.map((member) => (
                 <span
                   key={member.agentId}
-                  className={"role-dot role-" + member.role}
+                  className={"role-dot role-" + roleClass(member.role)}
                 />
               ))}
             </span>

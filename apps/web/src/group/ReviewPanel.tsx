@@ -18,7 +18,13 @@ import type {
   MemorySeverity,
   ReviewNoteInput,
 } from "../types";
-import { agentName, isAwaitingReview, reviewReasons, statusTone } from "./format";
+import {
+  agentName,
+  isAwaitingReview,
+  reviewReasons,
+  roleClass,
+  statusTone,
+} from "./format";
 import { EmptyState, Pill } from "./panels";
 
 interface Props {
@@ -204,7 +210,9 @@ export function ReviewPanel({
               <span className="eyebrow">Routed to</span>
               {note.targetAgentIds.map((id) => (
                 <span key={id} className="target-chip">
-                  <span className={"role-dot role-" + (memberRole(id) ?? "")} />
+                  <span
+                    className={"role-dot role-" + roleClass(memberRole(id))}
+                  />
                   {agentName(agents, id)}
                 </span>
               ))}

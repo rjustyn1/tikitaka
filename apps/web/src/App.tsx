@@ -48,25 +48,50 @@ function TracePanel({
   onClose: () => void;
 }) {
   const [loading, setLoading] = useState(true);
+  const [traceError, setTraceError] = useState<string | null>(null);
+  const [runStatus, setRunStatus] = useState<AgentRun["status"] | null>(null);
   const [summary, setSummary] = useState<RunTraceSummary | null>(null);
   const [spans, setSpans] = useState<TraceSpan[]>([]);
   const [filter, setFilter] = useState<TraceFilter>("all");
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [reloadRevision, setReloadRevision] = useState(0);
 
   useEffect(() => {
+    let current = true;
+    let timer: number | undefined;
     setLoading(true);
+    setTraceError(null);
     const params: { type?: string; status?: string } = {};
     if (filter === "failed") params.status = "failed";
     if (filter === "reasoning") params.type = "reasoning";
-    api
-      .trace(runId, filter === "all" ? undefined : params)
-      .then((result) => {
+
+    const refresh = async () => {
+      try {
+        const result = await api.trace(
+          runId,
+          filter === "all" ? undefined : params,
+        );
+        if (!current) return;
+        setRunStatus(result.run.status);
         setSummary(result.summary);
         setSpans(result.spans);
-      })
-      .catch(() => undefined)
-      .finally(() => setLoading(false));
-  }, [runId, filter]);
+        setLoading(false);
+        if (["queued", "running"].includes(result.run.status)) {
+          timer = window.setTimeout(() => void refresh(), 900);
+        }
+      } catch (reason) {
+        if (!current) return;
+        setLoading(false);
+        setTraceError(reason instanceof Error ? reason.message : String(reason));
+      }
+    };
+
+    void refresh();
+    return () => {
+      current = false;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [runId, filter, reloadRevision]);
 
   const toggleExpand = (id: string) => {
     setExpandedIds((prev) => {
@@ -252,9 +277,6 @@ function TracePanel({
     return null;
   };
 
-  // Build an id set of spans that are children (have a parentId in the current span list)
-  const childIds = new Set(spans.filter((s) => s.parentId !== null).map((s) => s.parentId as string));
-
   // Render spans: parent reasoning cards contain their children
   const rendered: React.ReactNode[] = [];
   const visited = new Set<string>();
@@ -354,6 +376,7 @@ function TracePanel({
         <div>
           <span className="eyebrow">Run trace</span>
           <h2>Agent execution steps</h2>
+          {runStatus && <span className={"status status-" + runStatus}>{runStatus}</span>}
         </div>
         <button type="button" onClick={onClose}>×</button>
       </div>
@@ -397,7 +420,19 @@ function TracePanel({
         ))}
       </div>
 
-      {loading ? (
+      {traceError ? (
+        <div className="error-banner" role="alert">
+          <span>{traceError}</span>
+          <button
+            type="button"
+            className="error-action"
+            aria-label="Retry trace"
+            onClick={() => setReloadRevision((current) => current + 1)}
+          >
+            Retry
+          </button>
+        </div>
+      ) : loading ? (
         <div style={{ textAlign: "center", padding: 24 }}>
           <Spinner />
         </div>

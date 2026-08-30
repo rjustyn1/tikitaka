@@ -14,7 +14,7 @@ import type {
   GroupTaskStatus,
   LandedMemoryFile,
 } from "../types";
-import { agentName, fileTail } from "./format";
+import { agentName, fileTail, roleClass } from "./format";
 import { liveStatusFor } from "./liveStatus";
 
 export function MemberRail({
@@ -58,12 +58,12 @@ export function MemberRail({
             className={"member-card member-" + status.state}
           >
             <div className="member-identity">
-              <span className={"member-avatar role-bg-" + member.role}>
+              <span className={"member-avatar role-bg-" + roleClass(member.role)}>
                 {name.slice(0, 1).toUpperCase()}
               </span>
               <div className="member-name">
                 <strong>{name}</strong>
-                <span className={"member-role role-text-" + member.role}>
+                <span className={"member-role role-text-" + roleClass(member.role)}>
                   {member.role}
                 </span>
               </div>

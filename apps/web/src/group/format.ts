@@ -34,7 +34,15 @@ export function isTerminal(status: GroupTaskStatus): boolean {
   return TERMINAL_STATUSES.includes(status);
 }
 
-export const ROLES: readonly GroupRole[] = ["backend", "frontend", "security"];
+/** Map a free-form display role onto one of the available visual accents. */
+export function roleClass(role: GroupRole | null): string {
+  const normalized = role?.trim().toLowerCase();
+  return normalized === "backend" ||
+    normalized === "frontend" ||
+    normalized === "security"
+    ? normalized
+    : "member";
+}
 
 /** Resolve an Agent id to a name, falling back to a short id rather than "". */
 export function agentName(agents: Agent[], agentId: string | null): string {
@@ -170,20 +178,7 @@ export function isAwaitingReview(note: MemoryNote): boolean {
   return note.status === "pending" || note.status === "quarantined";
 }
 
-/** Chain order for display: dependency order, which for v1 is a straight line. */
+/** Preserve the validated planner order persisted and returned by the server. */
 export function orderedNodes(nodes: GroupPlanNode[]): GroupPlanNode[] {
-  const byId = new Map(nodes.map((node) => [node.id, node]));
-  const depth = (node: GroupPlanNode, seen = new Set<string>()): number => {
-    if (seen.has(node.id)) return 0; // defensive: never loop on a bad cycle
-    seen.add(node.id);
-    const parents = node.dependsOn
-      .map((id) => byId.get(id))
-      .filter((parent): parent is GroupPlanNode => parent !== undefined);
-    if (parents.length === 0) return 0;
-    return 1 + Math.max(...parents.map((parent) => depth(parent, seen)));
-  };
-  return [...nodes].sort((left, right) => {
-    const delta = depth(left) - depth(right);
-    return delta !== 0 ? delta : left.id.localeCompare(right.id);
-  });
+  return [...nodes];
 }

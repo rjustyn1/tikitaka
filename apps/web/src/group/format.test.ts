@@ -6,7 +6,7 @@
  * put the operator's home directory on screen during a demo.
  */
 import { describe, expect, it } from "vitest";
-import { fileTail } from "./format";
+import { fileTail, roleClass } from "./format";
 
 describe("fileTail", () => {
   it("keeps the last two segments of a POSIX path", () => {
@@ -29,5 +29,13 @@ describe("fileTail", () => {
 
   it("returns a short path unchanged rather than padding it", () => {
     expect(fileTail("AGENTS.md")).toBe("AGENTS.md");
+  });
+});
+
+describe("roleClass", () => {
+  it("keeps known accents and safely maps free-form labels", () => {
+    expect(roleClass("backend")).toBe("backend");
+    expect(roleClass("Product Owner")).toBe("member");
+    expect(roleClass(null)).toBe("member");
   });
 });

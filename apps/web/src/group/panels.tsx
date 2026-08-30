@@ -20,6 +20,7 @@ import {
   formatTime,
   grantTone,
   orderedNodes,
+  roleClass,
   roleOf,
   shortId,
   statusTone,
@@ -50,7 +51,7 @@ export function EmptyState({ icon, title, body }: {
   );
 }
 
-/** The five-node chain, with live status per node. */
+/** The planner-authored node order, with live status per node. */
 export function ChainPanel({
   nodes,
   agents,
@@ -84,7 +85,12 @@ export function ChainPanel({
             </div>
             <div className="chain-meta">
               <span>
-                <span className={"role-dot role-" + (roleOf(group.members, node.agentId) ?? "")} />
+                <span
+                  className={
+                    "role-dot role-" +
+                    roleClass(roleOf(group.members, node.agentId))
+                  }
+                />
                 {agentName(agents, node.agentId)}
               </span>
               <span>{durationOf(node.startedAt, node.completedAt)}</span>
@@ -181,9 +187,11 @@ export function TimelinePanel({
                   <span
                     className={
                       "role-dot role-" +
-                      (message.speakerAgentId
-                        ? roleOf(group.members, message.speakerAgentId) ?? ""
-                        : "")
+                      roleClass(
+                        message.speakerAgentId
+                          ? roleOf(group.members, message.speakerAgentId)
+                          : null,
+                      )
                     }
                   />
                   <strong>{agentName(agents, message.speakerAgentId)}</strong>

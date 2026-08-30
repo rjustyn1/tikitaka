@@ -139,7 +139,7 @@ export const api = {
   listGroupTasks: (groupId: string) =>
     request<{ tasks: GroupTask[] }>("/api/groups/" + groupId + "/tasks"),
   // The route exists (SPEC Part 2) but had no client method. Needed for QA and
-  // the demo: the v1 chain is five nodes at up to CODEX_TIMEOUT_MS each.
+  // the demo: planner-selected nodes may each run up to CODEX_TIMEOUT_MS.
   cancelGroupTask: (groupId: string, taskId: string) =>
     request<{ task: GroupTask }>(
       "/api/groups/" + groupId + "/tasks/" + taskId + "/cancel",

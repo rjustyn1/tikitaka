@@ -467,7 +467,7 @@ export function GroupWorkspace({
 
           {running && (
             <p className="panel-note">
-              The chain is running. Memory is proposed only after every step
+              The plan is running. Memory is proposed only after every step
               finishes and consolidation completes.
             </p>
           )}

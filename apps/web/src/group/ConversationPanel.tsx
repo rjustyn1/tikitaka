@@ -8,7 +8,7 @@
  * above seven equal-weight tabs.
  */
 import type { Agent, AgentGroup, GroupMessage } from "../types";
-import { agentName, formatTime, roleOf } from "./format";
+import { agentName, formatTime, roleClass, roleOf } from "./format";
 import { EmptyState } from "./panels";
 
 export function ConversationPanel({
@@ -57,7 +57,7 @@ export function ConversationPanel({
                 <span
                   className={
                     "chat-avatar " +
-                    (role ? "role-bg-" + role : "chat-avatar-human")
+                    (role ? "role-bg-" + roleClass(role) : "chat-avatar-human")
                   }
                   aria-hidden="true"
                 >
@@ -67,7 +67,7 @@ export function ConversationPanel({
                   <div className="chat-meta">
                     <strong>{name}</strong>
                     {role && (
-                      <span className={"chat-role role-text-" + role}>
+                      <span className={"chat-role role-text-" + roleClass(role)}>
                         {role}
                       </span>
                     )}

@@ -1,27 +1,11 @@
-/**
- * Create or edit a group.
- *
- * A4: membership is role-bound. The v1 plan is a fixed five-node chain whose
- * nodes reference ROLES, not Agent names or list order, so a group needs
- * exactly one backend, one frontend and one security member. Anything else and
- * `startGroupTask` cannot build the chain, so the form refuses to submit rather
- * than letting the server 409 later.
- */
+/** Create or edit a planner-backed Agent group. */
 import { useMemo, useState } from "react";
 import type { Agent, AgentGroup, GroupMember, GroupRole } from "../types";
-import { ROLES } from "./format";
 
-const CHAIN_PREVIEW: readonly { role: GroupRole; label: string }[] = [
-  { role: "backend", label: "contract" },
-  { role: "frontend", label: "plan" },
-  { role: "security", label: "review" },
-  { role: "backend", label: "implement" },
-  { role: "frontend", label: "implement" },
-];
+const MAX_MEMBERS = 12;
 
 interface Props {
   agents: Agent[];
-  /** Present when editing; absent when creating. */
   group: AgentGroup | null;
   busy: boolean;
   onCancel: () => void;
@@ -35,9 +19,6 @@ interface Props {
 export function GroupEditor({ agents, group, busy, onCancel, onSubmit }: Props) {
   const [name, setName] = useState(group?.name ?? "");
   const [description, setDescription] = useState(group?.description ?? "");
-  // agentId -> role. Deliberately starts EMPTY on create: "Do not auto-select
-  // all Agents by default" (FRONTEND-UI.md). Membership is a governance
-  // boundary, so it has to be an explicit act.
   const [assignments, setAssignments] = useState<Record<string, GroupRole>>(
     () => {
       const initial: Record<string, GroupRole> = {};
@@ -50,57 +31,32 @@ export function GroupEditor({ agents, group, busy, onCancel, onSubmit }: Props) 
 
   const members = useMemo<GroupMember[]>(
     () =>
-      Object.entries(assignments).map(([agentId, role]) => ({ agentId, role })),
+      Object.entries(assignments).map(([agentId, role]) => ({
+        agentId,
+        role: role.trim() || "member",
+      })),
     [assignments],
   );
 
-  const roleHolder = (role: GroupRole): Agent | null => {
-    const entry = Object.entries(assignments).find(
-      ([, assigned]) => assigned === role,
-    );
-    if (!entry) return null;
-    return agents.find((agent) => agent.id === entry[0]) ?? null;
-  };
-
-  const missingRoles = ROLES.filter((role) => !roleHolder(role));
-  const valid = name.trim().length > 0 && missingRoles.length === 0;
+  const valid =
+    name.trim().length > 0 &&
+    members.length >= 1 &&
+    members.length <= MAX_MEMBERS;
 
   const toggle = (agentId: string) => {
-    setAssignments((prev) => {
-      const next = { ...prev };
-      if (next[agentId]) {
+    setAssignments((previous) => {
+      const next = { ...previous };
+      if (Object.hasOwn(next, agentId)) {
         delete next[agentId];
-        return next;
+      } else if (Object.keys(next).length < MAX_MEMBERS) {
+        next[agentId] = "member";
       }
-      // Assign the first role nobody holds yet, so the common path is one click.
-      const taken = new Set(Object.values(next));
-      const free = ROLES.find((role) => !taken.has(role));
-      if (!free) return next; // all three roles held; untoggle someone first
-      next[agentId] = free;
       return next;
     });
   };
 
-  const assignRole = (agentId: string, role: GroupRole) => {
-    setAssignments((prev) => {
-      const next = { ...prev };
-      const previousRole = next[agentId];
-      const currentHolder = Object.keys(next).find(
-        (id) => next[id] === role && id !== agentId,
-      );
-      next[agentId] = role;
-      // A role is held by exactly one Agent. SWAP with the current holder
-      // rather than dropping it: silently unassigning someone invalidates the
-      // whole form and the user has to work out which role went missing.
-      if (currentHolder) {
-        if (previousRole) {
-          next[currentHolder] = previousRole;
-        } else {
-          delete next[currentHolder];
-        }
-      }
-      return next;
-    });
+  const assignRole = (agentId: string, role: string) => {
+    setAssignments((previous) => ({ ...previous, [agentId]: role }));
   };
 
   const submit = (event: React.FormEvent) => {
@@ -117,13 +73,11 @@ export function GroupEditor({ agents, group, busy, onCancel, onSubmit }: Props) 
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="modal-heading">
-          <span className="eyebrow">
-            {group ? "Edit team" : "New team"}
-          </span>
+          <span className="eyebrow">{group ? "Edit team" : "New team"}</span>
           <h2>{group ? "Update membership" : "Assemble a team"}</h2>
           <p>
-            Pick three Agents and give each one a role. The plan binds its steps
-            to roles, so any three Agents can run it.
+            Select the Agents who may collaborate. Their labels identify them
+            in the team; the planner decides who works on each task.
           </p>
         </div>
 
@@ -150,30 +104,30 @@ export function GroupEditor({ agents, group, busy, onCancel, onSubmit }: Props) 
 
         <div className="roster-head">
           <span className="eyebrow">Members</span>
-          <span className={missingRoles.length ? "roster-missing" : "roster-ok"}>
-            {missingRoles.length === 0
-              ? "all roles filled"
-              : "still need: " + missingRoles.join(", ")}
+          <span className={members.length > 0 ? "roster-ok" : "roster-missing"}>
+            {members.length} of {MAX_MEMBERS} selected
           </span>
         </div>
 
         <div className="roster">
           {agents.length === 0 && (
             <p className="muted-note">
-              No Agents yet. Create at least three from the Agents view first.
+              No Agents yet. Create an Agent from the Agents view first.
             </p>
           )}
           {agents.map((agent) => {
-            const role = assignments[agent.id];
+            const selected = Object.hasOwn(assignments, agent.id);
+            const role = assignments[agent.id] ?? "";
             return (
               <div
                 key={agent.id}
-                className={"roster-row " + (role ? "is-member" : "")}
+                className={"roster-row " + (selected ? "is-member" : "")}
               >
                 <label className="roster-toggle">
                   <input
                     type="checkbox"
-                    checked={Boolean(role)}
+                    checked={selected}
+                    disabled={!selected && members.length >= MAX_MEMBERS}
                     onChange={() => toggle(agent.id)}
                   />
                   <span className="agent-avatar">
@@ -184,43 +138,19 @@ export function GroupEditor({ agents, group, busy, onCancel, onSubmit }: Props) 
                     <span>{agent.description || "Coding Agent"}</span>
                   </span>
                 </label>
-                <div className="role-picker" aria-label={"Role for " + agent.name}>
-                  {ROLES.map((option) => (
-                    <button
-                      key={option}
-                      type="button"
-                      className={
-                        "role-chip " + (role === option ? "selected" : "")
-                      }
-                      disabled={!role}
-                      onClick={() => assignRole(agent.id, option)}
-                    >
-                      {option}
-                    </button>
-                  ))}
-                </div>
+                <input
+                  className="role-label-input"
+                  aria-label={"Role for " + agent.name}
+                  value={role}
+                  disabled={!selected}
+                  placeholder="member"
+                  maxLength={40}
+                  onChange={(event) => assignRole(agent.id, event.target.value)}
+                />
               </div>
             );
           })}
         </div>
-
-        {valid && (
-          <div className="chain-preview">
-            <span className="eyebrow">The plan this team will run</span>
-            <ol>
-              {CHAIN_PREVIEW.map((step, index) => {
-                const holder = roleHolder(step.role);
-                return (
-                  <li key={index}>
-                    <span className={"role-dot role-" + step.role} />
-                    {holder?.name ?? step.role}
-                    <em>{step.label}</em>
-                  </li>
-                );
-              })}
-            </ol>
-          </div>
-        )}
 
         <div className="modal-footer">
           <button type="button" className="button button-ghost" onClick={onCancel}>

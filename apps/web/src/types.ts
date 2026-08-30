@@ -103,7 +103,7 @@ export type GroupTaskStatus =
   | "failed";
 
 export type GroupPlanNodeKind = "work" | "join";
-export type GroupRole = "backend" | "frontend" | "security";
+export type GroupRole = "backend" | "frontend" | "security" | (string & {});
 export type MemorySeverity = "normal" | "severe";
 export type MemoryStatus =
   | "candidate"

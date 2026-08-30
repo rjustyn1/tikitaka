@@ -2205,11 +2205,11 @@ names in Tasks 2 and 4. `useAgentMemory(agentIds, revision)` returns
 The planned Teams work is present in the working tree. Before handoff, finish
 the implementation through this short, additive QA pass:
 
-- [ ] Preserve selection correctness: clear a prior team's task when the user
+- [x] Preserve selection correctness: clear a prior team's task when the user
   selects another team, then cover the regression in a frontend test.
-- [ ] Make group-list loading and failure states explicit so a failed request
+- [x] Make group-list loading and failure states explicit so a failed request
   cannot impersonate an empty Teams workspace.
-- [ ] Make member-memory reads race-safe when a user switches teams quickly.
+- [x] Make member-memory reads race-safe when a user switches teams quickly.
 - [ ] Re-run web typecheck, tests, production build, the baseline-CSS guard,
   and a bounded desktop/mobile browser rehearsal. Report the known server-side
   stale-workspace conflict without masking or changing it here.
