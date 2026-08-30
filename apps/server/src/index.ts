@@ -5,10 +5,14 @@ import { loadConfig, writeCodexConfig } from "./config.js";
 import { createMemoryPipeline } from "./memory/pipeline.js";
 import { createRunner } from "./runner-factory.js";
 import { JsonStore } from "./store.js";
-import { WorkspaceManager } from "./workspace.js";
+import {
+  assertNoGovernedMemoryInCodexHome,
+  WorkspaceManager,
+} from "./workspace.js";
 
 const config = loadConfig();
 await writeCodexConfig(config);
+await assertNoGovernedMemoryInCodexHome(config.codexHome);
 
 const store = new JsonStore(path.join(config.dataDirectory, "launchpad.json"));
 // A2 - the runtime decides how shared group code is exposed as ./code.

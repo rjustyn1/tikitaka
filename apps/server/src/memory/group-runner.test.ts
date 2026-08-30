@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -6,7 +6,7 @@ import { AgentService } from "../agent-service.js";
 import { loadConfig } from "../config.js";
 import { JsonStore } from "../store.js";
 import { FakeRunner } from "../test-helpers.js";
-import type { Agent } from "../types.js";
+import type { Agent, TraceSpan } from "../types.js";
 import { WorkspaceManager } from "../workspace.js";
 import type { MemoryPipeline } from "./pipeline.js";
 import { RecordingMemoryPipeline } from "../test-helpers.js";
@@ -147,6 +147,94 @@ describe("group lifecycle", () => {
       .toBeNull();
   });
 
+  it("cleans setup artifacts when a member rejects shared code", async () => {
+    const harness = await makeHarness();
+    await writeFile(path.join(harness.frontend.workspacePath, "code"), "owned", "utf8");
+    const group = await harness.service.createGroup({
+      name: "Upload Feature Team",
+      members: harness.members,
+    });
+
+    await expect(
+      harness.service.startGroupTask(group.id, "Plan an upload feature."),
+    ).rejects.toMatchObject({ statusCode: 409 });
+
+    await expect(lstat(path.join(harness.backend.workspacePath, "code"))).rejects.toThrow();
+    expect(await readFile(path.join(harness.frontend.workspacePath, "code"), "utf8")).toBe(
+      "owned",
+    );
+    expect(await readdir(path.join(harness.root, "workspaces", "shared-code"))).toEqual([]);
+    expect(harness.store.snapshot().groupTasks).toHaveLength(0);
+  });
+
+  it("persists a group span before its node completes", async () => {
+    const runner = new FakeRunner();
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let spanSeen!: () => void;
+    const seen = new Promise<void>((resolve) => {
+      spanSeen = resolve;
+    });
+    runner.run = async (request) => {
+      const startedAt = new Date().toISOString();
+      const span: TraceSpan = {
+        id: "group-active-span",
+        runId: request.runId,
+        agentId: request.agentId,
+        seq: 1,
+        type: "reasoning",
+        parentId: null,
+        status: "started",
+        startedAt,
+        completedAt: null,
+        durationMs: null,
+        payload: { kind: "reasoning", text: "thinking", truncated: false },
+        itemId: null,
+      };
+      request.onSpan?.(span);
+      spanSeen();
+      await pending;
+      return { output: "done", threadId: "group-thread", usage: null };
+    };
+    const harness = await makeHarness(runner);
+    const group = await harness.service.createGroup({
+      name: "Upload Feature Team",
+      members: harness.members,
+    });
+    const task = await harness.service.startGroupTask(group.id, "Plan it.");
+
+    await spanSeen;
+    await expect.poll(() => harness.store.snapshot().runs.length).toBe(1);
+    const runId = harness.store.snapshot().runs[0]!.id;
+    expect(harness.service.getGroupTask(task.id).nodes[0]!.runId).toBe(runId);
+    await expect.poll(() => harness.service.getSpans(runId).spans).toHaveLength(1);
+    expect(harness.service.getRun(runId).status).toBe("running");
+
+    release();
+    await settle(harness, task.id);
+  });
+
+  it("starts a second local-process task after the first completes", async () => {
+    const harness = await makeHarness();
+    const group = await harness.service.createGroup({
+      name: "Upload Feature Team",
+      members: harness.members,
+    });
+
+    const first = await harness.service.startGroupTask(group.id, "First task.");
+    await settle(harness, first.id);
+    const second = await harness.service.startGroupTask(group.id, "Second task.");
+    await settle(harness, second.id);
+
+    expect(harness.service.getGroupTask(first.id).task.status).toBe("completed");
+    expect(harness.service.getGroupTask(second.id).task.status).toBe("completed");
+    for (const agent of [harness.backend, harness.frontend, harness.security]) {
+      await expect(lstat(path.join(agent.workspacePath, "code"))).rejects.toThrow();
+    }
+  });
+
   it("gives a re-added Agent a new epoch and a fresh group thread", async () => {
     const harness = await makeHarness();
     const group = await harness.service.createGroup({
@@ -285,13 +373,14 @@ describe("sequential chain execution", () => {
 
     for (const agent of [harness.backend, harness.frontend, harness.security]) {
       await writeFile(
-        path.join(agent.workspacePath, "code", agent.name + ".txt"),
+        path.join(shared, agent.name + ".txt"),
         agent.name,
         "utf8",
       );
       expect(await readFile(path.join(shared, agent.name + ".txt"), "utf8")).toBe(
         agent.name,
       );
+      await expect(lstat(path.join(agent.workspacePath, "code"))).rejects.toThrow();
     }
     // Every group run carried sharedCodePath; that is what becomes --add-dir
     // or the nested bind mount.

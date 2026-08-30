@@ -15,6 +15,7 @@ import type {
   GroupTask,
   RunnerRequest,
   RunnerResult,
+  TraceSpan,
 } from "./types.js";
 import { WorkspaceManager } from "./workspace.js";
 
@@ -97,6 +98,53 @@ describe("Agent lifecycle", () => {
     expect(messages.map((message) => message.role)).toEqual(["user", "assistant"]);
     expect(messages[1]?.content).toContain("write hello world");
     expect(service.getAgent(agent.id).codexThreadId).toBe("fake-thread");
+  });
+
+  it("persists trace spans while a run is still active", async () => {
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let spanSeen!: () => void;
+    const seen = new Promise<void>((resolve) => {
+      spanSeen = resolve;
+    });
+    const runner: AgentRunner = {
+      run: async (request) => {
+        const startedAt = new Date().toISOString();
+        const span: TraceSpan = {
+          id: "active-span",
+          runId: request.runId,
+          agentId: request.agentId,
+          seq: 1,
+          type: "reasoning",
+          parentId: null,
+          status: "started",
+          startedAt,
+          completedAt: null,
+          durationMs: null,
+          payload: { kind: "reasoning", text: "thinking", truncated: false },
+          itemId: null,
+        };
+        request.onSpan?.(span);
+        spanSeen();
+        await pending;
+        return { output: "done", threadId: "thread", usage: null };
+      },
+      cancel: async () => false,
+      isAvailable: async () => true,
+    };
+    const service = await makeService(runner);
+    const agent = await service.createAgent({ name: "Traceable" });
+    const { run } = await service.sendMessage(agent.id, "show active trace");
+
+    await spanSeen;
+    await expect.poll(() => service.getSpans(run.id).spans).toHaveLength(1);
+    expect(service.getRun(run.id).status).toBe("running");
+
+    release();
+    await expect.poll(() => service.getRun(run.id).status).toBe("completed");
+    expect(service.getSpans(run.id).spans[0]?.status).toBe("started");
   });
 
   it("starts a fresh Codex thread when requested", async () => {

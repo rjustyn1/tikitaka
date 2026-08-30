@@ -370,8 +370,18 @@ export class AgentService implements AgentLease {
       }
     });
 
-    // Collect spans via callback; single flush at terminal state
-    const spanBuffer: TraceSpan[] = [];
+    // Persist spans as they arrive so an active run has an immediately useful
+    // trace. The queue preserves callback order and the upsert handles Codex
+    // sending a started span followed by its completed update.
+    let spanWriteQueue: Promise<void> = Promise.resolve();
+    const spansById = new Map<string, TraceSpan>();
+    const enqueueSpan = (span: TraceSpan): void => {
+      const snapshot = structuredClone(span);
+      spansById.set(snapshot.id, snapshot);
+      spanWriteQueue = spanWriteQueue
+        .then(() => this.persistSpan(snapshot))
+        .catch(() => undefined);
+    };
     // A5 - a fresh thread starts from null, so Codex re-reads AGENTS.md and skills.
     const threadIdAtStart = freshThread ? null : agentAtStart.codexThreadId;
     let capturedThreadId: string | null = threadIdAtStart;
@@ -390,15 +400,13 @@ export class AgentService implements AgentLease {
           capturedThreadId = id;
         },
         onSpan: (span) => {
-          spanBuffer.push(span);
+          enqueueSpan(span);
         },
       });
       capturedThreadId = result.threadId ?? capturedThreadId;
       const completedAt = now();
+      await spanWriteQueue;
       await this.store.mutate((database) => {
-        if (spanBuffer.length > 0) {
-          database.spans.push(...spanBuffer);
-        }
         const storedRun = database.runs.find((item) => item.id === run.id);
         const agent = database.agents.find((item) => item.id === agentAtStart.id);
         if (!storedRun || !agent) return;
@@ -425,19 +433,21 @@ export class AgentService implements AgentLease {
       const cancelled = error instanceof RunCancelledError;
       const message =
         error instanceof Error ? error.message : String(error);
-      // Mark any buffered "started" spans as incomplete before flushing
-      for (const span of spanBuffer) {
+      // Mark any open spans as incomplete before their final upsert.
+      for (const span of spansById.values()) {
         if (span.status === "started") {
-          span.status = "incomplete";
-          span.completedAt = completedAt;
-          span.durationMs =
-            new Date(completedAt).getTime() - new Date(span.startedAt).getTime();
+          enqueueSpan({
+            ...span,
+            status: "incomplete",
+            completedAt,
+            durationMs:
+              new Date(completedAt).getTime() -
+              new Date(span.startedAt).getTime(),
+          });
         }
       }
+      await spanWriteQueue;
       await this.store.mutate((database) => {
-        if (spanBuffer.length > 0) {
-          database.spans.push(...spanBuffer);
-        }
         const storedRun = database.runs.find((item) => item.id === run.id);
         const agent = database.agents.find((item) => item.id === agentAtStart.id);
         if (storedRun) {
@@ -457,6 +467,19 @@ export class AgentService implements AgentLease {
         }
       });
     }
+  }
+
+  private async persistSpan(span: TraceSpan): Promise<void> {
+    await this.store.mutate((database) => {
+      const existingIndex = database.spans.findIndex(
+        (existing) => existing.id === span.id,
+      );
+      if (existingIndex === -1) {
+        database.spans.push(span);
+      } else {
+        database.spans[existingIndex] = span;
+      }
+    });
   }
 
   private async setStatus(id: string, status: Agent["status"]): Promise<Agent> {

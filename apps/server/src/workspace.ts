@@ -1,6 +1,8 @@
 import {
+  lstat,
   mkdir,
   readFile,
+  readdir,
   readlink,
   rename,
   rm,
@@ -123,6 +125,31 @@ export function extractManagedBlocks(content: string): string[] {
   return content.match(MANAGED_BLOCK_PATTERN) ?? [];
 }
 
+/**
+ * Governed memory belongs to each Agent workspace, never to Codex's global
+ * skills directory. Keep this assertion at startup so a bad landing path is
+ * caught before the server accepts work.
+ */
+export async function assertNoGovernedMemoryInCodexHome(
+  codexHome: string,
+): Promise<void> {
+  const skillsPath = path.join(codexHome, "skills");
+  let entries: string[];
+  try {
+    entries = await readdir(skillsPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  const strayEntries = entries.filter((entry) => entry.startsWith("memory-"));
+  if (strayEntries.length > 0) {
+    throw new Error(
+      "Governed memory must never be written under CODEX_HOME/skills: " +
+        strayEntries.join(", "),
+    );
+  }
+}
+
 export class WorkspaceManager {
   /**
    * `runtimeProvider` decides how shared code is exposed as `./code` (A2). It
@@ -234,6 +261,16 @@ export class WorkspaceManager {
     return target;
   }
 
+  /** Remove an unclaimed task directory after setup fails. */
+  async removeSharedCodeDirectory(groupTaskId: string): Promise<void> {
+    const sharedRoot = path.resolve(this.root, "shared-code");
+    const target = path.resolve(this.sharedCodePath(groupTaskId));
+    if (path.dirname(target) !== sharedRoot) {
+      throw new Error("Invalid shared-code task id");
+    }
+    await rm(target, { recursive: true, force: true });
+  }
+
   /**
    * Expose the shared code directory as `./code` in an Agent's private root.
    *
@@ -278,10 +315,23 @@ export class WorkspaceManager {
 
   /** Drop the `./code` link once a group task is over. Never touches the target. */
   async releaseSharedCode(agent: Agent): Promise<void> {
-    await rm(path.join(agent.workspacePath, "code"), {
-      recursive: true,
-      force: true,
-    });
+    const codePath = path.join(agent.workspacePath, "code");
+    let stat: Awaited<ReturnType<typeof lstat>>;
+    try {
+      stat = await lstat(codePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+
+    // A local-process task owns a symlink. A container task owns an empty
+    // mount point after its container exits. Never recursively delete a real
+    // directory: it may be user data rather than a platform-created mount.
+    if (stat.isSymbolicLink()) {
+      await rm(codePath, { force: true });
+    } else if (this.runtimeProvider === "container" && stat.isDirectory()) {
+      await rm(codePath, { force: true });
+    }
   }
 
   /**

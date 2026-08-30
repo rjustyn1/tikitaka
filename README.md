@@ -158,20 +158,25 @@ docker compose down
 
 ```bash
 npm install
-cp .env.example .env
 npm install --global @openai/codex@0.111.0
+APP_DATA_DIR="$PWD/.data" \
+AGENT_WORKSPACE_ROOT="$PWD/workspaces" \
+CODEX_HOME="$PWD/codex-home" \
 npm run dev
 ```
 
 - Web UI: <http://localhost:5173>
 - API: <http://localhost:3000>
 
-Use local paths in `.env` when running outside Docker:
+The compose `.env.example` uses container paths such as `/app/data`. For a
+bare host development server, keep the three absolute repository-root paths
+above consistent when seeding demo data too:
 
-```dotenv
-APP_DATA_DIR=.data
-AGENT_WORKSPACE_ROOT=workspaces
-CODEX_HOME=codex-home
+```bash
+APP_DATA_DIR="$PWD/.data" \
+AGENT_WORKSPACE_ROOT="$PWD/workspaces" \
+CODEX_HOME="$PWD/codex-home" \
+npm run seed
 ```
 
 ## Deployment

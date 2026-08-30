@@ -78,6 +78,7 @@ export class GroupRunner {
    */
   async recoverFromRestart(): Promise<void> {
     this.activeTasks.clear();
+    const taskIds = this.store.snapshot().groupTasks.map((task) => task.id);
     await this.store.mutate((database) => {
       const timestamp = now();
       for (const task of database.groupTasks) {
@@ -100,6 +101,12 @@ export class GroupRunner {
         group.activeTaskId = null;
       }
     });
+    // A process restart can strand links even when the database recovery above
+    // correctly marks the task terminal. Releasing every known group-task link
+    // is safe because resumeGroupTask recreates the link before it runs.
+    await Promise.all(
+      taskIds.map((taskId) => this.releaseSharedCodeForTask(taskId)),
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -233,79 +240,106 @@ export class GroupRunner {
       return agent;
     });
 
-    // Filesystem first: a failure here must not leave a dangling task row.
+    // Filesystem first: a failure here must not leave a dangling task row or
+    // links on members that were prepared before a later member failed.
     const taskId = randomUUID();
-    const sharedCodePath =
+    const sharedCodePath = this.workspaces.sharedCodePath(taskId);
+    try {
       await this.workspaces.createSharedCodeDirectory(taskId);
-    for (const agent of agents) {
-      await this.workspaces.prepareSharedCode(agent, sharedCodePath);
+    } catch (error) {
+      await this.workspaces
+        .removeSharedCodeDirectory(taskId)
+        .catch(() => undefined);
+      throw error;
     }
-
-    const timestamp = now();
-    const task: GroupTask = {
-      id: taskId,
-      groupId,
-      prompt,
-      sharedCodePath,
-      status: "queued",
-      currentNodeId: null,
-      nodeRunIds: [],
-      flushedAt: null,
-      createdAt: timestamp,
-      startedAt: null,
-      completedAt: null,
-    };
-    const nodes = buildChainNodes(taskId, members, timestamp);
-
-    // The planner-written charter goes into each member's PRIVATE AGENTS.md,
-    // never into shared code.
-    const charter = buildGroupTaskCharter({
-      groupName: group.name,
-      taskPrompt: prompt,
-      roster: agents.map((agent) => ({
-        name: agent.name,
-        role:
-          members.find((member) => member.agentId === agent.id)?.role ??
-          "member",
-      })),
-    });
-    for (const agent of agents) {
-      await this.workspaces.writeGroupTaskSection(agent, task, charter);
-    }
-
-    await this.store.mutate((database) => {
-      const storedGroup = database.groups.find((item) => item.id === groupId);
-      if (!storedGroup) {
-        throw new HttpError(404, "Group not found");
+    const preparedAgents: Agent[] = [];
+    try {
+      for (const agent of agents) {
+        await this.workspaces.prepareSharedCode(agent, sharedCodePath);
+        preparedAgents.push(agent);
       }
-      if (storedGroup.activeTaskId) {
-        throw new HttpError(409, "This group already has a running task");
-      }
-      database.groupTasks.push(task);
-      database.groupPlanNodes.push(...nodes);
-      this.syncParticipants(
-        database,
-        storedGroup as AgentGroup,
-        timestamp,
-      );
-      database.groupMessages.push({
-        id: randomUUID(),
+
+      const timestamp = now();
+      const task: GroupTask = {
+        id: taskId,
         groupId,
-        seq: this.nextSeq(database, groupId),
-        speakerType: "human",
-        speakerAgentId: null,
-        groupTaskId: taskId,
-        planNodeId: null,
-        content: prompt,
+        prompt,
+        sharedCodePath,
+        status: "queued",
+        currentNodeId: null,
+        nodeRunIds: [],
+        flushedAt: null,
         createdAt: timestamp,
-      });
-      storedGroup.activeTaskId = taskId;
-      storedGroup.updatedAt = timestamp;
-    });
+        startedAt: null,
+        completedAt: null,
+      };
+      const nodes = buildChainNodes(taskId, members, timestamp);
 
-    this.activeTasks.set(taskId, { cancelled: false, heldAgentIds: new Set() });
-    void this.executeGroupTask(taskId).catch(() => undefined);
-    return task;
+      // The planner-written charter goes into each member's PRIVATE AGENTS.md,
+      // never into shared code.
+      const charter = buildGroupTaskCharter({
+        groupName: group.name,
+        taskPrompt: prompt,
+        roster: agents.map((agent) => ({
+          name: agent.name,
+          role:
+            members.find((member) => member.agentId === agent.id)?.role ??
+            "member",
+        })),
+      });
+      for (const agent of agents) {
+        await this.workspaces.writeGroupTaskSection(agent, task, charter);
+      }
+
+      await this.store.mutate((database) => {
+        const storedGroup = database.groups.find((item) => item.id === groupId);
+        if (!storedGroup) {
+          throw new HttpError(404, "Group not found");
+        }
+        if (storedGroup.activeTaskId) {
+          throw new HttpError(409, "This group already has a running task");
+        }
+        database.groupTasks.push(task);
+        database.groupPlanNodes.push(...nodes);
+        this.syncParticipants(
+          database,
+          storedGroup as AgentGroup,
+          timestamp,
+        );
+        database.groupMessages.push({
+          id: randomUUID(),
+          groupId,
+          seq: this.nextSeq(database, groupId),
+          speakerType: "human",
+          speakerAgentId: null,
+          groupTaskId: taskId,
+          planNodeId: null,
+          content: prompt,
+          createdAt: timestamp,
+        });
+        storedGroup.activeTaskId = taskId;
+        storedGroup.updatedAt = timestamp;
+      });
+
+      this.activeTasks.set(taskId, { cancelled: false, heldAgentIds: new Set() });
+      void this.executeGroupTask(taskId).catch(() => undefined);
+      return task;
+    } catch (error) {
+      await Promise.all(
+        agents.map((agent) =>
+          this.workspaces.clearGroupTaskSection(agent, taskId).catch(() => undefined),
+        ),
+      );
+      await Promise.all(
+        preparedAgents.map((agent) =>
+          this.workspaces.releaseSharedCode(agent).catch(() => undefined),
+        ),
+      );
+      await this.workspaces
+        .removeSharedCodeDirectory(taskId)
+        .catch(() => undefined);
+      throw error;
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -376,7 +410,15 @@ export class GroupRunner {
 
     const runId = randomUUID();
     const startedAt = now();
-    const spanBuffer: TraceSpan[] = [];
+    let spanWriteQueue: Promise<void> = Promise.resolve();
+    const spansById = new Map<string, TraceSpan>();
+    const enqueueSpan = (span: TraceSpan): void => {
+      const snapshot = structuredClone(span);
+      spansById.set(snapshot.id, snapshot);
+      spanWriteQueue = spanWriteQueue
+        .then(() => this.persistSpan(snapshot))
+        .catch(() => undefined);
+    };
     let capturedThreadId: string | null = participant.groupThreadId;
 
     try {
@@ -494,15 +536,15 @@ export class GroupRunner {
           capturedThreadId = id;
         },
         onSpan: (span) => {
-          spanBuffer.push(span);
+          enqueueSpan(span);
         },
       };
       const result = await this.runner.run(request);
       capturedThreadId = result.threadId ?? capturedThreadId;
 
       const completedAt = now();
+      await spanWriteQueue;
       await this.store.mutate((db) => {
-        if (spanBuffer.length > 0) db.spans.push(...spanBuffer);
         const storedRun = db.runs.find((item) => item.id === runId);
         if (storedRun) {
           storedRun.status = "completed";
@@ -547,18 +589,21 @@ export class GroupRunner {
     } catch (error) {
       const cancelled = error instanceof RunCancelledError;
       const completedAt = now();
-      for (const span of spanBuffer) {
+      for (const span of spansById.values()) {
         if (span.status === "started") {
-          span.status = "incomplete";
-          span.completedAt = completedAt;
-          span.durationMs =
-            new Date(completedAt).getTime() -
-            new Date(span.startedAt).getTime();
+          enqueueSpan({
+            ...span,
+            status: "incomplete",
+            completedAt,
+            durationMs:
+              new Date(completedAt).getTime() -
+              new Date(span.startedAt).getTime(),
+          });
         }
       }
       const message = this.messageOf(error);
+      await spanWriteQueue;
       await this.store.mutate((db) => {
-        if (spanBuffer.length > 0) db.spans.push(...spanBuffer);
         const storedRun = db.runs.find((item) => item.id === runId);
         if (storedRun) {
           storedRun.status = cancelled ? "cancelled" : "failed";
@@ -594,6 +639,11 @@ export class GroupRunner {
   private async finishGroupTask(taskId: string): Promise<void> {
     const cancelled = this.activeTasks.get(taskId)?.cancelled ?? false;
     const completedAt = now();
+
+    // Keep the group active until its member links have been released. That
+    // prevents a new task from racing into the old ./code links between the
+    // terminal database write and this cleanup.
+    await this.releaseSharedCodeForTask(taskId);
 
     const status = await this.store.mutate((database) => {
       const nodes = database.groupPlanNodes.filter(
@@ -783,6 +833,58 @@ export class GroupRunner {
   // -------------------------------------------------------------------------
   // Internals
   // -------------------------------------------------------------------------
+
+  private async persistSpan(span: TraceSpan): Promise<void> {
+    await this.store.mutate((database) => {
+      const existingIndex = database.spans.findIndex(
+        (existing) => existing.id === span.id,
+      );
+      if (existingIndex === -1) {
+        database.spans.push(span);
+      } else {
+        database.spans[existingIndex] = span;
+      }
+    });
+  }
+
+  private async releaseSharedCodeForTask(taskId: string): Promise<void> {
+    const database = this.store.snapshot();
+    const task = database.groupTasks.find((item) => item.id === taskId);
+    if (!task) return;
+
+    const agentIds = new Set(
+      database.groupPlanNodes
+        .filter((node) => node.groupTaskId === taskId)
+        .map((node) => node.agentId),
+    );
+    if (agentIds.size === 0) {
+      const group = database.groups.find((item) => item.id === task.groupId);
+      for (const member of group ? readMembers(group) : []) {
+        agentIds.add(member.agentId);
+      }
+    }
+
+    await Promise.all(
+      [...agentIds].map(async (agentId) => {
+        const agent = database.agents.find((item) => item.id === agentId);
+        if (!agent) return;
+        try {
+          await this.workspaces.releaseSharedCode(agent);
+        } catch (error) {
+          // One broken workspace must not keep the task terminal state or its
+          // memory flush from being recorded for the other Agents.
+          if (this.config.nodeEnv !== "test") {
+            console.error(
+              "[workspace] failed to release ./code for Agent " +
+                agent.id +
+                ": " +
+                this.messageOf(error),
+            );
+          }
+        }
+      }),
+    );
+  }
 
   private chainFor(taskId: string): GroupPlanNode[] {
     return this.store

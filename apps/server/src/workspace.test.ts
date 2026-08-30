@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, lstat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -6,6 +6,7 @@ import { HttpError } from "./errors.js";
 import type { Agent, GroupTask } from "./types.js";
 import {
   WorkspaceManager,
+  assertNoGovernedMemoryInCodexHome,
   extractManagedBlocks,
   groupTaskMarkerId,
   memoryMarkerId,
@@ -300,5 +301,51 @@ describe("shared code", () => {
 
     await expect(lstat(path.join(agent.workspacePath, "code"))).rejects.toThrow();
     expect(await readFile(path.join(shared, "keep.txt"), "utf8")).toBe("keep");
+  });
+
+  it("removes only the requested shared task directory", async () => {
+    const root = await makeRoot();
+    const workspaces = new WorkspaceManager(root);
+    await workspaces.initialize();
+    const first = await workspaces.createSharedCodeDirectory("task-1");
+    await workspaces.createSharedCodeDirectory("task-2");
+
+    await workspaces.removeSharedCodeDirectory("task-1");
+
+    await expect(lstat(first)).rejects.toThrow();
+    expect(await readdir(path.join(root, "shared-code"))).toEqual(["task-2"]);
+  });
+
+  it("does not recursively delete a real local code directory", async () => {
+    const root = await makeRoot();
+    const workspaces = new WorkspaceManager(root, "local-process");
+    await workspaces.initialize();
+    const agent = makeAgent(root);
+    await workspaces.create(agent);
+    const codePath = path.join(agent.workspacePath, "code");
+    await mkdir(codePath, { recursive: true });
+    await writeFile(path.join(codePath, "keep.txt"), "keep", "utf8");
+
+    await workspaces.releaseSharedCode(agent);
+
+    expect(await readFile(path.join(codePath, "keep.txt"), "utf8")).toBe("keep");
+  });
+});
+
+describe("startup workspace assertions", () => {
+  it("rejects governed memory under global Codex skills", async () => {
+    const root = await makeRoot();
+    await mkdir(path.join(root, "skills", "memory-storage"), { recursive: true });
+
+    await expect(assertNoGovernedMemoryInCodexHome(root)).rejects.toThrow(
+      /CODEX_HOME\/skills/,
+    );
+  });
+
+  it("allows an absent or ordinary global skills directory", async () => {
+    const root = await makeRoot();
+    await expect(assertNoGovernedMemoryInCodexHome(root)).resolves.toBeUndefined();
+    await mkdir(path.join(root, "skills", "ordinary-tool"), { recursive: true });
+    await expect(assertNoGovernedMemoryInCodexHome(root)).resolves.toBeUndefined();
   });
 });
