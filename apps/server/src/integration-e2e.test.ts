@@ -89,7 +89,7 @@ describe("end-to-end: group task -> governed memory", () => {
     const response = service.getGroupTask(task.id);
 
     // --- Bridge 5: what the task buffer needs from every completed node ---
-    expect(response.nodes).toHaveLength(5);
+    expect(response.nodes).toHaveLength(3);
     for (const node of response.nodes) {
       expect(node.status).toBe("completed");
       expect(node.runId, "node " + node.nodeRole + " has no runId").toBeTruthy();
@@ -106,11 +106,11 @@ describe("end-to-end: group task -> governed memory", () => {
       ).toBe(true);
     }
 
-    // 1 human + 5 agent turns, in order
-    expect(response.messages).toHaveLength(6);
-    expect(response.messages.map((m) => m.seq)).toEqual([1, 2, 3, 4, 5, 6]);
+    // 1 human + 3 planner-selected Agent turns, in order
+    expect(response.messages).toHaveLength(4);
+    expect(response.messages.map((m) => m.seq)).toEqual([1, 2, 3, 4]);
 
-    // Backend and Frontend each take two turns; Ops never participates
+    // Every team member participates in the fake plan; Ops never does
     const speakers = response.nodes.map((n) => n.agentId);
     expect(new Set(speakers).size).toBe(3);
     expect(speakers).not.toContain(outsider.id);

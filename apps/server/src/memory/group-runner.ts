@@ -1,13 +1,13 @@
 /**
  * Group runner -- `middlewaredoc/components/GROUP-RUNNER.md`.
  *
- * Owns group lifecycle, shared-code setup, and execution of the v1 sequential
- * chain. It does NOT extract, route or land memory: after the flush trigger
- * fires it hands ids to Person 3's pipeline across the Bridge 4 seam and stops.
+ * Owns group lifecycle, shared-code setup, and sequential execution of the
+ * planner's validated topological order. It does NOT extract, route or land
+ * memory: after the flush trigger fires it hands ids to Person 3's pipeline.
  *
- * V1 IS A SEQUENTIAL CHAIN, NOT A DAG (A4). Branch/join nodes, join-owner
- * selection, parallel-set validation and runtime-lock COLLISION validation are
- * STRETCH and deliberately absent.
+ * The persisted plan may be a DAG, but v1 executes its topological order one
+ * node at a time. Parallel-set and runtime-lock collision validation remain
+ * deferred.
  */
 
 import { randomUUID } from "node:crypto";
@@ -38,14 +38,14 @@ import type {
 } from "../types.js";
 import type { WorkspaceManager } from "../workspace.js";
 import { decideFlush } from "./flush-trigger.js";
-import { buildChainNodes, templateFor } from "./group-chain.js";
+import { findMembershipError, readMembers } from "./group-chain.js";
 import {
   buildContextPacket,
   buildGroupTaskCharter,
   buildTurnPrompt,
 } from "./group-prompt.js";
 import type { MemoryPipeline } from "./pipeline.js";
-import { findMembershipError, readMembers } from "./group-chain.js";
+import { buildPlanNodes, type TaskPlanner } from "./planner.js";
 
 const now = () => new Date().toISOString();
 
@@ -65,6 +65,7 @@ export class GroupRunner {
     private readonly runner: AgentRunner,
     private readonly lease: AgentLease,
     private readonly memoryPipeline: MemoryPipeline,
+    private readonly planner: TaskPlanner,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -273,7 +274,15 @@ export class GroupRunner {
         startedAt: null,
         completedAt: null,
       };
-      const nodes = buildChainNodes(taskId, members, timestamp);
+      const plan = await this.planner.plan({
+        prompt,
+        agents: agents.map((agent) => ({
+          id: agent.id,
+          name: agent.name,
+          description: agent.description,
+        })),
+      });
+      const nodes = buildPlanNodes(taskId, plan.nodes, timestamp);
 
       // The planner-written charter goes into each member's PRIVATE AGENTS.md,
       // never into shared code.
@@ -454,7 +463,6 @@ export class GroupRunner {
       const prompt = buildTurnPrompt({
         taskPrompt: task.prompt,
         node,
-        template: templateFor(node.nodeRole),
         agentName: agentAtStart.name,
         agentDescription: agentAtStart.description,
         role: participant.role,

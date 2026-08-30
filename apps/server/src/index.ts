@@ -2,7 +2,9 @@ import path from "node:path";
 import { AgentService } from "./agent-service.js";
 import { createApp } from "./app.js";
 import { loadConfig, writeCodexConfig } from "./config.js";
+import { createExtractorClient } from "./memory/extractor-client.js";
 import { createMemoryPipeline } from "./memory/pipeline.js";
+import { FakePlannerClient, TaskPlanner } from "./memory/planner.js";
 import { createRunner } from "./runner-factory.js";
 import { JsonStore } from "./store.js";
 import {
@@ -26,12 +28,24 @@ const runner = createRunner(config);
 const memoryPipeline = createMemoryPipeline(store, config, {
   reviewAllSkills: config.reviewAllSkills,
 });
+const planner = new TaskPlanner(
+  config.memoryExtractor === "ark"
+    ? createExtractorClient(config)
+    : new FakePlannerClient(),
+  config.memoryExtractTimeoutMs,
+  (reason) => {
+    if (config.nodeEnv !== "test") {
+      console.warn("[planner] rejected a plan; using fallback: " + reason);
+    }
+  },
+);
 const service = new AgentService(
   config,
   store,
   workspaces,
   runner,
   memoryPipeline,
+  planner,
 );
 await service.initialize();
 

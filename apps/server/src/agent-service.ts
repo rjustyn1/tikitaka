@@ -9,6 +9,7 @@ import {
   NoopMemoryPipeline,
   type MemoryPipeline,
 } from "./memory/pipeline.js";
+import { FakePlannerClient, TaskPlanner } from "./memory/planner.js";
 import { ReviewService } from "./memory/review.js";
 import { JsonStore } from "./store.js";
 import { computeTraceSummary } from "./trace-summary.js";
@@ -77,6 +78,10 @@ export class AgentService implements AgentLease {
     private readonly workspaces: WorkspaceManager,
     private readonly runner: AgentRunner,
     memoryPipeline: MemoryPipeline = new NoopMemoryPipeline(),
+    planner: TaskPlanner = new TaskPlanner(
+      new FakePlannerClient(),
+      config.memoryExtractTimeoutMs,
+    ),
   ) {
     // `this` is the AgentLease (A3). Safe to pass here: GroupRunner only stores
     // the reference and never calls back during construction.
@@ -87,6 +92,7 @@ export class AgentService implements AgentLease {
       runner,
       this,
       memoryPipeline,
+      planner,
     );
     // W3 - governed-memory services (integrationManifest3 section 3).
     this.ledger = new LedgerService(store);

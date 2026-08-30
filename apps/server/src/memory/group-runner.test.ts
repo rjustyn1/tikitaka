@@ -100,22 +100,20 @@ async function runToCompletion(harness: Harness, prompt = "Plan an upload featur
 }
 
 describe("group lifecycle", () => {
-  it("requires exactly one Agent per role", async () => {
+  it("accepts flexible membership and rejects duplicate Agents", async () => {
     const harness = await makeHarness();
-    await expect(
-      harness.service.createGroup({
-        name: "Too small",
-        members: harness.members.slice(0, 2),
-      }),
-    ).rejects.toMatchObject({ statusCode: 400 });
+    const group = await harness.service.createGroup({
+      name: "Small team",
+      members: harness.members.slice(0, 2),
+    });
+    expect(group.members).toEqual(harness.members.slice(0, 2));
 
     await expect(
       harness.service.createGroup({
-        name: "Duplicate role",
+        name: "Duplicate Agent",
         members: [
           { agentId: harness.backend.id, role: "backend" },
-          { agentId: harness.frontend.id, role: "backend" },
-          { agentId: harness.security.id, role: "security" },
+          { agentId: harness.backend.id, role: "reviewer" },
         ],
       }),
     ).rejects.toMatchObject({ statusCode: 400 });
@@ -293,38 +291,35 @@ async function runToCompletionFor(harness: Harness, groupId: string) {
   return task;
 }
 
-describe("sequential chain execution", () => {
-  it("runs the five-node chain in role order and completes", async () => {
+describe("planner execution", () => {
+  it("runs planner nodes in validated topological order and completes", async () => {
     const harness = await makeHarness();
     const { task } = await runToCompletion(harness);
     const response = harness.service.getGroupTask(task.id);
 
     expect(response.task.status).toBe("completed");
     expect(response.nodes.map((node) => node.nodeRole)).toEqual([
-      "backend-contract",
-      "frontend-plan",
-      "security-review",
-      "backend-impl",
-      "frontend-impl",
+      "plan",
+      "implement-2",
+      "implement-3",
     ]);
     expect(response.nodes.every((node) => node.status === "completed")).toBe(true);
     expect(response.nodes.map((node) => node.agentId)).toEqual([
       harness.backend.id,
       harness.frontend.id,
       harness.security.id,
-      harness.backend.id,
-      harness.frontend.id,
     ]);
-    // Each node depends on exactly its predecessor: a degenerate DAG.
     expect(response.nodes[0]!.dependsOn).toEqual([]);
-    expect(response.nodes[3]!.dependsOn).toEqual([response.nodes[2]!.id]);
+    expect(response.nodes[1]!.dependsOn).toEqual([response.nodes[0]!.id]);
+    expect(response.nodes[2]!.dependsOn).toEqual([response.nodes[0]!.id]);
+    expect(response.nodes.every((node) => node.instruction.length > 0)).toBe(true);
   });
 
-  it("lets Backend and Frontend take two turns without a lease deadlock", async () => {
+  it("returns every planner-selected Agent lease after execution", async () => {
     const harness = await makeHarness();
     await runToCompletion(harness);
-    expect(harness.runner.requestsFor(harness.backend.id)).toHaveLength(2);
-    expect(harness.runner.requestsFor(harness.frontend.id)).toHaveLength(2);
+    expect(harness.runner.requestsFor(harness.backend.id)).toHaveLength(1);
+    expect(harness.runner.requestsFor(harness.frontend.id)).toHaveLength(1);
     expect(harness.runner.requestsFor(harness.security.id)).toHaveLength(1);
     // Every lease was handed back.
     expect(
@@ -337,21 +332,20 @@ describe("sequential chain execution", () => {
     const { task } = await runToCompletion(harness);
     const messages = harness.service.getGroupTask(task.id).messages;
 
-    expect(messages).toHaveLength(6); // 1 human + 5 agent turns
-    expect(messages.map((message) => message.seq)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(messages).toHaveLength(4); // 1 human + 3 planner-selected turns
+    expect(messages.map((message) => message.seq)).toEqual([1, 2, 3, 4]);
     expect(messages[0]!.speakerType).toBe("human");
     expect(messages.slice(1).map((message) => message.speakerAgentId)).toEqual([
       harness.backend.id,
       harness.frontend.id,
       harness.security.id,
-      harness.backend.id,
-      harness.frontend.id,
     ]);
   });
 
   it("keeps the group thread separate from the solo thread", async () => {
     const harness = await makeHarness();
-    await runToCompletion(harness);
+    const { group } = await runToCompletion(harness);
+    await runToCompletionFor(harness, group.id);
 
     // No group task may touch Agent.codexThreadId.
     expect(harness.service.getAgent(harness.backend.id).codexThreadId).toBeNull();
@@ -391,13 +385,13 @@ describe("sequential chain execution", () => {
     ).toBe(true);
   });
 
-  it("records a context packet per node, and dedupes what an Agent already saw", async () => {
+  it("records a context packet per node with only declared dependencies", async () => {
     const harness = await makeHarness();
     const { task } = await runToCompletion(harness);
     const { contextInjections, messages, nodes } =
       harness.service.getGroupTask(task.id);
 
-    expect(contextInjections).toHaveLength(5);
+    expect(contextInjections).toHaveLength(3);
     const first = contextInjections.find(
       (injection) => injection.planNodeId === nodes[0]!.id,
     );
@@ -405,15 +399,12 @@ describe("sequential chain execution", () => {
     expect(first?.injectedMessageIds).toEqual([messages[0]!.id]);
     expect(first?.withheldMessageIds).toEqual([]);
 
-    // Backend's SECOND turn must not be re-fed its own first message: that is
-    // the lastSeenSeq dedupe doing real work, which only happens because an
-    // Agent takes two turns.
-    const backendSecond = contextInjections.find(
-      (injection) => injection.planNodeId === nodes[3]!.id,
-    );
-    expect(backendSecond?.fromSeqExclusive).toBe(2);
-    expect(backendSecond?.withheldMessageIds).toContain(messages[1]!.id);
-    expect(backendSecond?.injectedMessageIds).not.toContain(messages[1]!.id);
+    for (const node of nodes.slice(1)) {
+      const injection = contextInjections.find(
+        (candidate) => candidate.planNodeId === node.id,
+      );
+      expect(injection?.injectedDependencyNodeIds).toEqual(node.dependsOn);
+    }
   });
 
   it("writes and releases a runtime lock row per write node", async () => {
@@ -423,13 +414,9 @@ describe("sequential chain execution", () => {
       .snapshot()
       .runtimeLocks.filter((lock) => lock.groupTaskId === task.id);
 
-    // Three write nodes declare an area; the two read-only planning nodes do not.
-    expect(locks).toHaveLength(3);
-    expect(locks.map((lock) => lock.lockKey).sort()).toEqual([
-      "code/apps/server/**",
-      "code/apps/server/**",
-      "code/apps/web/**",
-    ]);
+    // The fake planner emits one read-only plan and two write nodes.
+    expect(locks).toHaveLength(2);
+    expect(locks.map((lock) => lock.lockKey)).toEqual(["code/**", "code/**"]);
     expect(locks.every((lock) => lock.releasedAt !== null)).toBe(true);
   });
 
@@ -453,7 +440,7 @@ describe("sequential chain execution", () => {
     const harness = await makeHarness();
     const { task } = await runToCompletion(harness);
     const response = harness.service.getGroupTask(task.id);
-    expect(response.task.nodeRunIds).toHaveLength(5);
+    expect(response.task.nodeRunIds).toHaveLength(response.nodes.length);
     for (const node of response.nodes) {
       expect(node.runId).not.toBeNull();
       const run = harness.service.getRun(node.runId!);
@@ -496,24 +483,23 @@ describe("A3 - solo and group runs contend for one lease", () => {
 
 describe("failure and cancellation", () => {
   it("stops the chain on a failed node and consolidates partially", async () => {
+    let failingAgentId = "";
     const runner = new FakeRunner({
-      failFor: (request) =>
-        request.prompt.includes("security-review") ? "Codex exploded" : null,
+      failFor: (request) => (request.agentId === failingAgentId ? "Codex exploded" : null),
     });
     const pipeline = new RecordingMemoryPipeline();
     const harness = await makeHarness(runner, pipeline);
+    failingAgentId = harness.frontend.id;
     const { task } = await runToCompletion(harness);
     const response = harness.service.getGroupTask(task.id);
 
     expect(response.task.status).toBe("partial");
     expect(response.nodes.map((node) => node.status)).toEqual([
       "completed",
-      "completed",
       "failed",
       "cancelled",
-      "cancelled",
     ]);
-    expect(response.nodes[2]!.error).toBe("Codex exploded");
+    expect(response.nodes[1]!.error).toBe("Codex exploded");
     // Nothing is left holding a lock or a lease.
     expect(
       harness.store
@@ -606,7 +592,7 @@ describe("failure and cancellation", () => {
 });
 
 describe("Bridge 4 - handover to the memory pipeline", () => {
-  it("calls the pipeline once with the sink node id after the chain completes", async () => {
+  it("calls the pipeline once with every sink node after the plan completes", async () => {
     const pipeline = new RecordingMemoryPipeline();
     const harness = await makeHarness(new FakeRunner(), pipeline);
     const { task } = await runToCompletion(harness);
@@ -615,7 +601,7 @@ describe("Bridge 4 - handover to the memory pipeline", () => {
     expect(pipeline.calls).toHaveLength(1);
     expect(pipeline.calls[0]).toEqual({
       groupTaskId: task.id,
-      sinkNodeIds: [response.nodes[4]!.id],
+      sinkNodeIds: [response.nodes[1]!.id, response.nodes[2]!.id],
     });
     expect(response.task.flushedAt).not.toBeNull();
   });
@@ -677,16 +663,14 @@ describe("group task resume", () => {
     const done = harness.service.getGroupTask(task.id);
     expect(done.task.status).toBe("completed");
     expect(done.nodes.every((node) => node.status === "completed")).toBe(true);
-    // Completed nodes were NOT re-run: 3 (first run) + 3 (resume) = 6.
-    expect(runner.requests).toHaveLength(6);
+    // Completed nodes were NOT re-run: 3 (first run) + 1 (resume) = 4.
+    expect(runner.requests).toHaveLength(4);
     // The already-completed node kept its original runId.
-    const contractBefore = completedBefore.find(
-      (node) => node.nodeRole === "backend-contract",
+    const firstCompletedBefore = completedBefore[0]!;
+    const firstCompletedAfter = done.nodes.find(
+      (node) => node.id === firstCompletedBefore.id,
     )!;
-    const contractAfter = done.nodes.find(
-      (node) => node.nodeRole === "backend-contract",
-    )!;
-    expect(contractAfter.runId).toBe(contractBefore.runId);
+    expect(firstCompletedAfter.runId).toBe(firstCompletedBefore.runId);
     // The memory pipeline was asked to reset auto notes, then flushed again.
     expect(pipeline.resetCalls).toContain(task.id);
     expect(pipeline.calls.length).toBeGreaterThanOrEqual(2);
