@@ -14,3 +14,11 @@ coverage/
 deploy/volcengine/.terraform/
 deploy/volcengine/*.tfstate*
 deploy/volcengine/terraform.tfvars
+
+# Playwright MCP session artifacts (accessibility-tree page snapshots).
+# Regenerated on every browser-automation run; scratch output, not source.
+.playwright-mcp/
+
+# Ad-hoc UI QA screenshots dropped at the repo root.
+# Scoped to the root on purpose: docs/assets/ holds real documentation images.
+/*.png
