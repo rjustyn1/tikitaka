@@ -1,8 +1,19 @@
-/** Create or edit a planner-backed Agent group. */
+/**
+ * Create or edit a team.
+ *
+ * Team creation is membership only: pick the Agents who may collaborate. Roles
+ * here are a display label from the current model (backend / frontend /
+ * security) — the planner decides who actually works on each node at task time,
+ * and the DAG-assignment flow (task start) is where per-node roles will live.
+ */
 import { useMemo, useState } from "react";
 import type { Agent, AgentGroup, GroupMember, GroupRole } from "../types";
 
 const MAX_MEMBERS = 12;
+
+// The current, hardcoded role model. A team loaded with some other label keeps
+// it (added to the list for that row) rather than silently losing it.
+const ROLE_OPTIONS = ["backend", "frontend", "security", "member"];
 
 interface Props {
   agents: Agent[];
@@ -49,6 +60,7 @@ export function GroupEditor({ agents, group, busy, onCancel, onSubmit }: Props) 
       if (Object.hasOwn(next, agentId)) {
         delete next[agentId];
       } else if (Object.keys(next).length < MAX_MEMBERS) {
+        // Default a newly-picked Agent to a generic label; the human can refine.
         next[agentId] = "member";
       }
       return next;
@@ -72,84 +84,94 @@ export function GroupEditor({ agents, group, busy, onCancel, onSubmit }: Props) 
         onSubmit={submit}
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <div className="modal-heading">
+        <div className="group-modal-head">
           <span className="eyebrow">{group ? "Edit team" : "New team"}</span>
           <h2>{group ? "Update membership" : "Assemble a team"}</h2>
           <p>
-            Select the Agents who may collaborate. Their labels identify them
-            in the team; the planner decides who works on each task.
+            Pick the Agents on this team. The planner decides who works on each
+            task — the role label is just how each Agent is shown.
           </p>
         </div>
 
-        <label>
-          Team name
-          <input
-            autoFocus
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            placeholder="Upload Feature Team"
-            maxLength={80}
-            required
-          />
-        </label>
-        <label>
-          Description
-          <input
-            value={description}
-            onChange={(event) => setDescription(event.target.value)}
-            placeholder="What is this team for?"
-            maxLength={500}
-          />
-        </label>
+        <div className="group-modal-body">
+          <label>
+            Team name
+            <input
+              autoFocus
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="Upload Feature Team"
+              maxLength={80}
+              required
+            />
+          </label>
+          <label>
+            Description
+            <input
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              placeholder="What is this team for?"
+              maxLength={500}
+            />
+          </label>
 
-        <div className="roster-head">
-          <span className="eyebrow">Members</span>
-          <span className={members.length > 0 ? "roster-ok" : "roster-missing"}>
-            {members.length} of {MAX_MEMBERS} selected
-          </span>
-        </div>
+          <div className="roster-head">
+            <span className="eyebrow">Members</span>
+            <span className={members.length >= 3 ? "roster-ok" : "roster-missing"}>
+              {members.length} of {MAX_MEMBERS} selected
+            </span>
+          </div>
 
-        <div className="roster">
-          {agents.length === 0 && (
-            <p className="muted-note">
-              No Agents yet. Create an Agent from the Agents view first.
-            </p>
-          )}
-          {agents.map((agent) => {
-            const selected = Object.hasOwn(assignments, agent.id);
-            const role = assignments[agent.id] ?? "";
-            return (
-              <div
-                key={agent.id}
-                className={"roster-row " + (selected ? "is-member" : "")}
-              >
-                <label className="roster-toggle">
-                  <input
-                    type="checkbox"
-                    checked={selected}
-                    disabled={!selected && members.length >= MAX_MEMBERS}
-                    onChange={() => toggle(agent.id)}
-                  />
-                  <span className="agent-avatar">
-                    {agent.name.slice(0, 1).toUpperCase()}
-                  </span>
-                  <span className="roster-copy">
-                    <strong>{agent.name}</strong>
-                    <span>{agent.description || "Coding Agent"}</span>
-                  </span>
-                </label>
-                <input
-                  className="role-label-input"
-                  aria-label={"Role for " + agent.name}
-                  value={role}
-                  disabled={!selected}
-                  placeholder="member"
-                  maxLength={40}
-                  onChange={(event) => assignRole(agent.id, event.target.value)}
-                />
-              </div>
-            );
-          })}
+          <div className="roster">
+            {agents.length === 0 && (
+              <p className="muted-note">
+                No Agents yet. Create an Agent from the Agents view first.
+              </p>
+            )}
+            {agents.map((agent) => {
+              const selected = Object.hasOwn(assignments, agent.id);
+              const role = assignments[agent.id] ?? "member";
+              const options = ROLE_OPTIONS.includes(role)
+                ? ROLE_OPTIONS
+                : [role, ...ROLE_OPTIONS];
+              return (
+                <div
+                  key={agent.id}
+                  className={"roster-row " + (selected ? "is-member" : "")}
+                >
+                  <label className="roster-toggle">
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      disabled={!selected && members.length >= MAX_MEMBERS}
+                      onChange={() => toggle(agent.id)}
+                    />
+                    <span className="agent-avatar">
+                      {agent.name.slice(0, 1).toUpperCase()}
+                    </span>
+                    <span className="roster-copy">
+                      <strong>{agent.name}</strong>
+                      <span>{agent.description || "Coding Agent"}</span>
+                    </span>
+                  </label>
+                  {selected && (
+                    <select
+                      className="role-select"
+                      aria-label={"Role for " + agent.name}
+                      value={role}
+                      onChange={(event) => assignRole(agent.id, event.target.value)}
+                    >
+                      {options.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
 
         <div className="modal-footer">

@@ -71,6 +71,11 @@ function renderPanel(
       onSubmit={vi.fn()}
       running={false}
       busy={false}
+      pendingNotes={[]}
+      reviewer="operator"
+      busyNoteId={null}
+      onReview={vi.fn()}
+      onRevoke={vi.fn()}
       {...over}
     />,
   );

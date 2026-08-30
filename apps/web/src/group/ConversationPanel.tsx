@@ -7,7 +7,15 @@
  * sitting under the feed where a chat input belongs, rather than a separate form
  * above seven equal-weight tabs.
  */
-import type { Agent, AgentGroup, GroupMessage } from "../types";
+import { useEffect, useRef } from "react";
+import type {
+  Agent,
+  AgentGroup,
+  GroupMessage,
+  MemoryNote,
+  ReviewNoteInput,
+} from "../types";
+import { ApprovalCard } from "./ApprovalCard";
 import { agentName, formatTime, roleClass, roleOf } from "./format";
 import { EmptyState } from "./panels";
 
@@ -20,6 +28,11 @@ export function ConversationPanel({
   onSubmit,
   running,
   busy,
+  pendingNotes,
+  reviewer,
+  busyNoteId,
+  onReview,
+  onRevoke,
 }: {
   messages: GroupMessage[];
   agents: Agent[];
@@ -29,11 +42,23 @@ export function ConversationPanel({
   onSubmit: (event: React.FormEvent) => void;
   running: boolean;
   busy: boolean;
+  /** Notes parked for a human — surfaced as approval cards in the feed. */
+  pendingNotes: MemoryNote[];
+  reviewer: string;
+  busyNoteId: string | null;
+  onReview: (noteId: string, input: ReviewNoteInput) => void;
+  onRevoke: (noteId: string, reason: string) => void;
 }) {
   const ordered = [...messages].sort((left, right) => left.seq - right.seq);
+  // Classic chat: keep the newest turn in view as the transcript grows.
+  const feedRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = feedRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [ordered.length, pendingNotes.length]);
   return (
     <section className="chat">
-      <div className="chat-feed">
+      <div className="chat-feed" ref={feedRef}>
         {ordered.length === 0 ? (
           <EmptyState
             icon="◎"
@@ -80,6 +105,23 @@ export function ConversationPanel({
               </article>
             );
           })
+        )}
+
+        {pendingNotes.length > 0 && (
+          <div className="approval-stack">
+            {pendingNotes.map((note) => (
+              <ApprovalCard
+                key={note.id}
+                note={note}
+                agents={agents}
+                group={group}
+                reviewer={reviewer}
+                busy={busyNoteId === note.id}
+                onReview={onReview}
+                onRevoke={onRevoke}
+              />
+            ))}
+          </div>
         )}
       </div>
 
