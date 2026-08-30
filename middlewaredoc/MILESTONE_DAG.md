@@ -88,16 +88,17 @@ Recorded before writing code, so later readers know what was true at the start.
 - [x] Closes a real gap: the pre-existing resume test failed a **leaf**, so no
       node was ever blocked in it
 
-### M3 — Honest seeds and offline runs (`21e0ec3`)
+### M3 — Seeded data matches production, and a bad key is loud (`21e0ec3`)
 
 - [x] `seed-demo.mjs` builds its plan through the production
       `buildPlanNodes()` / `deriveOwnership()`, so seeded rows cannot drift from
       planner output again
 - [x] The seeded plan is a real DAG with a join, and every node has an
       `instruction`
-- [x] `index.ts` decides ONCE at boot whether Ark is usable, warns with what
-      changes and how to fix it, and selects the offline planner and extractor
-      explicitly — instead of both failing soft on every task
+- [x] `index.ts` decides ONCE at boot whether Ark is configured, and says so
+      loudly instead of letting the planner and the extractor fail soft on every
+      task. With `MEMORY_EXTRACTOR=ark` and a working key, both are real model
+      calls
 - [x] `kind: "join"` is set for fan-in nodes
 - [x] `docker-compose.yml` states `MEMORY_EXTRACTOR` explicitly and gains a
       `seed` profile; the Dockerfile ships `scripts/`; `npm run poc` seeds on
@@ -190,10 +191,10 @@ Every box above was ticked only after the stated check actually passed.
 
 ---
 
-## Verified vs not verified
+## Verified, and what production has not yet exercised
 
-Ticking a box means a test asserts it. Three things are **not** verified, and no
-box claims they are.
+Ticking a box means a test asserts it. Two things below have **not** been seen
+in a live run, and no box claims otherwise.
 
 | Claim | Status |
 |---|---|
@@ -201,9 +202,10 @@ box claims they are.
 | Independent branches genuinely overlap | **verified** — peak-concurrency probe, not a request count |
 | Lock collision serialises overlapping areas | **verified** — peak 1 for `code/**` vs `code/**` |
 | Retry keeps both attempts as separate runs | **verified** — two run rows, one failed, one completed |
-| Parallel execution against a **real** Codex runtime | **NOT verified.** Every test uses `FakeRunner`. Concurrent writers on one shared `./code` tree have never been exercised by real `codex exec` processes |
-| The retry classifier against **real** Codex failures | **NOT verified.** The strings it matches were read from `codex-runner.ts`, not observed in a live failure |
-| Plans from a **real** Ark planner | **NOT verified.** Every planner test uses `FakePlannerClient` or a stub. Note `FakePlannerClient` puts every write node in area `all`, so its branches always collide on locks and serialise — offline runs cannot demonstrate parallelism |
+| Agents execute for real | **always.** `runner-factory.ts` has no test path: every run is `codex exec`, in-process or containerised, whatever `MEMORY_EXTRACTOR` says |
+| The planner and the consolidator are real model calls | **yes, with `MEMORY_EXTRACTOR=ark` and a working key.** Both go to the configured Ark endpoint |
+| Concurrent writers on one shared `./code` tree | **NOT yet exercised in production.** The lock-collision rule is proven as logic; no live task has yet had two real `codex exec` processes writing the tree at once |
+| The retry classifier against live Codex failures | **NOT yet exercised in production.** Its match strings were read from `codex-runner.ts`, not observed in a real timeout |
 
 ---
 
