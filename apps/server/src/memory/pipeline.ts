@@ -16,7 +16,6 @@ import { Consolidator } from "./consolidator.js";
 import { GROUP_ROLES } from "./group-chain.js";
 import {
   createExtractorClient,
-  memoryConfigFromEnv,
   type ExtractorClient,
   type MemoryConfig,
 } from "./extractor-client.js";
@@ -188,13 +187,14 @@ function syntheticGroup(groupId: string, members: Agent[]): AgentGroup {
 }
 
 /**
- * Build the real pipeline. Config defaults to the environment stub until
- * Person 1 lands the memory keys on AppConfig, at which point the real config
- * (a structural superset of MemoryConfig) can be passed straight through.
+ * Build the real pipeline. `config` is the single validated memory
+ * configuration source: index.ts passes the real AppConfig (a structural
+ * superset of MemoryConfig) straight through — there is no separate
+ * process.env path.
  */
 export function createMemoryPipeline(
   store: JsonStore,
-  config: MemoryConfig = memoryConfigFromEnv(),
+  config: MemoryConfig,
   options: MemoryPipelineOptions = {},
 ): MemoryPipeline {
   return new RealMemoryPipeline(store, createExtractorClient(config), {

@@ -33,8 +33,8 @@ const SYSTEM_PROMPT = [
   '      "severity": "normal" | "severe",',
   '      "targetAgentIds": ["<agent id from the Agents list below>"],',
   '      "description": "<short trigger describing when this applies, <=300 chars>",',
-  '      "sourceRunIds": ["<a run id shown under Node outputs>"],',
-  '      "sourceSpanIds": ["<a span id shown under Node outputs>"],',
+  '      "sourceRunIndices": [<a run number shown under Node outputs, e.g. 1>],',
+  '      "sourceSpanIndices": [<a span number shown under Node outputs, e.g. 2>],',
   '      "rationale": "<why this is worth remembering>"',
   "    }",
   "  ]",
@@ -47,7 +47,9 @@ const SYSTEM_PROMPT = [
   "  Route to the agent(s) who will benefit on future work. Never invent ids.",
   "- description: this is the relevance trigger — the target agent loads the note",
   "  when a future task matches it, so make it specific.",
-  "- sourceRunIds / sourceSpanIds: copy the real ids shown under 'Node outputs'.",
+  "- sourceRunIndices / sourceSpanIndices: cite provenance by the SHORT INTEGER",
+  "  numbers shown under 'Node outputs' as 'run N' and '[span N]'. Use the small",
+  "  numbers only — do not copy any long id strings.",
   "- Return at most 5 notes. If nothing is durable, return { \"notes\": [] }.",
 ].join("\n");
 
@@ -62,8 +64,12 @@ const extractorOutputSchema = z.object({
       severity: z.enum(["normal", "severe"]).optional(),
       targetAgentIds: z.array(z.string()).optional(),
       description: z.string().trim().max(300).optional(),
-      sourceRunIds: z.array(z.string()).optional(),
-      sourceSpanIds: z.array(z.string()).optional(),
+      // Provenance is cited by 1-based integer index into the buffer's runs and
+      // spans (see collectSources / buildExtractorRequest). z.coerce tolerates a
+      // model that returns the number as a string ("2"); non-integers are
+      // dropped, and out-of-range indices resolve to nothing in normalizeCandidate.
+      sourceRunIndices: z.array(z.coerce.number().int().positive()).optional(),
+      sourceSpanIndices: z.array(z.coerce.number().int().positive()).optional(),
       rationale: z.string().trim().max(1000).optional(),
     }),
   ),
@@ -92,9 +98,32 @@ export class Consolidator {
     const parsed = parseExtractorJson(rawText);
     if (!parsed) return [];
 
-    const candidates = parsed.notes.map((raw) => normalizeCandidate(raw, input));
+    const sources = collectSources(input.taskBuffer);
+    const candidates = parsed.notes.map((raw) =>
+      normalizeCandidate(raw, input, sources),
+    );
     return validateCandidates(candidates, input).slice(0, MAX_NOTES);
   }
+}
+
+/** Run and span ids in first-appearance order; array position + 1 is the index
+ * the extractor prompt shows and the model cites back. Built once and used both
+ * to render the prompt and to resolve cited indices back to real ids. */
+interface BufferSources {
+  runIds: string[];
+  spanIds: string[];
+}
+
+function collectSources(taskBuffer: TaskBuffer): BufferSources {
+  const runIds: string[] = [];
+  const spanIds: string[] = [];
+  for (const entry of taskBuffer.entries) {
+    if (entry.runId && !runIds.includes(entry.runId)) runIds.push(entry.runId);
+    for (const span of entry.spans) {
+      if (!spanIds.includes(span.id)) spanIds.push(span.id);
+    }
+  }
+  return { runIds, spanIds };
 }
 
 export function buildExtractorRequest(
@@ -102,6 +131,9 @@ export function buildExtractorRequest(
   timeoutMs: number = DEFAULT_EXTRACT_TIMEOUT_MS,
 ): ExtractorRequest {
   const { taskBuffer, members } = input;
+  const sources = collectSources(taskBuffer);
+  // 1-based so "run 1"/"[span 1]" reads naturally; 0 means not found.
+  const spanIndexOf = (id: string) => sources.spanIds.indexOf(id) + 1;
 
   const agentLines = members
     .map((agent) => `- ${agent.id}  (${agent.name})`)
@@ -109,14 +141,18 @@ export function buildExtractorRequest(
 
   const nodeBlocks = taskBuffer.entries
     .map((entry) => {
-      const spanIds = entry.spans.map((span) => span.id);
+      const runIndex = entry.runId ? sources.runIds.indexOf(entry.runId) + 1 : 0;
+      const spanNums = entry.spans.map((span) => spanIndexOf(span.id));
       const header =
         `- node ${entry.planNodeId} (role ${entry.nodeRole}, agent ${entry.agentId}): ` +
-        `run ${entry.runId || "none"}; spans ${
-          spanIds.length > 0 ? spanIds.join(", ") : "none"
+        `run ${runIndex > 0 ? runIndex : "none"}; spans ${
+          spanNums.length > 0 ? spanNums.join(", ") : "none"
         }`;
       const spanDetail = entry.spans
-        .map((span) => `    - [${span.id}] ${span.type}: ${spanText(span)}`)
+        .map(
+          (span) =>
+            `    - [span ${spanIndexOf(span.id)}] ${span.type}: ${spanText(span)}`,
+        )
         .join("\n");
       return [header, `  output: ${entry.output}`, spanDetail]
         .filter(Boolean)
@@ -170,8 +206,18 @@ export function parseExtractorJson(
 function normalizeCandidate(
   raw: z.infer<typeof extractorOutputSchema>["notes"][number],
   input: ConsolidateInput,
+  sources: BufferSources,
 ): CandidateMemoryNote {
   const content = raw.content.trim();
+  // Resolve the model's 1-based indices back to real run/span UUIDs. An
+  // out-of-range or duplicate index resolves to nothing and is dropped here;
+  // validateCandidates then re-checks the survivors against the real buffer.
+  const resolve = (indices: number[] | undefined, ids: string[]): string[] => {
+    const out = (indices ?? [])
+      .map((index) => ids[index - 1])
+      .filter((id): id is string => Boolean(id));
+    return [...new Set(out)];
+  };
   return {
     id: randomUUID(),
     groupTaskId: input.taskBuffer.groupTaskId,
@@ -182,8 +228,8 @@ function normalizeCandidate(
     description:
       raw.description?.trim() ||
       (content.length > 120 ? content.slice(0, 117) + "…" : content),
-    sourceRunIds: raw.sourceRunIds ?? [],
-    sourceSpanIds: raw.sourceSpanIds ?? [],
+    sourceRunIds: resolve(raw.sourceRunIndices, sources.runIds),
+    sourceSpanIds: resolve(raw.sourceSpanIndices, sources.spanIds),
     rationale: raw.rationale?.trim() ?? "",
   };
 }
