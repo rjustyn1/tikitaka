@@ -88,7 +88,17 @@ export interface AgentRun {
 // Group chat + DAG types (see middlewaredoc/SPEC.md)
 // ---------------------------------------------------------------------------
 
-export type GroupRole = "backend" | "frontend" | "security";
+/**
+ * A member's label inside a group.
+ *
+ * The three v1 labels are kept as documented suggestions ONLY -- membership is
+ * no longer role-bound. A4's "exactly three, one per role" rule is gone: the
+ * planner reads each Agent's `description` and decides who is relevant to a
+ * task, so a group may hold any explicitly selected number of Agents carrying
+ * any labels. `(string & {})` keeps editor completion for the three familiar
+ * labels while accepting anything.
+ */
+export type GroupRole = "backend" | "frontend" | "security" | (string & {});
 
 export interface GroupMember {
   agentId: string;
@@ -170,6 +180,16 @@ export interface GroupPlanNode {
   readOnly: boolean;
   fileOwnershipHints: string[];
   runtimeLocks: string[];
+  /**
+   * What this Agent was actually told to do on this node -- PLANNER OUTPUT,
+   * persisted per node.
+   *
+   * A dynamic planner has no fixed `nodeRole -> instruction` table to look up,
+   * so the instruction has to travel with the row. It is also what the UI
+   * renders under the Plan tab, and Person 4 must read it from here rather
+   * than reconstructing a template in the browser.
+   */
+  instruction: string;
   expectedOutput: string;
   createdAt: string;
   startedAt: string | null;

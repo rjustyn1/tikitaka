@@ -88,6 +88,7 @@ function planNode(id: string, agentId: string): GroupPlanNode {
     readOnly: false,
     fileOwnershipHints: [],
     runtimeLocks: [],
+    instruction: "",
     expectedOutput: "",
     createdAt: "2026-01-01T00:00:00.000Z",
     startedAt: "2026-01-01T00:00:00.000Z",

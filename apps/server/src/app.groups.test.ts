@@ -64,6 +64,8 @@ describe("HTTP boundary in production", () => {
   });
 
   it("reports the failing field, not just the first message", async () => {
+    // A single member is valid now, so the invalid case is the one membership
+    // rule left: the same Agent twice.
     const app = await createApp(productionConfig(), groupService);
     const response = await app.inject({
       method: "POST",
@@ -72,6 +74,7 @@ describe("HTTP boundary in production", () => {
         name: "Team",
         members: [
           { agentId: "11111111-1111-4111-8111-111111111111", role: "backend" },
+          { agentId: "11111111-1111-4111-8111-111111111111", role: "frontend" },
         ],
       },
     });
