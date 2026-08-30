@@ -30,27 +30,6 @@ export interface MemoryConfig {
   arkBaseUrl: string;
 }
 
-/**
- * Build a MemoryConfig directly from the environment. The app passes the real
- * AppConfig instead (index.ts); this is the fallback used by tests and any
- * standalone caller that has no AppConfig to hand.
- */
-export function memoryConfigFromEnv(
-  env: NodeJS.ProcessEnv = process.env,
-): MemoryConfig {
-  const extractor = env.MEMORY_EXTRACTOR;
-  return {
-    memoryExtractor:
-      extractor === "ark" || extractor === "off" ? extractor : "fake",
-    memoryExtractTimeoutMs: Number(env.MEMORY_EXTRACT_TIMEOUT_MS ?? 30_000),
-    arkApiKey: env.ARK_API_KEY?.trim() ?? "",
-    arkModel: env.ARK_MODEL?.trim() ?? "",
-    arkBaseUrl: (
-      env.ARK_BASE_URL ?? "https://ark.cn-beijing.volces.com/api/v3"
-    ).replace(/\/+$/, ""),
-  };
-}
-
 export class ExtractorError extends Error {
   constructor(message: string, readonly cause?: unknown) {
     super(message);
@@ -114,23 +93,34 @@ export class ArkExtractorClient implements ExtractorClient {
 }
 
 /**
- * Deterministic offline extractor for tests and demo.
+ * TEST/DEMO ONLY — NOT a real extractor.
  *
- * It parses the identifiers the consolidator embeds in the prompt (agent IDs it
- * may target, and the run/span IDs it must cite) and emits canned-but-valid
- * notes wired to REAL ids from the buffer, so the notes survive consolidator
- * validation and can actually land during the demo. If it cannot find the
- * identifiers, it safely returns zero notes.
+ * This client does NO language understanding. Its two notes are hardcoded and
+ * TOPIC-BLIND: it emits the same canned upload-feature text regardless of what
+ * the task was actually about, as long as it can find the identifiers the
+ * consolidator embeds in the prompt. Never read its output as real extraction.
+ *
+ * It exists so `npm run check` runs offline and the demo works without a live
+ * model. It parses the agent UUIDs (routing) and the short run/span indices
+ * (provenance) from the prompt and wires the canned notes to REAL identifiers
+ * from the buffer, so they survive consolidator validation. If it cannot find
+ * those identifiers, it safely returns zero notes.
  */
 export class FakeExtractorClient implements ExtractorClient {
   async extract(input: ExtractorRequest): Promise<ExtractorResponse> {
     const uuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 
     const agentIds = collectSection(input.prompt, "Agents you may target", uuid);
-    const runIds = collectAll(input.prompt, /\brun ([0-9a-f-]{36})/gi);
-    const spanIds = collectAll(input.prompt, /\bspans? ([0-9a-f-]{36})/gi);
+    // Provenance is now cited by the short integer indices the prompt prints as
+    // `run N` and `[span N]`, not by echoing UUIDs. See consolidator.ts.
+    const runIndices = collectInts(input.prompt, /\brun (\d+)/gi);
+    const spanIndices = collectInts(input.prompt, /\[span (\d+)\]/gi);
 
-    if (agentIds.length === 0 || runIds.length === 0 || spanIds.length === 0) {
+    if (
+      agentIds.length === 0 ||
+      runIndices.length === 0 ||
+      spanIndices.length === 0
+    ) {
       return { rawText: JSON.stringify({ notes: [] }) };
     }
 
@@ -142,8 +132,8 @@ export class FakeExtractorClient implements ExtractorClient {
         targetAgentIds: [agentIds[0]],
         description:
           "Hard size limit and error contract for the file upload endpoint.",
-        sourceRunIds: [runIds[0]],
-        sourceSpanIds: [spanIds[0]],
+        sourceRunIndices: [runIndices[0]],
+        sourceSpanIndices: [spanIndices[0]],
         rationale: "Backend fixed this constraint during the task.",
       },
     ];
@@ -155,8 +145,8 @@ export class FakeExtractorClient implements ExtractorClient {
         severity: "normal",
         targetAgentIds: [agentIds[1]],
         description: "Storage key layout for uploaded files.",
-        sourceRunIds: [runIds[0]],
-        sourceSpanIds: [spanIds[spanIds.length > 1 ? 1 : 0]],
+        sourceRunIndices: [runIndices[0]],
+        sourceSpanIndices: [spanIndices[spanIndices.length > 1 ? 1 : 0]],
         rationale: "Agreed storage convention worth reusing.",
       });
     }
@@ -165,12 +155,13 @@ export class FakeExtractorClient implements ExtractorClient {
   }
 }
 
-function collectAll(text: string, regex: RegExp): string[] {
-  const out: string[] = [];
+/** Collect the first capture group of every match as a deduped integer list. */
+function collectInts(text: string, regex: RegExp): number[] {
+  const out: number[] = [];
   for (const match of text.matchAll(regex)) {
-    if (match[1]) out.push(match[1]);
+    if (match[1]) out.push(Number(match[1]));
   }
-  return dedupe(out);
+  return [...new Set(out)];
 }
 
 /** Collect UUIDs that appear under a named "## <heading>" section of the prompt. */

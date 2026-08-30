@@ -100,8 +100,9 @@ function noteJson(overrides: Record<string, unknown>): string {
         severity: "severe",
         targetAgentIds: [AGENT_A],
         description: "Upload size limit.",
-        sourceRunIds: [RUN_A],
-        sourceSpanIds: [SPAN_A],
+        // 1-based indices: run 1 -> RUN_A, span 1 -> SPAN_A (first entry).
+        sourceRunIndices: [1],
+        sourceSpanIndices: [1],
         rationale: "Decided during the task.",
         ...overrides,
       },
@@ -130,13 +131,11 @@ describe("Consolidator", () => {
     expect(notes).toEqual([]);
   });
 
-  it("drops unknown source span IDs but keeps the note", async () => {
+  it("drops out-of-range source span indices but keeps the note", async () => {
     const notes = await new Consolidator(
-      new StubExtractor(
-        noteJson({ sourceSpanIds: ["99999999-9999-4999-8999-999999999999"] }),
-      ),
+      new StubExtractor(noteJson({ sourceSpanIndices: [99] })),
     ).consolidate(input);
-    // The bad id is filtered out; the note survives (real models cite loosely).
+    // The bad index resolves to nothing; the note survives (models cite loosely).
     expect(notes).toHaveLength(1);
     expect(notes[0]!.sourceSpanIds).toEqual([]);
   });
@@ -147,8 +146,8 @@ describe("Consolidator", () => {
       notes: [
         {
           content: "All API datetimes are UTC; the frontend localizes for display.",
-          sourceRunIds: [RUN_A],
-          sourceSpanIds: [SPAN_A],
+          sourceRunIndices: [1],
+          sourceSpanIndices: [1],
         },
       ],
     });
@@ -169,8 +168,8 @@ describe("Consolidator", () => {
         severity: "normal",
         targetAgentIds: [AGENT_A],
         description: "desc",
-        sourceRunIds: [RUN_A],
-        sourceSpanIds: [SPAN_A],
+        sourceRunIndices: [1],
+        sourceSpanIndices: [1],
         rationale: "",
       })),
     };
@@ -185,6 +184,18 @@ describe("Consolidator", () => {
       new StubExtractor("this is not json {{{"),
     ).consolidate(input);
     expect(notes).toEqual([]);
+  });
+
+  it("threads the configured timeout through to the extractor request", async () => {
+    let seenTimeout = 0;
+    const capturing: ExtractorClient = {
+      async extract(request) {
+        seenTimeout = request.timeoutMs;
+        return { rawText: '{"notes":[]}' };
+      },
+    };
+    await new Consolidator(capturing, 4242).consolidate(input);
+    expect(seenTimeout).toBe(4242);
   });
 
   it("returns zero notes when the extractor throws", async () => {

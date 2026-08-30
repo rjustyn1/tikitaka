@@ -5,7 +5,6 @@ import {
   FakeExtractorClient,
   OffExtractorClient,
   createExtractorClient,
-  memoryConfigFromEnv,
   type MemoryConfig,
 } from "./extractor-client.js";
 
@@ -17,14 +16,16 @@ const arkConfig: MemoryConfig = {
   arkBaseUrl: "https://ark.example.com/api/v3",
 };
 
-// A prompt shaped like the consolidator's, so the fake can find identifiers.
+// A prompt shaped like the consolidator's, so the fake can find identifiers:
+// agent UUIDs for routing, and short integer indices for run/span provenance.
 const FIXTURE_PROMPT = [
   "## Agents you may target",
   "- 11111111-1111-4111-8111-111111111111  (backend)",
   "- 22222222-2222-4222-8222-222222222222  (frontend)",
   "",
   "## Node outputs",
-  "- node n1: run 33333333-3333-4333-8333-333333333333; spans 44444444-4444-4444-8444-444444444444",
+  "- node n1 (role backend, agent 11111111-1111-4111-8111-111111111111): run 1; spans 1",
+  "    - [span 1] agent_message: the endpoint caps at 10MB",
 ].join("\n");
 
 afterEach(() => {
@@ -41,18 +42,6 @@ describe("createExtractorClient", () => {
       createExtractorClient({ ...arkConfig, memoryExtractor: "fake" }),
     ).toBeInstanceOf(FakeExtractorClient);
     expect(createExtractorClient(arkConfig)).toBeInstanceOf(ArkExtractorClient);
-  });
-});
-
-describe("memoryConfigFromEnv", () => {
-  it("defaults to the fake extractor so tests never hit the network", () => {
-    expect(memoryConfigFromEnv({}).memoryExtractor).toBe("fake");
-  });
-
-  it("honours an explicit extractor choice", () => {
-    expect(
-      memoryConfigFromEnv({ MEMORY_EXTRACTOR: "off" }).memoryExtractor,
-    ).toBe("off");
   });
 });
 
@@ -79,12 +68,9 @@ describe("FakeExtractorClient", () => {
     expect(parsed.notes[0].targetAgentIds).toEqual([
       "11111111-1111-4111-8111-111111111111",
     ]);
-    expect(parsed.notes[0].sourceRunIds).toEqual([
-      "33333333-3333-4333-8333-333333333333",
-    ]);
-    expect(parsed.notes[0].sourceSpanIds).toEqual([
-      "44444444-4444-4444-8444-444444444444",
-    ]);
+    // Provenance is cited by index, not by echoing UUIDs.
+    expect(parsed.notes[0].sourceRunIndices).toEqual([1]);
+    expect(parsed.notes[0].sourceSpanIndices).toEqual([1]);
     // Deterministic: same input, same output.
     const again = await new FakeExtractorClient().extract({
       system: "s",

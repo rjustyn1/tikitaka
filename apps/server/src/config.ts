@@ -33,7 +33,10 @@ const envSchema = z.object({
     .regex(/^[a-zA-Z0-9_.-]+$/)
     .default("default"),
   MEMORY_ENABLED: z.enum(["true", "false"]).default("true"),
-  MEMORY_EXTRACTOR: z.enum(["ark", "fake", "off"]).default("fake"),
+  // Default to the real extractor so a normal run/demo does real extraction.
+  // Tests opt into "fake" explicitly (integration-e2e sets it; unit tests
+  // construct FakeExtractorClient directly), so npm run check stays offline.
+  MEMORY_EXTRACTOR: z.enum(["ark", "fake", "off"]).default("ark"),
   MEMORY_EXTRACT_TIMEOUT_MS: z.coerce.number().int().min(1000).default(30000),
   REVIEW_ALL_SKILLS: z.enum(["true", "false"]).default("false"),
   SKILLS_DIR: z.enum([".agents/skills", ".codex/skills"]).default(".agents/skills"),
