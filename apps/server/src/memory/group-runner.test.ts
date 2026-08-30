@@ -724,6 +724,49 @@ describe("group task resume", () => {
     expect(pipeline.calls.length).toBeGreaterThanOrEqual(2);
   });
 
+  it("re-runs branches that were BLOCKED, not just the node that failed", async () => {
+    // The payoff of containment: blocked is not dead. Fail the root node, so
+    // both branches are blocked rather than failed, then let the root succeed
+    // and resume. Every previously-blocked node must actually run.
+    let failBackend = true;
+    let backendId = "";
+    const runner = new FakeRunner({
+      failFor: (request) =>
+        failBackend && request.agentId === backendId ? "Codex exploded" : null,
+    });
+    const harness = await makeHarness(runner);
+    backendId = harness.backend.id;
+
+    const group = await harness.service.createGroup({
+      name: "Upload Feature Team",
+      members: harness.members,
+    });
+    const task = await harness.service.startGroupTask(group.id, "Plan it.");
+    await settle(harness, task.id);
+
+    const blocked = harness.service.getGroupTask(task.id);
+    expect(blocked.task.status).toBe("failed");
+    expect(blocked.nodes.map((node) => node.status)).toEqual([
+      "failed",
+      "cancelled",
+      "cancelled",
+    ]);
+    // Only the root was ever attempted.
+    expect(runner.requests).toHaveLength(1);
+
+    failBackend = false;
+    await harness.service.resumeGroupTask(task.id);
+    await settle(harness, task.id);
+
+    const resumed = harness.service.getGroupTask(task.id);
+    expect(resumed.task.status).toBe("completed");
+    expect(resumed.nodes.every((node) => node.status === "completed")).toBe(true);
+    // The blocked reason is cleared, not left behind on a now-successful node.
+    expect(resumed.nodes.every((node) => node.error === null)).toBe(true);
+    // 1 failed attempt + 3 nodes on the resume.
+    expect(runner.requests).toHaveLength(4);
+  });
+
   it("rejects resuming a completed task", async () => {
     const harness = await makeHarness();
     const { task } = await runToCompletion(harness);
