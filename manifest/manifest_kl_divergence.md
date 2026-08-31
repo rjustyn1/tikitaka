@@ -139,6 +139,20 @@ fires, and segment-close consolidation still runs. Nothing crashes.
 - Prompt-level `MEMORY_TOPIC_DRIFT_THRESHOLD=0.90` is conservative: two coding
   prompts read as one subject, so a *coherent* task's memory waits for a
   clearly-different task. A tuning dial (topic-segment owner), not a bug.
-- `writeGroupTaskSection` appends a per-task charter block to each agent's
-  `AGENTS.md`, so N tasks leave N charter blocks (cosmetic bloat). Pre-existing
-  workspace behavior, untouched here.
+- **`AGENTS.md` charter accumulation (for the workspace owner).** Every group
+  task writes a per-task **charter** block — "This Agent is participating in the
+  … group task. Task: … Members: … Rules: …" — into each member's *private*
+  `AGENTS.md`, via `writeGroupTaskSection` (`apps/server/src/workspace.ts`,
+  called from `group-runner.ts` at task start). Each task adds its **own** block
+  instead of replacing the previous one, so N tasks leave N charter blocks —
+  **observed 4 blocks after 4 tasks**, which reads as spam / duplicated
+  instructions both to the agent (in its prompt context) and to a human
+  inspecting the workspace.
+  - This is **pre-existing workspace behavior**, NOT the node-drift feature, and
+    NOT landed governed memory. Landed notes use idempotent *managed blocks*
+    (`replaceManagedBlock`) that overwrite on re-land, so real memory never
+    duplicates — only the charter does.
+  - **Suggested fix:** write the charter under a **single fixed** managed-block
+    marker so it is *replaced* each task (only the current task's charter
+    survives), or prune prior charters on task start. Left untouched here to
+    avoid entangling a workspace change with the memory pipeline.
