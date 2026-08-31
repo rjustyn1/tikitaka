@@ -179,6 +179,25 @@ The operator can approve, edit, reject, or revoke through the note API and the
 Teams UI. An edit can change content, severity, recipients, and description;
 it may be saved for later or approved immediately.
 
+### Recipient Boundary
+
+Recipients may only ever be members of the note's own group. An edit can narrow
+routing or move it between members; it cannot widen it to an Agent outside the
+group.
+
+This is enforced on the server, in two places: against the proposed recipients
+before an edit is persisted, and again at activation, which every landing path
+crosses. A refused edit is not stored, so a later plain approve cannot pick up
+rejected recipients. If the group row is missing, the check fails closed and
+nothing lands.
+
+The server is the right place for it because placement is the security claim: a
+note reaches an Agent if and only if a file was written into that Agent's
+workspace, so review is the only point at which that boundary could be widened.
+The Teams UI offers only group members, but the API validates targetAgentIds as
+UUIDs and nothing more -- a constraint enforced only in the browser would not be
+a constraint at all.
+
 ## Note Lifecycle
 
 ```mermaid
