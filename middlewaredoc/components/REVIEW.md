@@ -90,7 +90,7 @@ function requiresHumanReview(note: CandidateMemoryNote, safety: SafetyResult): b
     note.severity === "severe" ||
     safety.redactionFired ||
     safety.quarantineHit ||
-    note.targetAgentIds.length > 2
+    note.recognitionMatchKind === "fallback"
   );
 }
 ```

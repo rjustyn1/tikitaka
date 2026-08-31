@@ -67,11 +67,19 @@ const memoryPipeline = createMemoryPipeline(
   store,
   { ...config, memoryExtractor: effectiveExtractor },
   {
-    // A local SBERT checkpoint trained only on synthetic labels may route notes,
-    // but it cannot auto-grant until a reviewed holdout explicitly authorizes it.
+    // Model-backed routing may propose recipients, but it cannot auto-grant
+    // until a reviewed holdout explicitly authorizes it. That applies to any
+    // real recognizer, not just the local checkpoint: MEMORY_AUTO_GRANT_ENABLED
+    // reads as "nothing auto-grants", so scoping it to sbert alone would leave
+    // ark silently auto-granting with the flag off.
+    //
+    // "fake" is exempt on purpose -- it is the deterministic offline stub used
+    // by tests and unprovisioned checkouts, and forcing review there would park
+    // every seeded demo note behind a human.
     reviewAllSkills:
       config.reviewAllSkills ||
-      (config.memoryRecognizer === "sbert" && !config.memoryAutoGrantEnabled),
+      ((config.memoryRecognizer === "sbert" || config.memoryRecognizer === "ark") &&
+        !config.memoryAutoGrantEnabled),
   },
 );
 const planner = new TaskPlanner(

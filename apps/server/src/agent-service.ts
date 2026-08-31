@@ -345,6 +345,7 @@ export class AgentService implements AgentLease {
         this.config.runtimeProvider === "container"
           ? "Codex CLI in " + this.config.containerEngine + " Runtime"
           : "Codex CLI in application container",
+      memoryEnabled: this.config.memoryEnabled,
     };
   }
 
@@ -642,6 +643,9 @@ export class AgentService implements AgentLease {
   }
 
   async reviewNote(id: string, input: ReviewNoteInput): Promise<MemoryNote> {
+    if (!this.config.memoryEnabled) {
+      throw new HttpError(409, "Governed memory is disabled by MEMORY_ENABLED=false");
+    }
     return this.review.applyReview(id, input);
   }
 

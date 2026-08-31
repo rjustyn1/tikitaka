@@ -234,13 +234,15 @@ describe("turn prompts", () => {
     // No `template` argument is passed anywhere in this suite.
     const text = prompt(nodes[0]!);
     expect(text).toContain("Review auth and secret boundaries.");
-    expect(text).not.toContain("Complete this plan node from your role.");
+    expect(text).not.toContain("Complete this plan node using what you do best.");
   });
 
   it("falls back only when a node carries no instruction at all", () => {
     // Rows persisted before the planner landed.
     const legacy: GroupPlanNode = { ...nodes[1]!, instruction: "" };
-    expect(prompt(legacy)).toContain("Complete this plan node from your role.");
+    expect(prompt(legacy)).toContain(
+      "Complete this plan node using what you do best.",
+    );
   });
 
   it("carries identity, node role, ownership and the shared code location", () => {
@@ -300,14 +302,16 @@ describe("the group-task charter", () => {
     const charter = buildGroupTaskCharter({
       groupName: "Upload Feature Team",
       taskPrompt: "Plan an upload feature.",
+      // The roster carries each Agent's description -- the text the planner
+      // actually reads -- not a cosmetic role label.
       roster: [
-        { name: "Backend", role: "backend" },
-        { name: "Frontend", role: "frontend" },
-        { name: "Security", role: "security" },
+        { name: "Backend", description: "Backend API and storage work." },
+        { name: "Frontend", description: "User-facing upload UI." },
+        { name: "Security", description: "Auth, validation, secret boundaries." },
       ],
     });
     expect(charter).toContain("Upload Feature Team");
-    expect(charter).toContain("Backend - backend");
+    expect(charter).toContain("Backend - Backend API and storage work.");
     expect(charter).toContain("never written into shared code");
     // It must not rewrite Agent identity -- that belongs to the turn prompt.
     expect(charter).not.toContain("You are");

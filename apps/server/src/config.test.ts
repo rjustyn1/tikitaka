@@ -29,6 +29,7 @@ describe("memory configuration", () => {
       memoryRecognitionSkillThreshold: 0.45,
       memoryEmbeddingTimeoutMs: 30_000,
       memoryAutoGrantEnabled: false,
+      memoryEnabled: true,
     });
   });
 
@@ -42,6 +43,12 @@ describe("memory configuration", () => {
     ).toMatchObject({
       memoryExtractor: "fake",
       memoryExtractTimeoutMs: 4_242,
+    });
+  });
+
+  it("parses MEMORY_ENABLED as the governed-memory master switch", () => {
+    expect(loadConfig({ NODE_ENV: "test", MEMORY_ENABLED: "false" })).toMatchObject({
+      memoryEnabled: false,
     });
   });
 

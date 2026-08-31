@@ -79,29 +79,28 @@ describe("GroupEditor", () => {
     });
   });
 
-  it("offers exactly three role labels, and no free text", () => {
+  it("offers no role picker at all", () => {
+    // The label is derived from the Agent, so there is nothing to choose. A
+    // picker would let a "Security Agent" be saved as `frontend`, which then
+    // drove the wrong colour dot everywhere it was shown.
     renderEditor();
     fireEvent.click(screen.getAllByRole("checkbox")[0] as HTMLElement);
-    const picker = screen.getByLabelText("Role for Backend Agent");
-    expect(
-      [...(picker as HTMLSelectElement).options].map((option) => option.value),
-    ).toEqual(["backend", "frontend", "security"]);
+    expect(screen.queryByLabelText("Role for Backend Agent")).toBeNull();
+    expect(document.querySelector("select")).toBeNull();
   });
 
-  it("lets a label be changed, and submits the change", () => {
+  it("derives each label from the Agent it is on", () => {
     const onSubmit = renderEditor();
     fireEvent.change(screen.getByPlaceholderText("Upload Feature Team"), {
       target: { value: "Team" },
     });
     fireEvent.click(screen.getAllByRole("checkbox")[0] as HTMLElement);
-    fireEvent.click(screen.getAllByRole("checkbox")[1] as HTMLElement);
-    fireEvent.change(screen.getByLabelText("Role for Backend Agent"), {
-      target: { value: "security" },
-    });
+    fireEvent.click(screen.getAllByRole("checkbox")[2] as HTMLElement);
     fireEvent.click(screen.getByRole("button", { name: "Create team" }));
+    // "Security Agent" cannot be submitted as anything but `security`.
     expect(onSubmit.mock.calls[0]?.[0].members).toEqual([
-      { agentId: "a1", role: "security" },
-      { agentId: "a2", role: "frontend" },
+      { agentId: "a1", role: "backend" },
+      { agentId: "a3", role: "security" },
     ]);
   });
 
@@ -124,10 +123,10 @@ describe("GroupEditor", () => {
     ]);
   });
 
-  it("keeps a stored label, and clamps one outside the three", () => {
-    // An edit form shows what is actually saved: a3 stays "frontend" so the
-    // human can see it and change it. A legacy label outside the three has no
-    // option to sit on, so it is clamped to the Agent's own default.
+  it("re-derives a stored label instead of trusting it", () => {
+    // Saved rows may carry a legacy label ("member") or one that contradicts
+    // the Agent ("Security Agent" stored as frontend). Both are re-derived, so
+    // the roster cannot stay out of step with the Agents it names.
     const onSubmit = vi.fn();
     render(
       <GroupEditor
@@ -151,7 +150,7 @@ describe("GroupEditor", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Save team" }));
     expect(onSubmit.mock.calls[0]?.[0].members).toEqual([
-      { agentId: "a3", role: "frontend" },
+      { agentId: "a3", role: "security" },
       { agentId: "a2", role: "frontend" },
     ]);
   });

@@ -180,7 +180,9 @@ MEMORY_RECOGNITION_AGENT_THRESHOLD=0.72
 
 > [!IMPORTANT]
 > **Automatic grants stay off.** While `MEMORY_AUTO_GRANT_ENABLED=false`, the
-> server forces every SBERT-routed note through human review. The checkpoint
+> server forces every note routed by a real recognizer — `sbert` or `ark` —
+> through human review, whatever its confidence. (`fake`, the offline stub, is
+> exempt so seeded demo data is not parked behind a human.) The checkpoint
 > was calibrated on *synthetic* data; a maintainer must review an independent
 > holdout and recalibrate against human labels before enabling auto-grant. See
 > [MANIFEST_RECOGNITION.md](manifest/MANIFEST_RECOGNITION.md).

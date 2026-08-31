@@ -103,9 +103,9 @@ normal note:
 Never write governed memory into:
 
 ```text
-shared-code/<groupTaskId>/
-shared-code/<groupTaskId>/AGENTS.md
-shared-code/<groupTaskId>/.agents/skills/
+shared-code/<groupId>/
+shared-code/<groupId>/AGENTS.md
+shared-code/<groupId>/.agents/skills/
 ```
 
 ## Severe Entry Format

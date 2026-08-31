@@ -46,7 +46,10 @@ afterEach(async () => {
   );
 });
 
-async function makeHarness(runner: AgentRunner = new FakeRunner()): Promise<{
+async function makeHarness(
+  runner: AgentRunner = new FakeRunner(),
+  memoryEnabled = true,
+): Promise<{
   service: AgentService;
   store: JsonStore;
 }> {
@@ -59,6 +62,7 @@ async function makeHarness(runner: AgentRunner = new FakeRunner()): Promise<{
     CODEX_HOME: path.join(root, "codex"),
     ARK_API_KEY: "test-key",
     ARK_MODEL: "ep-test",
+    MEMORY_ENABLED: String(memoryEnabled),
   });
   const store = new JsonStore(path.join(root, "data", "db.json"));
   const service = new AgentService(
@@ -247,6 +251,17 @@ describe("Agent lifecycle", () => {
 
     await service.releaseAgent(agent.id, holder);
     expect(service.getAgent(agent.id).status).toBe("ready");
+  });
+});
+
+describe("governed-memory master switch", () => {
+  it("refuses review actions while governed memory is disabled", async () => {
+    const { service } = await makeHarness(new FakeRunner(), false);
+
+    await expect(
+      service.reviewNote("missing-note", { type: "approve", reviewerName: "Operator" }),
+    ).rejects.toMatchObject({ statusCode: 409 });
+    await expect(service.systemInfo()).resolves.toMatchObject({ memoryEnabled: false });
   });
 });
 

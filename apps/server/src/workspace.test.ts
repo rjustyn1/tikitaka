@@ -206,19 +206,28 @@ describe("shared code", () => {
     const workspaces = new WorkspaceManager(root);
     await workspaces.initialize();
 
-    const created = await workspaces.createSharedCodeDirectory("task-1");
-    expect(created).toBe(workspaces.sharedCodePath("task-1"));
-    expect((await lstat(created)).isDirectory()).toBe(true);
-    await expect(
-      workspaces.createSharedCodeDirectory("task-1"),
-    ).rejects.toThrow();
+    const first = await workspaces.ensureSharedCodeDirectory("group-1");
+    expect(first.path).toBe(workspaces.sharedCodePath("group-1"));
+    expect(first.created).toBe(true);
+    expect((await lstat(first.path)).isDirectory()).toBe(true);
+
+    // A team's second task REUSES the tree rather than failing: the codebase
+    // has to outlive one prompt. `created` distinguishes the two so a failed
+    // setup only ever rolls back a directory it made itself.
+    await writeFile(path.join(first.path, "kept.ts"), "// task one's work\n");
+    const second = await workspaces.ensureSharedCodeDirectory("group-1");
+    expect(second.path).toBe(first.path);
+    expect(second.created).toBe(false);
+    expect(await readFile(path.join(first.path, "kept.ts"), "utf8")).toContain(
+      "task one's work",
+    );
   });
 
   it("never places governed memory in shared code", async () => {
     const root = await makeRoot();
     const workspaces = new WorkspaceManager(root);
     await workspaces.initialize();
-    const shared = await workspaces.createSharedCodeDirectory("task-1");
+    const shared = (await workspaces.ensureSharedCodeDirectory("group-1")).path;
     const agent = makeAgent(root);
     await workspaces.create(agent);
     await workspaces.prepareSharedCode(agent, shared);
@@ -240,7 +249,7 @@ describe("shared code", () => {
     const root = await makeRoot();
     const workspaces = new WorkspaceManager(root, "container");
     await workspaces.initialize();
-    const shared = await workspaces.createSharedCodeDirectory("task-1");
+    const shared = (await workspaces.ensureSharedCodeDirectory("group-1")).path;
     const agent = makeAgent(root);
     await workspaces.create(agent);
 
@@ -254,7 +263,7 @@ describe("shared code", () => {
     const root = await makeRoot();
     const workspaces = new WorkspaceManager(root, "local-process");
     await workspaces.initialize();
-    const shared = await workspaces.createSharedCodeDirectory("task-1");
+    const shared = (await workspaces.ensureSharedCodeDirectory("group-1")).path;
     const agent = makeAgent(root);
     await workspaces.create(agent);
 
@@ -272,12 +281,12 @@ describe("shared code", () => {
     );
   });
 
-  it("refuses to repoint an existing ./code link at a different task", async () => {
+  it("refuses to repoint an existing ./code link at a different team", async () => {
     const root = await makeRoot();
     const workspaces = new WorkspaceManager(root, "local-process");
     await workspaces.initialize();
-    const first = await workspaces.createSharedCodeDirectory("task-1");
-    const second = await workspaces.createSharedCodeDirectory("task-2");
+    const first = (await workspaces.ensureSharedCodeDirectory("group-1")).path;
+    const second = (await workspaces.ensureSharedCodeDirectory("group-2")).path;
     const agent = makeAgent(root);
     await workspaces.create(agent);
 
@@ -291,7 +300,7 @@ describe("shared code", () => {
     const root = await makeRoot();
     const workspaces = new WorkspaceManager(root, "local-process");
     await workspaces.initialize();
-    const shared = await workspaces.createSharedCodeDirectory("task-1");
+    const shared = (await workspaces.ensureSharedCodeDirectory("group-1")).path;
     const agent = makeAgent(root);
     await workspaces.create(agent);
     await workspaces.prepareSharedCode(agent, shared);
@@ -303,17 +312,52 @@ describe("shared code", () => {
     expect(await readFile(path.join(shared, "keep.txt"), "utf8")).toBe("keep");
   });
 
-  it("removes only the requested shared task directory", async () => {
+  it("keeps a team's code across tasks, and keeps teams apart", async () => {
+    // The bug this pins: shared code used to be keyed by groupTaskId, so every
+    // prompt started an empty tree. The transcript still said "I built the
+    // upload endpoint" while ./code was empty, and the Agent was asked to
+    // extend a file that was not there.
+    const root = await makeRoot();
+    const workspaces = new WorkspaceManager(root, "local-process");
+    await workspaces.initialize();
+    const agent = makeAgent(root);
+    await workspaces.create(agent);
+
+    // Task one writes through ./code, then its link is released as tasks end.
+    const taskOne = (await workspaces.ensureSharedCodeDirectory("group-1")).path;
+    await workspaces.prepareSharedCode(agent, taskOne);
+    await writeFile(
+      path.join(agent.workspacePath, "code", "uploads.ts"),
+      "export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;\n",
+    );
+    await workspaces.releaseSharedCode(agent);
+
+    // Task two, same team: it must see task one's file.
+    const taskTwo = (await workspaces.ensureSharedCodeDirectory("group-1")).path;
+    expect(taskTwo).toBe(taskOne);
+    await workspaces.prepareSharedCode(agent, taskTwo);
+    expect(
+      await readFile(path.join(agent.workspacePath, "code", "uploads.ts"), "utf8"),
+    ).toContain("MAX_UPLOAD_BYTES");
+
+    // A different team still gets its own tree -- persistence is per group,
+    // not global.
+    const other = (await workspaces.ensureSharedCodeDirectory("group-2")).path;
+    expect(other).not.toBe(taskOne);
+    expect(await readdir(other)).not.toContain("uploads.ts");
+  });
+
+  it("removes only the requested team's shared directory", async () => {
     const root = await makeRoot();
     const workspaces = new WorkspaceManager(root);
     await workspaces.initialize();
-    const first = await workspaces.createSharedCodeDirectory("task-1");
-    await workspaces.createSharedCodeDirectory("task-2");
+    const first = (await workspaces.ensureSharedCodeDirectory("group-1")).path;
+    (await workspaces.ensureSharedCodeDirectory("group-2")).path;
 
-    await workspaces.removeSharedCodeDirectory("task-1");
+    await workspaces.removeSharedCodeDirectory("group-1");
 
     await expect(lstat(first)).rejects.toThrow();
-    expect(await readdir(path.join(root, "shared-code"))).toEqual(["task-2"]);
+    expect(await readdir(path.join(root, "shared-code"))).toEqual(["group-2"]);
   });
 
   it("does not recursively delete a real local code directory", async () => {

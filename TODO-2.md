@@ -269,7 +269,7 @@ project-specific dataset with multi-agent labels.
       overrides content safety.
 
 - [ ] **Normal notes, fallback match: always route to approval**, same
-      pending-review path as today's severe/redacted/quarantined/broadly-routed
+      pending-review path as today's severe/redacted/quarantined
       notes. Add `matchKind === "fallback"` as one more OR-ed condition in
       `requiresHumanReview()` — one line, not a new mechanism.
 

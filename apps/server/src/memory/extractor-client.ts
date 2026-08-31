@@ -23,6 +23,8 @@ export interface ExtractorResponse {
  * extractor has no dependency on the full config module.
  */
 export interface MemoryConfig {
+  /** Master runtime switch for governed-memory processing. */
+  memoryEnabled?: boolean;
   memoryExtractor: "ark" | "fake" | "off";
   memoryExtractTimeoutMs: number;
   arkApiKey: string;

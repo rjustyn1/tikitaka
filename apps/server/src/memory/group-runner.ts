@@ -287,15 +287,12 @@ export class GroupRunner {
     // Filesystem first: a failure here must not leave a dangling task row or
     // links on members that were prepared before a later member failed.
     const taskId = randomUUID();
-    const sharedCodePath = this.workspaces.sharedCodePath(taskId);
-    try {
-      await this.workspaces.createSharedCodeDirectory(taskId);
-    } catch (error) {
-      await this.workspaces
-        .removeSharedCodeDirectory(taskId)
-        .catch(() => undefined);
-      throw error;
-    }
+    // Shared code is keyed by GROUP and persists across tasks, so task two
+    // continues where task one stopped. `createdSharedCode` records whether
+    // THIS task made the directory: only then may rollback delete it, or a
+    // failed later task would destroy the team's accumulated work.
+    const { path: sharedCodePath, created: createdSharedCode } =
+      await this.workspaces.ensureSharedCodeDirectory(groupId);
     const preparedAgents: Agent[] = [];
     try {
       for (const agent of agents) {
@@ -337,9 +334,7 @@ export class GroupRunner {
         taskPrompt: prompt,
         roster: agents.map((agent) => ({
           name: agent.name,
-          role:
-            members.find((member) => member.agentId === agent.id)?.role ??
-            "member",
+          description: agent.description,
         })),
       });
       for (const agent of agents) {
@@ -408,9 +403,11 @@ export class GroupRunner {
           this.workspaces.releaseSharedCode(agent).catch(() => undefined),
         ),
       );
-      await this.workspaces
-        .removeSharedCodeDirectory(taskId)
-        .catch(() => undefined);
+      if (createdSharedCode) {
+        await this.workspaces
+          .removeSharedCodeDirectory(groupId)
+          .catch(() => undefined);
+      }
       throw error;
     }
   }
@@ -671,17 +668,18 @@ export class GroupRunner {
           nodeRole: candidate.nodeRole,
           output: candidate.output ?? "",
         }));
-      const governedMemory = database.notes.filter(
-        (note) =>
-          note.status === "active" && note.targetAgentIds.includes(node.agentId),
-      );
+      const governedMemory = this.config.memoryEnabled
+        ? database.notes.filter(
+            (note) =>
+              note.status === "active" && note.targetAgentIds.includes(node.agentId),
+          )
+        : [];
 
       const prompt = buildTurnPrompt({
         taskPrompt: task.prompt,
         node,
         agentName: agentAtStart.name,
         agentDescription: agentAtStart.description,
-        role: participant.role,
         injectedMessages,
         dependencyOutputs,
         agentNames: new Map(
@@ -1008,6 +1006,7 @@ export class GroupRunner {
     seq: number,
     timestamp: string,
   ): string | null {
+    if (!this.config.memoryEnabled) return null;
     const open = findOpenSegment(database.topicSegments, groupId);
 
     if (!open) {
@@ -1098,6 +1097,7 @@ export class GroupRunner {
    * extraction produced nothing, so a barren segment is not retried forever.
    */
   private async consolidateSegment(segmentId: string): Promise<void> {
+    if (!this.config.memoryEnabled) return;
     try {
       const database = this.store.snapshot();
       const segment = database.topicSegments.find(
@@ -1150,6 +1150,7 @@ export class GroupRunner {
    * waiting for a prompt that may never arrive.
    */
   private async maybeFlush(taskId: string): Promise<void> {
+    if (!this.config.memoryEnabled) return;
     try {
       const database = this.store.snapshot();
       const groupTask = database.groupTasks.find((item) => item.id === taskId);
@@ -1208,6 +1209,7 @@ export class GroupRunner {
    * cost of not running a sweep.
    */
   async sweepIdleSegments(groupId: string): Promise<void> {
+    if (!this.config.memoryEnabled) return;
     try {
       const database = this.store.snapshot();
       const policy = this.config.segmentPolicy;
@@ -1313,7 +1315,9 @@ export class GroupRunner {
 
     // Drop the earlier partial flush's auto notes so the final flush over the
     // full transcript is authoritative. Human-decided notes are kept.
-    await this.memoryPipeline.resetAutoNotes(taskId);
+    if (this.config.memoryEnabled) {
+      await this.memoryPipeline.resetAutoNotes(taskId);
+    }
 
     const timestamp = now();
     await this.store.mutate((db) => {

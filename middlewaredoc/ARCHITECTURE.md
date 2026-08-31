@@ -86,7 +86,7 @@ flowchart TD
     C --> F["Flush @ task terminal<br/>read task spans, reassemble in order"]
     F --> X["Consolidate<br/>1 LLM extractor → N targeted notes"]
     X --> S["Safety<br/>redact secrets + quarantine check"]
-    S --> R{"Risk gate<br/>severe ∨ quarantine<br/>∨ redaction ∨ broad routing?"}
+    S --> R{"Risk gate<br/>severe ∨ quarantine<br/>∨ redaction ∨ low-confidence routing?"}
 
     R -->|high risk| H
     H -->|approved / edited| L["Route + Land<br/>by file placement"]
@@ -126,7 +126,7 @@ A human sits above the pipeline as **policy**; the middleware runs the rest.
 5. **Safety** — every note is redacted (secrets stripped) and run through the
    quarantine heuristic **before** anything is written.
 6. **Risk gate (HITL)** — a note goes to a human if it is
-   `severe ∨ quarantine-hit ∨ redaction-fired ∨ broadly-routed`; the human
+   `severe ∨ quarantine-hit ∨ redaction-fired ∨ fallback-routed`; the human
    approves, edits (content / severity / routing / `description`), or rejects.
    Everything clean and normal auto-activates.
 7. **Route + land** — the note is written **by placement** into each target agent's
@@ -207,11 +207,13 @@ it as `./code` inside each participating agent's private root.
 
 ```
 workspaces/
-├── shared-code/<groupTaskId>/   ← the one codebase, edited by all agents
+├── shared-code/<groupId>/   ← the one codebase, edited by all agents.
+│                              Keyed by GROUP, so it persists across tasks:
+│                              task two continues task one's work.
 ├── backend/
 │   ├── AGENTS.md                ← per-agent memory   (isolated)
 │   ├── .agents/skills/          ← per-agent skills   (isolated)
-│   └── code → shared-code/<groupTaskId>
+│   └── code → shared-code/<groupId>
 ├── frontend/  … (same shape)
 └── security/  … (same shape)
 ```
@@ -227,7 +229,7 @@ reads," and those stay per-agent.
 | Runtime | `./code` is | Sandbox |
 |---|---|---|
 | `container` (`npm run poc`) | a **nested bind mount** of the shared dir onto `<workspace>/code` | inside cwd, so `workspace-write` permits it natively |
-| `local-process` (Compose/ECS) | a **symlink** to `shared-code/<groupTaskId>` | outside cwd, so the run needs `codex exec --add-dir` |
+| `local-process` (Compose/ECS) | a **symlink** to `shared-code/<groupId>` | outside cwd, so the run needs `codex exec --add-dir` |
 
 A symlink is **broken** under the container runtime — the target resolves outside
 the mounted workspace. Do not use one there.
@@ -255,7 +257,7 @@ untrusted agent transcript ──consolidator──► note ──► SKILL.md �
 So the human gate is the primary control on that channel.
 
 - **Risk-based trigger.** A note goes to a human if **any** of:
-  `severe ∨ quarantine-heuristic-hit ∨ redaction-fired ∨ broad-routing`.
+  `severe ∨ quarantine-heuristic-hit ∨ redaction-fired ∨ fallback-routing`.
   Everything else — a clean, narrowly-routed normal note — auto-activates.
 - **What the human does:** approve · **edit** · reject. The edit levers are the
   governance knobs: **content**, **severity**, **routing** (narrow only — never

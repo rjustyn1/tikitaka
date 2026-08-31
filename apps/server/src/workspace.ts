@@ -165,9 +165,16 @@ export class WorkspaceManager {
     return path.join(this.root, agentId);
   }
 
-  /** `workspaces/shared-code/<groupTaskId>` -- code only, never memory. */
-  sharedCodePath(groupTaskId: string): string {
-    return path.join(this.root, "shared-code", groupTaskId);
+  /**
+   * `workspaces/shared-code/<groupId>` -- code only, never memory.
+   *
+   * Keyed by GROUP, not by task. A team's codebase has to outlive one prompt:
+   * the transcript is per group and governed memory is per topic segment, so
+   * per-task code meant an Agent could be told in the transcript that it built
+   * something while `./code` was empty. Task two continues task one's work.
+   */
+  sharedCodePath(groupId: string): string {
+    return path.join(this.root, "shared-code", groupId);
   }
 
   async initialize(): Promise<void> {
@@ -233,22 +240,34 @@ export class WorkspaceManager {
   }
 
   /**
-   * Create the one shared code directory for a group task.
+   * Ensure the group's shared code directory exists.
    *
-   * Non-recursive on the leaf so a duplicate `groupTaskId` fails loudly instead
-   * of two tasks quietly sharing one tree.
+   * Idempotent by design: every task after the first reuses the tree its
+   * predecessor left behind. `created` tells the caller whether THIS call made
+   * it, which is what lets a failed setup roll back its own directory without
+   * deleting a team's accumulated work.
    */
-  async createSharedCodeDirectory(groupTaskId: string): Promise<string> {
-    const target = this.sharedCodePath(groupTaskId);
+  async ensureSharedCodeDirectory(
+    groupId: string,
+  ): Promise<{ path: string; created: boolean }> {
+    const target = this.sharedCodePath(groupId);
     await mkdir(path.dirname(target), { recursive: true });
-    await mkdir(target, { recursive: false });
+    let created = true;
+    try {
+      await mkdir(target, { recursive: false });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      created = false;
+      return { path: target, created };
+    }
     await writeFile(
       path.join(target, "README.md"),
       [
         "# Shared group code",
         "",
-        "Every Agent in this group task edits this one directory through `./code`",
-        "inside its own private workspace.",
+        "Every Agent in this team edits this one directory through `./code`",
+        "inside its own private workspace. It persists across tasks: a later",
+        "task continues the work an earlier one left here.",
         "",
         "Code only. Governed memory (AGENTS.md entries and .agents/skills) lives in",
         "each Agent's private workspace root and must never be written here --",
@@ -258,15 +277,18 @@ export class WorkspaceManager {
       ].join("\n"),
       "utf8",
     );
-    return target;
+    return { path: target, created };
   }
 
-  /** Remove an unclaimed task directory after setup fails. */
-  async removeSharedCodeDirectory(groupTaskId: string): Promise<void> {
+  /**
+   * Remove a shared code directory. Only ever called for a directory the
+   * failing setup itself created -- never for one holding earlier work.
+   */
+  async removeSharedCodeDirectory(groupId: string): Promise<void> {
     const sharedRoot = path.resolve(this.root, "shared-code");
-    const target = path.resolve(this.sharedCodePath(groupTaskId));
+    const target = path.resolve(this.sharedCodePath(groupId));
     if (path.dirname(target) !== sharedRoot) {
-      throw new Error("Invalid shared-code task id");
+      throw new Error("Invalid shared-code group id");
     }
     await rm(target, { recursive: true, force: true });
   }

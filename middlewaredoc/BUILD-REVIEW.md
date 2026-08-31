@@ -165,7 +165,7 @@ What happens when a team task finishes. Step 6 is the human gate.
    Secret redaction and a quarantine heuristic run BEFORE anything is written.
 
 6  Risk gate — the human     review.ts          <-- the authority point
-   severe ∨ redaction-fired ∨ quarantine-hit ∨ broadly-routed goes to a
+   severe ∨ redaction-fired ∨ quarantine-hit ∨ fallback-routed goes to a
    person. Everything clean and narrow auto-activates.
 
 7  Land by placement         landing.ts -> workspace-memory.ts

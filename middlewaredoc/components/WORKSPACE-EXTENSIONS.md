@@ -22,11 +22,11 @@ per-Agent memory roots.
 
 ```text
 workspaces/
-  shared-code/<groupTaskId>/
+  shared-code/<groupId>/
   <agentId>/
     AGENTS.md
     .agents/skills/
-    code -> ../shared-code/<groupTaskId>
+    code -> ../shared-code/<groupId>
 ```
 
 ## Methods
@@ -62,7 +62,7 @@ Implementation details:
 
 ```ts
 createSharedCodeDirectory:
-  mkdir(workspaces/shared-code/<groupTaskId>, { recursive: false })
+  mkdir(workspaces/shared-code/<groupId>, { recursive: true })  // idempotent: persists across tasks
   write README.md explaining this directory is code-only
   write .gitignore for generated files if needed
 
