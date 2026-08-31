@@ -605,24 +605,24 @@ directory.
 
 ```text
 workspaces/
-  shared-code/<groupTaskId>/
+  shared-code/<groupId>/
     apps/server/**
     apps/web/**
 
   backend-agent/
     AGENTS.md
     .agents/skills/
-    code -> ../shared-code/<groupTaskId>
+    code -> ../shared-code/<groupId>
 
   frontend-agent/
     AGENTS.md
     .agents/skills/
-    code -> ../shared-code/<groupTaskId>
+    code -> ../shared-code/<groupId>
 
   security-agent/
     AGENTS.md
     .agents/skills/
-    code -> ../shared-code/<groupTaskId>
+    code -> ../shared-code/<groupId>
 ```
 
 Codex still runs with cwd set to the Agent's private root. The Agent edits the
@@ -789,8 +789,8 @@ security-agent/AGENTS.md
 The planner should not write governed memory into:
 
 ```text
-shared-code/<groupTaskId>/AGENTS.md
-shared-code/<groupTaskId>/.agents/skills/
+shared-code/<groupId>/AGENTS.md
+shared-code/<groupId>/.agents/skills/
 ```
 
 The planner-written section should not replace stable identity with a different

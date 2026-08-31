@@ -178,7 +178,7 @@ create fresh groupThreadId on re-add
 Implement shared code setup:
 
 ```text
-workspaces/shared-code/<groupTaskId>
+workspaces/shared-code/<groupId>
 <agent.workspacePath>/code  (A2: symlink for local-process,
                              bind-mount target dir for container)
 ```

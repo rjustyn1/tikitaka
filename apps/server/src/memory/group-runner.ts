@@ -253,15 +253,12 @@ export class GroupRunner {
     // Filesystem first: a failure here must not leave a dangling task row or
     // links on members that were prepared before a later member failed.
     const taskId = randomUUID();
-    const sharedCodePath = this.workspaces.sharedCodePath(taskId);
-    try {
-      await this.workspaces.createSharedCodeDirectory(taskId);
-    } catch (error) {
-      await this.workspaces
-        .removeSharedCodeDirectory(taskId)
-        .catch(() => undefined);
-      throw error;
-    }
+    // Shared code is keyed by GROUP and persists across tasks, so task two
+    // continues where task one stopped. `createdSharedCode` records whether
+    // THIS task made the directory: only then may rollback delete it, or a
+    // failed later task would destroy the team's accumulated work.
+    const { path: sharedCodePath, created: createdSharedCode } =
+      await this.workspaces.ensureSharedCodeDirectory(groupId);
     const preparedAgents: Agent[] = [];
     try {
       for (const agent of agents) {
@@ -372,9 +369,11 @@ export class GroupRunner {
           this.workspaces.releaseSharedCode(agent).catch(() => undefined),
         ),
       );
-      await this.workspaces
-        .removeSharedCodeDirectory(taskId)
-        .catch(() => undefined);
+      if (createdSharedCode) {
+        await this.workspaces
+          .removeSharedCodeDirectory(groupId)
+          .catch(() => undefined);
+      }
       throw error;
     }
   }

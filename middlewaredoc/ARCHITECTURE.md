@@ -207,11 +207,13 @@ it as `./code` inside each participating agent's private root.
 
 ```
 workspaces/
-├── shared-code/<groupTaskId>/   ← the one codebase, edited by all agents
+├── shared-code/<groupId>/   ← the one codebase, edited by all agents.
+│                              Keyed by GROUP, so it persists across tasks:
+│                              task two continues task one's work.
 ├── backend/
 │   ├── AGENTS.md                ← per-agent memory   (isolated)
 │   ├── .agents/skills/          ← per-agent skills   (isolated)
-│   └── code → shared-code/<groupTaskId>
+│   └── code → shared-code/<groupId>
 ├── frontend/  … (same shape)
 └── security/  … (same shape)
 ```
@@ -227,7 +229,7 @@ reads," and those stay per-agent.
 | Runtime | `./code` is | Sandbox |
 |---|---|---|
 | `container` (`npm run poc`) | a **nested bind mount** of the shared dir onto `<workspace>/code` | inside cwd, so `workspace-write` permits it natively |
-| `local-process` (Compose/ECS) | a **symlink** to `shared-code/<groupTaskId>` | outside cwd, so the run needs `codex exec --add-dir` |
+| `local-process` (Compose/ECS) | a **symlink** to `shared-code/<groupId>` | outside cwd, so the run needs `codex exec --add-dir` |
 
 A symlink is **broken** under the container runtime — the target resolves outside
 the mounted workspace. Do not use one there.
