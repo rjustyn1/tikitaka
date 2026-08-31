@@ -161,14 +161,12 @@ export class FakeRunner implements AgentRunner {
  * recording double lives here rather than in the production module.
  */
 export class RecordingMemoryPipeline implements MemoryPipeline {
-  readonly calls: Array<{ groupTaskId: string; sinkNodeIds: string[] }> = [];
+  /** Segment ids handed to the pipeline, in call order. */
+  readonly calls: Array<{ segmentId: string }> = [];
   readonly resetCalls: string[] = [];
 
-  async runMemoryPipeline(
-    groupTaskId: string,
-    sinkNodeIds: string[],
-  ): Promise<void> {
-    this.calls.push({ groupTaskId, sinkNodeIds });
+  async runMemoryPipeline(segmentId: string): Promise<void> {
+    this.calls.push({ segmentId });
   }
 
   async resetAutoNotes(groupTaskId: string): Promise<void> {

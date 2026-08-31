@@ -11,6 +11,7 @@ const emptyDatabase = (): Database => ({
   groups: [],
   groupTasks: [],
   groupMessages: [],
+  topicSegments: [],
   groupParticipants: [],
   groupPlanNodes: [],
   contextInjections: [],
@@ -39,6 +40,7 @@ export class JsonStore {
       if (!Array.isArray(parsed.groups)) parsed.groups = [];
       if (!Array.isArray(parsed.groupTasks)) parsed.groupTasks = [];
       if (!Array.isArray(parsed.groupMessages)) parsed.groupMessages = [];
+      if (!Array.isArray(parsed.topicSegments)) parsed.topicSegments = [];
       if (!Array.isArray(parsed.groupParticipants)) parsed.groupParticipants = [];
       if (!Array.isArray(parsed.groupPlanNodes)) parsed.groupPlanNodes = [];
       if (!Array.isArray(parsed.contextInjections)) parsed.contextInjections = [];

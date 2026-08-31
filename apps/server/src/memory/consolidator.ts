@@ -8,16 +8,18 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Agent, AgentGroup } from "../types.js";
-import type { CandidateMemoryNote, TaskBuffer } from "./types.js";
+import type { CandidateMemoryNote, SegmentBuffer } from "./types.js";
 import type { ExtractorClient, ExtractorRequest } from "./extractor-client.js";
 
 export interface ConsolidateInput {
-  taskBuffer: TaskBuffer;
+  segmentBuffer: SegmentBuffer;
   group: AgentGroup;
   members: Agent[];
 }
 
-const MAX_NOTES = 5;
+// A segment spans several tasks, so it carries more durable material than a
+// single task did. Raised from 5 alongside the move to segment consolidation.
+const MAX_NOTES = 8;
 
 const SYSTEM_PROMPT = [
   "You extract governed memory notes from a completed multi-agent task. These",
@@ -50,7 +52,7 @@ const SYSTEM_PROMPT = [
   "- sourceRunIndices / sourceSpanIndices: cite provenance by the SHORT INTEGER",
   "  numbers shown under 'Node outputs' as 'run N' and '[span N]'. Use the small",
   "  numbers only — do not copy any long id strings.",
-  "- Return at most 5 notes. If nothing is durable, return { \"notes\": [] }.",
+  "- Return at most 8 notes. If nothing is durable, return { \"notes\": [] }.",
 ].join("\n");
 
 // Lenient on shape (real models omit fields or format ids loosely); we fill
@@ -98,7 +100,7 @@ export class Consolidator {
     const parsed = parseExtractorJson(rawText);
     if (!parsed) return [];
 
-    const sources = collectSources(input.taskBuffer);
+    const sources = collectSources(input.segmentBuffer);
     const candidates = parsed.notes.map((raw) =>
       normalizeCandidate(raw, input, sources),
     );
@@ -114,10 +116,10 @@ interface BufferSources {
   spanIds: string[];
 }
 
-function collectSources(taskBuffer: TaskBuffer): BufferSources {
+function collectSources(segmentBuffer: SegmentBuffer): BufferSources {
   const runIds: string[] = [];
   const spanIds: string[] = [];
-  for (const entry of taskBuffer.entries) {
+  for (const entry of segmentBuffer.entries) {
     if (entry.runId && !runIds.includes(entry.runId)) runIds.push(entry.runId);
     for (const span of entry.spans) {
       if (!spanIds.includes(span.id)) spanIds.push(span.id);
@@ -130,8 +132,8 @@ export function buildExtractorRequest(
   input: ConsolidateInput,
   timeoutMs: number = DEFAULT_EXTRACT_TIMEOUT_MS,
 ): ExtractorRequest {
-  const { taskBuffer, members } = input;
-  const sources = collectSources(taskBuffer);
+  const { segmentBuffer, members } = input;
+  const sources = collectSources(segmentBuffer);
   // 1-based so "run 1"/"[span 1]" reads naturally; 0 means not found.
   const spanIndexOf = (id: string) => sources.spanIds.indexOf(id) + 1;
 
@@ -139,7 +141,7 @@ export function buildExtractorRequest(
     .map((agent) => `- ${agent.id}  (${agent.name})`)
     .join("\n");
 
-  const nodeBlocks = taskBuffer.entries
+  const nodeBlocks = segmentBuffer.entries
     .map((entry) => {
       const runIndex = entry.runId ? sources.runIds.indexOf(entry.runId) + 1 : 0;
       const spanNums = entry.spans.map((span) => spanIndexOf(span.id));
@@ -160,14 +162,37 @@ export function buildExtractorRequest(
     })
     .join("\n");
 
+  const promptLines = segmentBuffer.prompts
+    .map((text, index) => `${index + 1}. ${text}`)
+    .join("\n");
+
+  // The transcript is the conversation the notes are about; node outputs remain
+  // the citable provenance. Both are shown, and the headings say which is which,
+  // so the model does not try to cite a chat line as a run index.
+  const transcriptLines = segmentBuffer.transcript
+    .map((line) => {
+      const speaker =
+        line.speakerType === "human"
+          ? "User"
+          : `Agent ${line.agentId ?? ""}`.trim();
+      return `${speaker}: ${line.content}`;
+    })
+    .join("\n");
+
   const prompt = [
-    "# Task",
-    taskBuffer.prompt,
+    "# Topic",
+    "These requests were all part of one continuous topic:",
+    promptLines,
     "",
     "## Agents you may target",
     agentLines,
     "",
+    "## Group chat transcript",
+    "The conversation to extract from. Not citable as provenance.",
+    transcriptLines || "(no messages)",
+    "",
     "## Node outputs",
+    "Cite provenance from here, by the run and span numbers shown.",
     nodeBlocks,
   ].join("\n");
 
@@ -220,7 +245,13 @@ function normalizeCandidate(
   };
   return {
     id: randomUUID(),
-    groupTaskId: input.taskBuffer.groupTaskId,
+    segmentId: input.segmentBuffer.segmentId,
+    // Kept as the segment's LAST task so review, ledger, landing and every
+    // existing per-task query keep resolving. segmentId is the real owner.
+    groupTaskId:
+      input.segmentBuffer.groupTaskIds[
+        input.segmentBuffer.groupTaskIds.length - 1
+      ] ?? "",
     content,
     severity: raw.severity ?? "normal",
     // Routing is resolved (filtered to members / defaulted) in validateCandidates.
@@ -249,10 +280,10 @@ export function validateCandidates(
   const memberIds = input.members.map((agent) => agent.id);
   const memberSet = new Set(memberIds);
   const spanIds = new Set(
-    input.taskBuffer.entries.flatMap((entry) => entry.spans.map((s) => s.id)),
+    input.segmentBuffer.entries.flatMap((entry) => entry.spans.map((s) => s.id)),
   );
   const runIds = new Set(
-    input.taskBuffer.entries
+    input.segmentBuffer.entries
       .map((entry) => entry.runId)
       .filter((id): id is string => Boolean(id)),
   );

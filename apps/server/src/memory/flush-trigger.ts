@@ -15,10 +15,21 @@ import type { GroupPlanNode, GroupTask, GroupTaskStatus } from "../types.js";
 export interface FlushTriggerInput {
   groupTask: GroupTask;
   planNodes: GroupPlanNode[];
+  /**
+   * Skip the once-only `flushedAt` guard and answer the plan question alone:
+   * "is every sink of this task settled?"
+   *
+   * Segment consolidation needs exactly that. `GroupTask.flushedAt` now marks
+   * that a task has been ACCOUNTED FOR by segment bookkeeping, not that its
+   * memory was extracted -- extraction is guarded by `TopicSegment.flushedAt`.
+   * Without this flag a segment could never consolidate, because by the time it
+   * closes every task inside it is already stamped.
+   */
+  ignoreFlushMark?: boolean;
 }
 
 export type FlushDecision =
-  | { shouldFlush: true; reason: "completed" | "partial"; sinkNodeIds: string[] }
+  | { shouldFlush: true; reason: "completed" | "partial" }
   | { shouldFlush: false; reason: "not_terminal" | "no_completed_runs" };
 
 const NODE_TERMINAL: readonly GroupTaskStatus[] = [
@@ -90,7 +101,7 @@ export function isUnreachable(
 
 export function decideFlush(input: FlushTriggerInput): FlushDecision {
   // A task flushes at most once.
-  if (input.groupTask.flushedAt) {
+  if (!input.ignoreFlushMark && input.groupTask.flushedAt) {
     return { shouldFlush: false, reason: "not_terminal" };
   }
 
@@ -125,8 +136,7 @@ export function decideFlush(input: FlushTriggerInput): FlushDecision {
     return { shouldFlush: false, reason: "no_completed_runs" };
   }
 
-  const sinkNodeIds = sinkNodes.map((node) => node.id);
   return sinkNodes.every((node) => node.status === "completed")
-    ? { shouldFlush: true, reason: "completed", sinkNodeIds }
-    : { shouldFlush: true, reason: "partial", sinkNodeIds };
+    ? { shouldFlush: true, reason: "completed" }
+    : { shouldFlush: true, reason: "partial" };
 }

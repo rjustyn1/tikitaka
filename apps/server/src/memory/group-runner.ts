@@ -38,6 +38,15 @@ import type {
 } from "../types.js";
 import type { WorkspaceManager } from "../workspace.js";
 import { decideFlush, findFailedAncestor } from "./flush-trigger.js";
+import {
+  closeSegmentInPlace,
+  createSegment,
+  decideSegmentBoundary,
+  findIdleSegment,
+  findOpenSegment,
+  humanPromptsIn,
+  transcriptCharsIn,
+} from "./topic-segment.js";
 import { findMembershipError, readMembers } from "./group-chain.js";
 import {
   buildContextPacket,
@@ -303,6 +312,11 @@ export class GroupRunner {
         await this.workspaces.writeGroupTaskSection(agent, task, charter);
       }
 
+      // Set inside the transaction, consumed after it commits. A segment that
+      // closes here is consolidated outside the mutate so a slow extraction
+      // never holds the store lock.
+      let closedSegmentId: string | null = null;
+
       await this.store.mutate((database) => {
         const storedGroup = database.groups.find((item) => item.id === groupId);
         if (!storedGroup) {
@@ -318,10 +332,11 @@ export class GroupRunner {
           storedGroup as AgentGroup,
           timestamp,
         );
+        const seq = this.nextSeq(database, groupId);
         database.groupMessages.push({
           id: randomUUID(),
           groupId,
-          seq: this.nextSeq(database, groupId),
+          seq,
           speakerType: "human",
           speakerAgentId: null,
           groupTaskId: taskId,
@@ -329,9 +344,21 @@ export class GroupRunner {
           content: prompt,
           createdAt: timestamp,
         });
+
+        closedSegmentId = this.assignTaskToSegment(
+          database,
+          groupId,
+          taskId,
+          prompt,
+          seq,
+          timestamp,
+        );
+
         storedGroup.activeTaskId = taskId;
         storedGroup.updatedAt = timestamp;
       });
+
+      if (closedSegmentId) void this.consolidateSegment(closedSegmentId);
 
       this.activeTasks.set(taskId, { cancelled: false, heldAgentIds: new Set() });
       void this.executeGroupTask(taskId).catch(() => undefined);
@@ -858,8 +885,116 @@ export class GroupRunner {
   }
 
   /**
-   * Bridge 4. Memory failures must never fail a completed group task, so every
-   * error from here is swallowed after logging.
+   * Attach a new task to the group's open topic segment, closing that segment
+   * first if the incoming prompt has changed the subject or the segment has hit
+   * a size cap. Returns the id of a segment that closed, or null.
+   *
+   * Runs INSIDE the caller's `store.mutate`, in the same transaction that
+   * creates the task and its human message, so a task can never end up without
+   * a segment or attached to a segment that is already closed.
+   */
+  private assignTaskToSegment(
+    database: Database,
+    groupId: string,
+    taskId: string,
+    prompt: string,
+    seq: number,
+    timestamp: string,
+  ): string | null {
+    const open = findOpenSegment(database.topicSegments, groupId);
+
+    if (!open) {
+      const segment = createSegment(groupId, seq, timestamp);
+      segment.groupTaskIds.push(taskId);
+      database.topicSegments.push(segment);
+      return null;
+    }
+
+    const decision = decideSegmentBoundary({
+      segment: open,
+      segmentPrompts: humanPromptsIn(open, database.groupTasks),
+      segmentChars: transcriptCharsIn(open, database.groupMessages),
+      incomingPrompt: prompt,
+      policy: this.config.segmentPolicy,
+    });
+
+    if (decision.kind === "continue") {
+      open.groupTaskIds.push(taskId);
+      return null;
+    }
+
+    // The subject changed: the closing segment ends just before this prompt,
+    // which becomes the first message of the new one.
+    closeSegmentInPlace(open, {
+      reason: decision.reason,
+      driftScore: decision.driftScore,
+      endSeq: seq - 1,
+      at: timestamp,
+    });
+    const next = createSegment(groupId, seq, timestamp);
+    next.groupTaskIds.push(taskId);
+    database.topicSegments.push(next);
+    return open.id;
+  }
+
+  /**
+   * Bridge 4. Consolidate one closed segment, then stamp it flushed.
+   *
+   * Memory failures must never fail a completed group task, so every error from
+   * here is swallowed after logging. `flushedAt` is stamped even when
+   * extraction produced nothing, so a barren segment is not retried forever.
+   */
+  private async consolidateSegment(segmentId: string): Promise<void> {
+    try {
+      const database = this.store.snapshot();
+      const segment = database.topicSegments.find(
+        (item) => item.id === segmentId,
+      );
+      // Only a CLOSED, unflushed segment consolidates. Checking `status` is not
+      // redundant with `flushedAt`: a segment reopened by a resume is unflushed
+      // but still accumulating, and must not be extracted mid-flight.
+      if (!segment || segment.status !== "closed" || segment.flushedAt) return;
+
+      // Every task in a closing segment should already be terminal -- the group
+      // rejects a new prompt while one runs -- but verify rather than assume.
+      // An unsettled task leaves the segment closed and unflushed, and the next
+      // close attempt retries it.
+      const settled = segment.groupTaskIds.every((taskId) => {
+        const task = database.groupTasks.find((item) => item.id === taskId);
+        if (!task) return true;
+        return decideFlush({
+          groupTask: task,
+          planNodes: database.groupPlanNodes,
+          ignoreFlushMark: true,
+        }).shouldFlush;
+      });
+      if (!settled) return;
+
+      await this.memoryPipeline.runMemoryPipeline(segmentId);
+      await this.store.mutate((db) => {
+        const stored = db.topicSegments.find((item) => item.id === segmentId);
+        if (stored) stored.flushedAt = now();
+      });
+    } catch (error) {
+      if (this.config.nodeEnv !== "test") {
+        console.error(
+          "[memory] pipeline failed for topic segment " +
+            segmentId +
+            ": " +
+            this.messageOf(error),
+        );
+      }
+    }
+  }
+
+  /**
+   * Called when a task settles.
+   *
+   * Consolidation NO LONGER happens here -- it happens when the task's topic
+   * segment closes, which is the whole point of segment consolidation. This
+   * only stamps the task and closes the segment early if the task just pushed
+   * it past a size cap, so a long-running subject still consolidates without
+   * waiting for a prompt that may never arrive.
    */
   private async maybeFlush(taskId: string): Promise<void> {
     try {
@@ -872,19 +1007,89 @@ export class GroupRunner {
       });
       if (!decision.shouldFlush) return;
 
-      await this.memoryPipeline.runMemoryPipeline(
-        taskId,
-        decision.sinkNodeIds,
-      );
+      let cappedSegmentId: string | null = null;
       await this.store.mutate((db) => {
         const task = db.groupTasks.find((item) => item.id === taskId);
         if (task) task.flushedAt = now();
+
+        const open = findOpenSegment(db.topicSegments, groupTask.groupId);
+        if (!open) return;
+        const policy = this.config.segmentPolicy;
+        const overCap =
+          open.groupTaskIds.length >= policy.maxTasks ||
+          transcriptCharsIn(open, db.groupMessages) >= policy.maxChars;
+        if (!overCap) return;
+
+        const lastSeq = db.groupMessages
+          .filter((message) => message.groupId === groupTask.groupId)
+          .reduce((highest, message) => Math.max(highest, message.seq), 0);
+        closeSegmentInPlace(open, {
+          reason: "size_cap",
+          driftScore: null,
+          endSeq: lastSeq,
+          at: now(),
+        });
+        cappedSegmentId = open.id;
       });
+
+      if (cappedSegmentId) await this.consolidateSegment(cappedSegmentId);
     } catch (error) {
       if (this.config.nodeEnv !== "test") {
         console.error(
-          "[memory] pipeline failed for group task " +
+          "[memory] segment bookkeeping failed for group task " +
             taskId +
+            ": " +
+            this.messageOf(error),
+        );
+      }
+    }
+  }
+
+  /**
+   * Close and consolidate the group's open segment if it has gone quiet.
+   *
+   * A segment otherwise only closes when the NEXT prompt arrives, so a user who
+   * stops working would leave their last segment unconsolidated. Called lazily
+   * from group read paths -- no timer, no background loop, nothing to stub in
+   * tests. A group nobody revisits stays unconsolidated, which is the accepted
+   * cost of not running a sweep.
+   */
+  async sweepIdleSegments(groupId: string): Promise<void> {
+    try {
+      const database = this.store.snapshot();
+      const policy = this.config.segmentPolicy;
+      const idle = findIdleSegment(
+        database.topicSegments,
+        database.groupMessages,
+        groupId,
+        policy.idleMs,
+        Date.now(),
+      );
+      if (!idle) return;
+
+      // Never close a segment out from under a running task.
+      const group = database.groups.find((item) => item.id === groupId);
+      if (group?.activeTaskId) return;
+
+      await this.store.mutate((db) => {
+        const stored = db.topicSegments.find((item) => item.id === idle.id);
+        if (!stored || stored.status !== "open") return;
+        const lastSeq = db.groupMessages
+          .filter((message) => message.groupId === groupId)
+          .reduce((highest, message) => Math.max(highest, message.seq), 0);
+        closeSegmentInPlace(stored, {
+          reason: "idle",
+          driftScore: null,
+          endSeq: lastSeq,
+          at: now(),
+        });
+      });
+      await this.consolidateSegment(idle.id);
+    } catch (error) {
+      if (this.config.nodeEnv !== "test") {
+        console.error(
+          "[memory] idle sweep failed for group " +
+            groupId +
             ": " +
             this.messageOf(error),
         );

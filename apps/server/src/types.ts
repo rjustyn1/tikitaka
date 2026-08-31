@@ -162,6 +162,33 @@ export interface GroupMessage {
   createdAt: string;
 }
 
+/** Why a topic segment stopped accumulating. */
+export type SegmentCloseReason = "topic_shift" | "size_cap" | "idle";
+
+/**
+ * A run of consecutive group tasks that stayed on one subject.
+ *
+ * This is the unit memory consolidates over: the chat accumulates while the
+ * subject holds, and the whole segment is extracted once when it changes. A
+ * group has at most one segment with `status: "open"` at a time.
+ */
+export interface TopicSegment {
+  id: string;
+  groupId: string;
+  status: "open" | "closed";
+  /** First groupMessage.seq belonging to this segment. */
+  startSeq: number;
+  /** Last groupMessage.seq, set on close. */
+  endSeq: number | null;
+  groupTaskIds: string[];
+  closeReason: SegmentCloseReason | null;
+  /** The JS score that closed it. Null unless closeReason is "topic_shift". */
+  driftScore: number | null;
+  flushedAt: string | null;
+  createdAt: string;
+  closedAt: string | null;
+}
+
 export type GroupPlanNodeKind = "work" | "join";
 
 export interface GroupPlanNode {
@@ -292,6 +319,7 @@ export interface Database {
   groups: AgentGroup[];
   groupTasks: GroupTask[];
   groupMessages: GroupMessage[];
+  topicSegments: TopicSegment[];
   groupParticipants: GroupParticipantState[];
   groupPlanNodes: GroupPlanNode[];
   contextInjections: GroupContextInjection[];

@@ -245,6 +245,10 @@ export async function createApp(
 
   app.get("/api/groups/:id", async (request) => {
     const { id } = groupIdParams.parse(request.params);
+    // Lazy idle-segment sweep: a topic segment otherwise only closes when the
+    // next prompt arrives, so without this a user's last segment would never
+    // consolidate. Deliberately not awaited -- reads never block on memory.
+    service.sweepIdleSegments(id);
     return { group: service.getGroup(id) };
   });
 
@@ -265,6 +269,7 @@ export async function createApp(
 
   app.get("/api/groups/:id/tasks", async (request) => {
     const { id } = groupIdParams.parse(request.params);
+    service.sweepIdleSegments(id);
     return { tasks: service.listGroupTasks(id) };
   });
 

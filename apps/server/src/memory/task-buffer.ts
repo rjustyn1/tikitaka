@@ -1,22 +1,33 @@
-// Task buffer: builds the exact input packet for the consolidator after a group
-// task reaches a flush point.
+// Segment buffer: builds the exact input packet for the consolidator after a
+// TOPIC SEGMENT closes.
 //
 // It does NOT keep a second live copy of spans during execution. It reads runs,
-// nodes, context injections, and spans back from the store snapshot when the
-// flush trigger fires, orders the nodes topologically, filters noisy spans, and
-// caps the total size. See components/TASK-BUFFER.md.
+// nodes, context injections, spans, and the chat timeline back from the store
+// snapshot when a segment closes, orders each task's nodes topologically,
+// filters noisy spans, and caps the total size. See components/TASK-BUFFER.md.
 
 import type { Database, GroupPlanNode, TraceSpan } from "../types.js";
 import type { JsonStore } from "../store.js";
-import type { TaskBuffer, TaskBufferEntry } from "./types.js";
+import { messagesIn, tasksIn } from "./topic-segment.js";
+import type {
+  SegmentBuffer,
+  SegmentTranscriptLine,
+  TaskBufferEntry,
+} from "./types.js";
 
-export interface BuildTaskBufferInput {
-  groupTaskId: string;
-  sinkNodeIds: string[];
+export interface BuildSegmentBufferInput {
+  segmentId: string;
 }
 
 /** Cap on the final serialized buffer handed to the extractor. */
-export const MAX_TASK_BUFFER_CHARS = 40_000;
+export const MAX_SEGMENT_BUFFER_CHARS = 120_000;
+
+/**
+ * Share of the buffer reserved for the chat transcript; node entries get the
+ * rest. The transcript is what the consolidator reasons over, so it gets the
+ * larger half, but entries must keep enough room to carry citable provenance.
+ */
+export const TRANSCRIPT_BUDGET_SHARE = 0.6;
 
 /** Per-span cap on any single textual payload field. */
 const SPAN_TEXT_CAP = 4_000;
@@ -168,12 +179,19 @@ function buildEntry(db: Database, node: GroupPlanNode): TaskBufferEntry[] {
 }
 
 /**
- * Enforce MAX_TASK_BUFFER_CHARS over the whole entry list. Walks entries in
- * order, keeping the earliest nodes fullest; once the running budget is spent,
- * later entries drop their spans and truncate their output. Deterministic.
+ * Enforce a char budget over the whole entry list. Walks entries in order,
+ * keeping the EARLIEST nodes fullest; once the running budget is spent, later
+ * entries drop their spans and truncate their output. Deterministic.
+ *
+ * Earliest-first is deliberate and is the opposite of how the transcript trims:
+ * entry order carries provenance (a cited run index must still resolve), while
+ * transcript order carries relevance.
  */
-function enforceBufferCap(entries: TaskBufferEntry[]): TaskBufferEntry[] {
-  if (JSON.stringify(entries).length <= MAX_TASK_BUFFER_CHARS) return entries;
+export function enforceBufferCap(
+  entries: TaskBufferEntry[],
+  budget: number,
+): TaskBufferEntry[] {
+  if (JSON.stringify(entries).length <= budget) return entries;
 
   const result: TaskBufferEntry[] = [];
   let used = 0;
@@ -181,14 +199,24 @@ function enforceBufferCap(entries: TaskBufferEntry[]): TaskBufferEntry[] {
     const withoutSpans: TaskBufferEntry = { ...entry, spans: [] };
     const skeletonCost = JSON.stringify(withoutSpans).length;
 
-    if (used + skeletonCost > MAX_TASK_BUFFER_CHARS) {
+    if (used + skeletonCost > budget) {
       // No room even for the skeleton with full output — truncate the output.
-      const room = Math.max(0, MAX_TASK_BUFFER_CHARS - used - 200);
+      // Measure the empty-output skeleton rather than reserving a constant:
+      // a fixed guess overflows whenever ids and role names run long, which is
+      // exactly the case where the budget is already tight.
+      const emptyOutputCost = JSON.stringify({
+        ...withoutSpans,
+        output: "",
+      }).length;
+      const room = Math.max(
+        0,
+        budget - used - emptyOutputCost - TRUNCATION_SUFFIX.length,
+      );
       result.push({
         ...withoutSpans,
         output: entry.output.slice(0, room) + TRUNCATION_SUFFIX,
       });
-      used = MAX_TASK_BUFFER_CHARS;
+      used = budget;
       continue;
     }
 
@@ -196,7 +224,7 @@ function enforceBufferCap(entries: TaskBufferEntry[]): TaskBufferEntry[] {
     const kept: TraceSpan[] = [];
     for (const span of entry.spans) {
       const cost = JSON.stringify(span).length;
-      if (used + cost > MAX_TASK_BUFFER_CHARS) break;
+      if (used + cost > budget) break;
       used += cost;
       kept.push(span);
     }
@@ -205,32 +233,106 @@ function enforceBufferCap(entries: TaskBufferEntry[]): TaskBufferEntry[] {
   return result;
 }
 
-export class TaskBufferBuilder {
+/**
+ * Enforce a char budget over the transcript by dropping the OLDEST lines.
+ *
+ * Opposite direction to `enforceBufferCap` on purpose: in a chat, the most
+ * recent exchanges are the ones the durable facts came out of, so an
+ * over-long segment should lose its beginning rather than its end.
+ */
+export function trimTranscript(
+  lines: SegmentTranscriptLine[],
+  budget: number,
+): SegmentTranscriptLine[] {
+  if (JSON.stringify(lines).length <= budget) return lines;
+
+  const kept: SegmentTranscriptLine[] = [];
+  let used = 0;
+  for (let index = lines.length - 1; index >= 0; index--) {
+    const line = lines[index]!;
+    const cost = JSON.stringify(line).length + 1;
+    if (used + cost > budget) break;
+    used += cost;
+    kept.unshift(line);
+  }
+  return kept;
+}
+
+export class SegmentBufferBuilder {
   constructor(private readonly store: JsonStore) {}
 
-  build(input: BuildTaskBufferInput): TaskBuffer {
+  build(input: BuildSegmentBufferInput): SegmentBuffer {
     const db = this.store.snapshot();
-    const task = mustFind(
-      db.groupTasks,
-      (item) => item.id === input.groupTaskId,
-      `group task ${input.groupTaskId}`,
+    const segment = mustFind(
+      db.topicSegments,
+      (item) => item.id === input.segmentId,
+      `topic segment ${input.segmentId}`,
     );
 
-    const nodes = db.groupPlanNodes.filter(
-      (node) => node.groupTaskId === task.id,
-    );
-    const orderedNodes = topologicalSort(nodes);
-    const entries = enforceBufferCap(
-      orderedNodes.flatMap((node) => buildEntry(db, node)),
+    const tasks = tasksIn(segment, db.groupTasks);
+
+    // Nodes are ordered topologically WITHIN each task, and tasks are ordered
+    // by creation. A segment's tasks are sequential by construction (the group
+    // rejects a new task while one runs), so there is no cross-task DAG to sort.
+    const orderedNodes: GroupPlanNode[] = tasks.flatMap((task) =>
+      topologicalSort(
+        db.groupPlanNodes.filter((node) => node.groupTaskId === task.id),
+      ),
     );
 
-    return {
-      groupTaskId: task.id,
-      groupId: task.groupId,
-      prompt: task.prompt,
-      status: task.status,
-      orderedNodeIds: orderedNodes.map((node) => node.id),
-      entries,
+    const transcript: SegmentTranscriptLine[] = messagesIn(
+      segment,
+      db.groupMessages,
+    ).map((message) => ({
+      seq: message.seq,
+      speakerType: message.speakerType,
+      agentId: message.speakerAgentId,
+      content: message.content,
+    }));
+
+    // Measure the envelope exactly, then split what is actually left. Reserving
+    // a fixed constant instead would overflow the cap whenever the prompts run
+    // long, which is precisely when the buffer is already under pressure.
+    const envelope: SegmentBuffer = {
+      segmentId: segment.id,
+      groupId: segment.groupId,
+      prompts: tasks.map((task) => task.prompt),
+      groupTaskIds: tasks.map((task) => task.id),
+      transcript: [],
+      entries: [],
     };
+    const available = Math.max(
+      0,
+      MAX_SEGMENT_BUFFER_CHARS - JSON.stringify(envelope).length,
+    );
+    const transcriptBudget = Math.floor(available * TRANSCRIPT_BUDGET_SHARE);
+    const trimmedTranscript = trimTranscript(transcript, transcriptBudget);
+
+    // Hand the transcript's unspent budget to the entries rather than waste it:
+    // a short chat should not starve provenance it has room for.
+    const allEntries = orderedNodes.flatMap((node) => buildEntry(db, node));
+    let entriesBudget = Math.max(
+      0,
+      available - JSON.stringify(trimmedTranscript).length,
+    );
+
+    // Converge on the real serialized size instead of predicting JSON framing
+    // overhead. Two budgets, nested arrays, and per-entry truncation suffixes
+    // make an exact formula brittle; measuring is both simpler and correct.
+    // enforceBufferCap shrinks monotonically with its budget, so this settles
+    // in one or two passes -- the loop bound is a guard, not the mechanism.
+    let buffer!: SegmentBuffer;
+    for (let pass = 0; pass < 4; pass++) {
+      buffer = {
+        ...envelope,
+        transcript: trimmedTranscript,
+        entries: enforceBufferCap(allEntries, entriesBudget),
+      };
+      const overflow =
+        JSON.stringify(buffer).length - MAX_SEGMENT_BUFFER_CHARS;
+      if (overflow <= 0) break;
+      entriesBudget = Math.max(0, entriesBudget - overflow - 16);
+    }
+    return buffer;
   }
 }

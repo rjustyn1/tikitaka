@@ -617,6 +617,18 @@ export class AgentService implements AgentLease {
     return this.groupRunner.resumeGroupTask(taskId);
   }
 
+  /**
+   * Close and consolidate a group's open topic segment if it has gone quiet.
+   *
+   * A segment otherwise only closes when the next prompt arrives, so this is
+   * what stops a user's LAST segment from sitting unconsolidated forever. Group
+   * read paths call it and do not await it -- reads must not block on memory,
+   * and the sweep fails open the same way the rest of the pipeline does.
+   */
+  sweepIdleSegments(groupId: string): void {
+    void this.groupRunner.sweepIdleSegments(groupId);
+  }
+
   listGroupTasks(groupId: string): GroupTask[] {
     return this.groupRunner.listGroupTasks(groupId);
   }

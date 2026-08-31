@@ -7,9 +7,10 @@ import type {
   AgentRun,
   GroupPlanNode,
   GroupTask,
+  TopicSegment,
   TraceSpan,
 } from "../types.js";
-import { MAX_TASK_BUFFER_CHARS, TaskBufferBuilder } from "./task-buffer.js";
+import { MAX_SEGMENT_BUFFER_CHARS, SegmentBufferBuilder } from "./task-buffer.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -27,6 +28,28 @@ async function freshStore(): Promise<JsonStore> {
   const store = new JsonStore(path.join(root, "db.json"));
   await store.initialize();
   return store;
+}
+
+/**
+ * A one-task segment wrapping `task()`. These cases exercise node ordering and
+ * span capping, which are per-task concerns, so the segment is just the vehicle
+ * that gets them to the builder. Multi-task segment behaviour lives in
+ * segment-buffer.test.ts.
+ */
+function segment(): TopicSegment {
+  return {
+    id: "seg-1",
+    groupId: "group-1",
+    status: "closed",
+    startSeq: 1,
+    endSeq: 1,
+    groupTaskIds: ["task-1"],
+    closeReason: "topic_shift",
+    driftScore: 0.95,
+    flushedAt: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    closedAt: "2026-01-01T01:00:00.000Z",
+  };
 }
 
 function task(): GroupTask {
@@ -108,10 +131,11 @@ function agentMessageSpan(
   };
 }
 
-describe("TaskBufferBuilder", () => {
+describe("SegmentBufferBuilder node handling", () => {
   it("builds a sequential buffer in chain order regardless of insertion order", async () => {
     const store = await freshStore();
     await store.mutate((db) => {
+      db.topicSegments.push(segment());
       db.groupTasks.push(task());
       // Inserted out of chain order on purpose.
       db.groupPlanNodes.push(
@@ -121,16 +145,14 @@ describe("TaskBufferBuilder", () => {
       );
     });
 
-    const buffer = new TaskBufferBuilder(store).build({
-      groupTaskId: "task-1",
-      sinkNodeIds: ["c"],
-    });
-    expect(buffer.orderedNodeIds).toEqual(["a", "b", "c"]);
+    const buffer = new SegmentBufferBuilder(store).build({ segmentId: "seg-1" });
+    expect(buffer.entries.map((entry) => entry.planNodeId)).toEqual(["a", "b", "c"]);
   });
 
   it("builds a DAG buffer in topological order with sibling tie-break", async () => {
     const store = await freshStore();
     await store.mutate((db) => {
+      db.topicSegments.push(segment());
       db.groupTasks.push(task());
       db.groupPlanNodes.push(
         node({ id: "a", dependsOn: [] }),
@@ -148,17 +170,15 @@ describe("TaskBufferBuilder", () => {
       );
     });
 
-    const buffer = new TaskBufferBuilder(store).build({
-      groupTaskId: "task-1",
-      sinkNodeIds: ["d"],
-    });
+    const buffer = new SegmentBufferBuilder(store).build({ segmentId: "seg-1" });
     // b completed before c, so it comes first; join d is last.
-    expect(buffer.orderedNodeIds).toEqual(["a", "b", "c", "d"]);
+    expect(buffer.entries.map((entry) => entry.planNodeId)).toEqual(["a", "b", "c", "d"]);
   });
 
   it("includes context injection IDs for audit", async () => {
     const store = await freshStore();
     await store.mutate((db) => {
+      db.topicSegments.push(segment());
       db.groupTasks.push(task());
       db.groupPlanNodes.push(node({ id: "a" }));
       db.runs.push(run("run-a"));
@@ -176,10 +196,7 @@ describe("TaskBufferBuilder", () => {
       });
     });
 
-    const buffer = new TaskBufferBuilder(store).build({
-      groupTaskId: "task-1",
-      sinkNodeIds: ["a"],
-    });
+    const buffer = new SegmentBufferBuilder(store).build({ segmentId: "seg-1" });
     expect(buffer.entries[0]?.injectedMessageIds).toEqual(["m-1", "m-2"]);
     expect(buffer.entries[0]?.injectedDependencyNodeIds).toEqual(["dep-1"]);
   });
@@ -187,16 +204,14 @@ describe("TaskBufferBuilder", () => {
   it("handles a node with no run without throwing", async () => {
     const store = await freshStore();
     await store.mutate((db) => {
+      db.topicSegments.push(segment());
       db.groupTasks.push(task());
       db.groupPlanNodes.push(
         node({ id: "a", status: "failed", runId: null, output: null }),
       );
     });
 
-    const buffer = new TaskBufferBuilder(store).build({
-      groupTaskId: "task-1",
-      sinkNodeIds: ["a"],
-    });
+    const buffer = new SegmentBufferBuilder(store).build({ segmentId: "seg-1" });
     expect(buffer.entries).toHaveLength(1);
     expect(buffer.entries[0]?.spans).toEqual([]);
     expect(buffer.entries[0]?.output).toBe("");
@@ -206,23 +221,21 @@ describe("TaskBufferBuilder", () => {
     const store = await freshStore();
     const huge = "x".repeat(20_000);
     await store.mutate((db) => {
+      db.topicSegments.push(segment());
       db.groupTasks.push(task());
       db.groupPlanNodes.push(node({ id: "a" }));
       db.runs.push(run("run-a"));
       db.spans.push(agentMessageSpan("span-1", "run-a", huge));
     });
 
-    const buffer = new TaskBufferBuilder(store).build({
-      groupTaskId: "task-1",
-      sinkNodeIds: ["a"],
-    });
+    const buffer = new SegmentBufferBuilder(store).build({ segmentId: "seg-1" });
     const span = buffer.entries[0]?.spans[0];
     expect(span?.payload.kind).toBe("agent_message");
     if (span?.payload.kind === "agent_message") {
       expect(span.payload.text.length).toBeLessThan(20_000);
     }
     expect(JSON.stringify(buffer.entries).length).toBeLessThanOrEqual(
-      MAX_TASK_BUFFER_CHARS,
+      MAX_SEGMENT_BUFFER_CHARS,
     );
   });
 });

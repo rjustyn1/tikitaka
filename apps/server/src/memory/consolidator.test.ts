@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Agent, AgentGroup } from "../types.js";
 import { Consolidator } from "./consolidator.js";
 import { FakeExtractorClient, type ExtractorClient } from "./extractor-client.js";
-import type { TaskBuffer, TaskBufferEntry } from "./types.js";
+import type { SegmentBuffer, TaskBufferEntry } from "./types.js";
 
 const AGENT_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const AGENT_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -52,12 +52,16 @@ function entry(
   };
 }
 
-const taskBuffer: TaskBuffer = {
-  groupTaskId: "task-1",
+const segmentBuffer: SegmentBuffer = {
+  segmentId: "seg-1",
   groupId: "group-1",
-  prompt: "Build the upload feature.",
-  status: "completed",
-  orderedNodeIds: ["n1", "n2"],
+  prompts: ["Build the upload feature.", "Add resumable uploads."],
+  groupTaskIds: ["task-1", "task-2"],
+  transcript: [
+    { seq: 1, speakerType: "human", agentId: null, content: "Build the upload feature." },
+    { seq: 2, speakerType: "agent", agentId: AGENT_A, content: "Defined POST /uploads." },
+    { seq: 3, speakerType: "human", agentId: null, content: "Add resumable uploads." },
+  ],
   entries: [
     entry("n1", AGENT_A, RUN_A, SPAN_A),
     entry("n2", AGENT_B, RUN_B, SPAN_B),
@@ -90,7 +94,7 @@ const group: AgentGroup = {
 };
 
 const members = [agent(AGENT_A, "Backend"), agent(AGENT_B, "Frontend")];
-const input = { taskBuffer, group, members };
+const input = { segmentBuffer, group, members };
 
 function noteJson(overrides: Record<string, unknown>): string {
   return JSON.stringify({
@@ -119,7 +123,9 @@ describe("Consolidator", () => {
     for (const note of notes) {
       expect([AGENT_A, AGENT_B]).toContain(note.targetAgentIds[0]);
       expect([SPAN_A, SPAN_B]).toContain(note.sourceSpanIds[0]);
-      expect(note.groupTaskId).toBe("task-1");
+      expect(note.segmentId).toBe("seg-1");
+      // The segment's LAST task, so per-task queries downstream still resolve.
+      expect(note.groupTaskId).toBe("task-2");
       expect(note.id).toMatch(/[0-9a-f-]{36}/);
     }
   });
@@ -161,9 +167,9 @@ describe("Consolidator", () => {
     expect(notes[0]!.description.length).toBeGreaterThan(0);
   });
 
-  it("caps the result at five notes", async () => {
+  it("caps the result at eight notes", async () => {
     const many = {
-      notes: Array.from({ length: 8 }, () => ({
+      notes: Array.from({ length: 12 }, () => ({
         content: "A durable constraint.",
         severity: "normal",
         targetAgentIds: [AGENT_A],
@@ -176,7 +182,7 @@ describe("Consolidator", () => {
     const notes = await new Consolidator(
       new StubExtractor(JSON.stringify(many)),
     ).consolidate(input);
-    expect(notes).toHaveLength(5);
+    expect(notes).toHaveLength(8);
   });
 
   it("returns zero notes on malformed extractor output", async () => {
