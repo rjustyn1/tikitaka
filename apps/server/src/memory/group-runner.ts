@@ -48,6 +48,7 @@ import {
   transcriptCharsIn,
 } from "./topic-segment.js";
 import { findMembershipError, readMembers } from "./group-chain.js";
+import { runSbertEmbedding } from "./recognizer.js";
 import {
   buildContextPacket,
   buildGroupTaskCharter,
@@ -57,6 +58,39 @@ import type { MemoryPipeline } from "./pipeline.js";
 import { buildPlanNodes, type TaskPlanner } from "./planner.js";
 
 const now = () => new Date().toISOString();
+
+// --- intra-task node-buffer drift state -------------------------------------
+// Per task: the completed nodes accumulated since the last flush, and their
+// explanation embeddings. A newly-completed node is scored against the mean of
+// this buffer; if it drifts past the threshold the buffer is flushed to
+// consolidation and the new node starts a fresh buffer.
+const nodeDriftBuffers = new Map<
+  string,
+  { ids: string[]; vecs: number[][] }
+>();
+function cosineSim(a: number[], b: number[]): number {
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  const len = Math.min(a.length, b.length);
+  for (let i = 0; i < len; i++) {
+    const ai = a[i] ?? 0;
+    const bi = b[i] ?? 0;
+    dot += ai * bi;
+    na += ai * ai;
+    nb += bi * bi;
+  }
+  return na && nb ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
+}
+function meanVector(vectors: number[][]): number[] {
+  const first = vectors[0];
+  if (!first) return [];
+  const out = new Array<number>(first.length).fill(0);
+  for (const v of vectors)
+    for (let i = 0; i < out.length; i++)
+      out[i] = (out[i] ?? 0) + (v[i] ?? 0) / vectors.length;
+  return out;
+}
 
 interface ActiveGroupTask {
   cancelled: boolean;
@@ -776,6 +810,74 @@ export class GroupRunner {
         }
         this.releaseLocks(db, nodeId, completedAt);
       });
+
+      // --- intra-task node-buffer flush (mid-DAG consolidation) -------------
+      // Embed this node's EXPLANATION via the general drift model and score it
+      // against the mean of the buffer accumulated since the last flush. If it
+      // drifts to a new subject, flush the buffered nodes to consolidation now
+      // (not at task end) and start a fresh buffer with this node. Never fails a
+      // completed node. Grep the server log for "[node-drift]".
+      if (this.config.memoryEnabled && this.config.nodeEnv !== "test") {
+        void (async () => {
+          try {
+            const explanation = (result.output ?? "").trim();
+            if (!explanation) return;
+            const vec = await runSbertEmbedding(
+              {
+                pythonPath: this.config.memorySbertPython,
+                bridgePath: this.config.memorySbertBridge,
+                // General topic-drift model, NOT the routing checkpoint.
+                modelPath: this.config.memoryDriftModelDir,
+                timeoutMs: this.config.memoryEmbeddingTimeoutMs,
+              },
+              explanation,
+            );
+            // Synchronous decide + update — no await between read and write, so
+            // concurrent node completions cannot corrupt the buffer.
+            const buf = nodeDriftBuffers.get(taskId) ?? { ids: [], vecs: [] };
+            const drift =
+              buf.vecs.length > 0
+                ? 1 - cosineSim(vec, meanVector(buf.vecs))
+                : null;
+            const willFlush =
+              drift !== null &&
+              drift > this.config.memoryNodeDriftThreshold &&
+              buf.ids.length > 0;
+            if (this.config.nodeEnv !== "test") {
+              console.info(
+                "[node-drift] " +
+                  JSON.stringify({
+                    taskId,
+                    nodeId,
+                    role: node.nodeRole,
+                    agentId: node.agentId,
+                    priorCompleted: buf.ids.length,
+                    cosineDrift:
+                      drift === null ? null : Number(drift.toFixed(4)),
+                    flush: willFlush,
+                  }),
+              );
+            }
+            if (willFlush) {
+              const toFlush = buf.ids.slice();
+              nodeDriftBuffers.set(taskId, { ids: [nodeId], vecs: [vec] });
+              void this.flushNodeBuffer(taskId, toFlush).catch(() => undefined);
+            } else {
+              buf.ids.push(nodeId);
+              buf.vecs.push(vec);
+              nodeDriftBuffers.set(taskId, buf);
+            }
+          } catch (error) {
+            if (this.config.nodeEnv !== "test") {
+              console.info(
+                "[node-drift] skipped: " +
+                  (error instanceof Error ? error.message : String(error)),
+              );
+            }
+          }
+        })();
+      }
+
       return "completed";
     } catch (error) {
       const cancelled = error instanceof RunCancelledError;
@@ -940,6 +1042,52 @@ export class GroupRunner {
     next.groupTaskIds.push(taskId);
     database.topicSegments.push(next);
     return open.id;
+  }
+
+  /**
+   * Consolidate an intra-task node buffer mid-DAG (drift-triggered), then stamp
+   * those nodes `consolidatedAt` so the later segment close does not consolidate
+   * them again. Runs the FULL pipeline (extractor -> recognition -> safety ->
+   * review -> landing -> ledger) scoped to just these nodes. Never throws into a
+   * run — memory must not fail a completed node.
+   */
+  private async flushNodeBuffer(
+    taskId: string,
+    nodeIds: string[],
+  ): Promise<void> {
+    if (nodeIds.length === 0) return;
+    const database = this.store.snapshot();
+    const segment = database.topicSegments.find((item) =>
+      item.groupTaskIds.includes(taskId),
+    );
+    if (!segment) return;
+    try {
+      await this.memoryPipeline.runMemoryPipeline(segment.id, nodeIds);
+      await this.store.mutate((db) => {
+        const at = now();
+        for (const id of nodeIds) {
+          const stored = db.groupPlanNodes.find((item) => item.id === id);
+          if (stored) stored.consolidatedAt = at;
+        }
+      });
+      if (this.config.nodeEnv !== "test") {
+        console.info(
+          "[node-drift] flushed " +
+            nodeIds.length +
+            " node(s) for task " +
+            taskId,
+        );
+      }
+    } catch (error) {
+      if (this.config.nodeEnv !== "test") {
+        console.error(
+          "[memory] node-buffer flush failed for task " +
+            taskId +
+            ": " +
+            this.messageOf(error),
+        );
+      }
+    }
   }
 
   /**

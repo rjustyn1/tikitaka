@@ -231,6 +231,13 @@ export interface GroupPlanNode {
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;
+  /**
+   * When this node's work was folded into a memory-consolidation flush. Set by
+   * an intra-task node-buffer flush (drift-triggered); nodes with a value are
+   * excluded from the later segment-close consolidation so nothing is
+   * consolidated twice. Optional: nodes created before this feature carry none.
+   */
+  consolidatedAt?: string | null;
 }
 
 export interface GroupContextInjection {

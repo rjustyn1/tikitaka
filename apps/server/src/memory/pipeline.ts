@@ -41,7 +41,7 @@ export interface MemoryPipeline {
    * Consolidate one CLOSED topic segment. Keyed on the segment, not a task:
    * a segment spans every task that stayed on one subject, which is the point.
    */
-  runMemoryPipeline(segmentId: string): Promise<void>;
+  runMemoryPipeline(segmentId: string, onlyNodeIds?: string[]): Promise<void>;
   /**
    * Called when a task is RESUMED. Removes the auto-generated notes (and their
    * files + grant rows) from the earlier partial flush, so the final flush over
@@ -112,9 +112,12 @@ export class RealMemoryPipeline implements MemoryPipeline {
       options.onError ?? ((message, error) => console.error(message, error));
   }
 
-  async runMemoryPipeline(segmentId: string): Promise<void> {
+  async runMemoryPipeline(
+    segmentId: string,
+    onlyNodeIds?: string[],
+  ): Promise<void> {
     try {
-      const buffer = this.buffers.build({ segmentId });
+      const buffer = this.buffers.build({ segmentId, onlyNodeIds });
       const db = this.store.snapshot();
 
       // Every agent that worked anywhere in the segment, not just in one task.
