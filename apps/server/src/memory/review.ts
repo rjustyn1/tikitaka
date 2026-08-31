@@ -37,7 +37,18 @@ export interface RejectNoteInput {
   reason: string;
 }
 
-/** A candidate needs a human if it is severe, touched safety, or routes broadly. */
+/**
+ * A candidate needs a human if it is severe, touched safety, was routed by a
+ * low-confidence fallback, or would create a brand-new skill file.
+ *
+ * Breadth is deliberately NOT a signal. A note clearing the similarity
+ * threshold for several Agents means it is genuinely relevant to all of them --
+ * which is the reason routing moved to a recognizer in the first place. The old
+ * `targetAgentIds.length > 2` rule dated from when an LLM guessed recipients,
+ * where breadth really did indicate a sloppy guess; against measured similarity
+ * it would penalise exactly the case the recognizer exists to get right.
+ * Low confidence is caught by matchKind === "fallback" instead.
+ */
 export function requiresHumanReview(
   candidate: CandidateMemoryNote,
   safety: SafetyResult,
@@ -51,8 +62,7 @@ export function requiresHumanReview(
     candidate.recognitionMatchKind === "fallback" ||
     candidate.skillAssignments?.some(
       (assignment) => assignment.matchKind === "new-skill",
-    ) === true ||
-    candidate.targetAgentIds.length > 2
+    ) === true
   );
 }
 
