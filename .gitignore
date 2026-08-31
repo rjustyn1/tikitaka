@@ -4,7 +4,15 @@ dist/
 .env.production
 .data/
 .local/
-data/
+# Training data, datasets and superseded checkpoints stay out of Git.
+# EXCEPTION: the promoted recognition checkpoint ships via Git LFS, so a
+# plain clone can run MEMORY_RECOGNIZER=sbert with no out-of-band transfer.
+data/*
+!data/recognition
+data/recognition/*
+!data/recognition/model
+# epoch-1 is a byte-identical copy of the promoted model; one is enough.
+data/recognition/model/checkpoints/
 scripts_ignored/
 workspaces/
 codex-home/

@@ -1,0 +1,87 @@
+{
+  "base_model": "sentence-transformers/all-MiniLM-L6-v2",
+  "resume_from": "data/recognition/model",
+  "device": "cpu",
+  "seed": 7,
+  "epochs": 1,
+  "batch_size": 16,
+  "hard_negative_count": 3500,
+  "hard_negative_weight": 2,
+  "threshold": 0.64,
+  "false_grant_target": 0.05,
+  "false_grant_target_met": false,
+  "validation": {
+    "precision": 0.8554216867469879,
+    "recall": 0.8255813953488372,
+    "f1": 0.8402366863905325,
+    "jaccard": 0.7855555555555557,
+    "exact_match": 0.6933333333333334,
+    "fallback_rate": 0.08666666666666667,
+    "false_grant_rate": 0.15333333333333332,
+    "oos_review_recall": 0.9285714285714286,
+    "oos_false_auto_grant_rate": 0.07142857142857142,
+    "review_rate": 0.10666666666666667,
+    "per_agent_recall": {
+      "backend": 0.76,
+      "frontend": 0.7857142857142857,
+      "qa": 0.7692307692307693,
+      "planner": 0.7666666666666667,
+      "researcher": 0.9545454545454546,
+      "docs": 0.9375,
+      "calculator": 0.88
+    },
+    "threshold_match": {
+      "precision": 0.9281045751633987,
+      "recall": 0.8255813953488372,
+      "f1": 0.8738461538461538
+    },
+    "fallback_match": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0
+    }
+  },
+  "test": {
+    "precision": 0.8414634146341463,
+    "recall": 0.8214285714285714,
+    "f1": 0.8313253012048192,
+    "jaccard": 0.7666666666666667,
+    "exact_match": 0.6733333333333333,
+    "fallback_rate": 0.1,
+    "false_grant_rate": 0.16,
+    "oos_review_recall": 0.8823529411764706,
+    "oos_false_auto_grant_rate": 0.11764705882352941,
+    "review_rate": 0.13333333333333333,
+    "per_agent_recall": {
+      "backend": 0.782608695652174,
+      "frontend": 0.8571428571428571,
+      "qa": 0.9130434782608695,
+      "planner": 0.7272727272727273,
+      "researcher": 0.8,
+      "docs": 0.8571428571428571,
+      "calculator": 0.8095238095238095
+    },
+    "threshold_match": {
+      "precision": 0.9261744966442953,
+      "recall": 0.8214285714285714,
+      "f1": 0.8706624605678233
+    },
+    "fallback_match": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0
+    }
+  },
+  "profiles": [
+    "backend",
+    "frontend",
+    "qa",
+    "planner",
+    "researcher",
+    "docs",
+    "calculator"
+  ],
+  "evaluation_label_origins": [
+    "synthetic"
+  ]
+}
