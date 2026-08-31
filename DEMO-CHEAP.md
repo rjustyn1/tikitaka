@@ -1,112 +1,106 @@
-# Cheap end-to-end demo
+# Cheap end-to-end demo (2 tasks, all features)
 
-A tightly-scoped run that shows every feature — parallel DAG, topic-segment
-consolidation, SBERT note routing, human review, landing, ledger — while
-burning a fraction of the tokens of an open-ended "build an app" prompt.
+Two tightly-scoped tasks that exercise **every** feature — parallel DAG,
+persistent shared code, topic-segment consolidation, **node-level drift flush
+(intra-task)**, SBERT routing, safety, human review, landing, ledger — for a
+fraction of the tokens of an open-ended "build an app" prompt.
 
-The trick is **scope**: tiny, explicit task slices + agent instructions that say
-"do the minimum." Open-ended prompts (e.g. "develop a todo app with best
-practices") make every agent write a lot and can run up to `CODEX_TIMEOUT_MS`
-(10 min) per node — that's the token blow-up.
+Two levers keep it cheap: **scope** (tiny explicit slices) and **agent
+instructions that say "do the minimum."** Descriptions matter more than ever —
+the planner assigns nodes, the recognizer routes memory, AND the turn prompt's
+identity all read the agent `description`. Roles are gone; ignore them.
 
 ---
 
-## 0. Launch
-
-Bring the server up on `:3000` however you normally do (`npm run poc`, or the
-sourced host run). Optional token cap — shorten each node's max runtime so
-nothing runs away:
+## 0. Launch (real SBERT routing + drift, low token ceiling)
 
 ```bash
-CODEX_TIMEOUT_MS=180000 ARK_API_KEY=… ARK_MODEL=… SEED_DEMO=0 npm run poc
+MEMORY_SBERT_PYTHON="$PWD/.venv-recognition/bin/python" \
+CODEX_TIMEOUT_MS=180000 \
+ARK_API_KEY=<yours> ARK_MODEL=<yours> \
+npm run poc 2>&1 | tee run.log
 ```
+- `MEMORY_SBERT_PYTHON` → the venv (torch), so routing uses the real model.
+- Node drift uses the **stock** model (`MEMORY_DRIFT_MODEL_DIR`, auto-downloaded) — no extra setup.
+- `CODEX_TIMEOUT_MS=180000` caps each node at 3 min so nothing runs away.
+- `| tee run.log` captures the `[node-drift]` lines for calibration.
 
-Open <http://localhost:3000> and keep the **Teams** tab visible while it runs.
+Open <http://localhost:3000>, keep the **Teams** tab visible.
 
-## 1. Create 3 agents  (Agents → Create Agent)
+## 1. Create 2–3 agents  (Agents → Create Agent)
 
-Paste the **same** text into every agent's **Instructions** box — this is the
-main token lever:
-
+Paste the **same** text into each agent's **Instructions** (the token lever):
 > Prioritize speed and minimalism. Implement only what the task literally asks —
 > no extra endpoints, no error handling beyond what is specified, no comments,
-> no tests, no configs, no dependencies, no refactoring of existing files. Make
-> **one pass and stop**; do not iterate, polish, or add "nice-to-haves".
-> In-memory only.
+> no tests, no configs, no dependencies, no refactoring. Make one pass and stop;
+> do not iterate or polish. In-memory only.
 
-| Name | Description (the planner + recognizer read THIS) |
+| Name | Description (drives planner + routing + identity — make it meaningful) |
 | --- | --- |
 | `backend` | Backend HTTP endpoints and in-memory storage in plain Node/JS. |
 | `frontend` | Minimal HTML/JS UI, no frameworks or build tools. |
-| `security` | Input validation and secret-boundary review, small targeted checks only. |
-
-> Give **distinct, meaningful descriptions** — the planner assigns nodes and the
-> SBERT recognizer routes memory by *description*, never by the role label.
+| `security` | Input validation and secret-boundary review, small targeted checks. |
 
 ## 2. Create a team  (Teams → Create New Team)
 
-Select all three agents. (The role dropdown is cosmetic — it only colors the
-badge; leave the defaults.)
+Just select the agents. (No role picker anymore — the planner decides who does what.)
 
-## 3. Send 3 goals, one at a time — WAIT for each to finish
+## 3. Two goals, one at a time — WAIT for each; do NOT cancel
 
-Do **not** cancel a task you want memory from — cancelling skips consolidation.
-
-**Task 1** — subject: *upload*
+**Task 1 — "upload feature"** (coherent → LOW node-drift; builds shared code)
 > In code/, add a POST /upload endpoint that accepts JSON {filename} and returns
-> {id,url}, stored in an in-memory object. Security: reject any filename
-> containing '..' or '/'. Frontend: add a ~10-line code/index.html with a
-> filename input that POSTs to it. Nothing else.
+> {id,url}, stored in an in-memory object. Security: reject any filename with
+> '..' or '/'. Frontend: a ~10-line code/index.html with a filename input that
+> POSTs to it. Nothing else.
 
-**Task 2** — still *upload*
-> Add a GET /upload/:id endpoint that returns the stored record as JSON, reusing
-> the existing in-memory store in code/. Do not change anything else.
+**Task 2 — "three small utilities"** (different subject → closes Task 1's segment
+→ consolidation; its own mixed nodes → HIGH node-drift → mid-DAG flush)
+> In code/, add three independent pure functions: slugify(text) (lowercase,
+> hyphenate), parseIsoDate(s) (ISO-8601 → {y,m,d}), and caesar(text,k) (shift
+> letters by k). No dependencies. Keep each tiny.
 
-**Task 3** — different subject (this one triggers consolidation)
-> In code/slug.js add a pure function slugify(text): lowercase, replace
-> non-alphanumeric runs with single hyphens, trim leading/trailing hyphens. No
-> dependencies.
-
-**Why 3:** memory consolidates per *topic segment* (a run of consecutive tasks
-on one subject). Tasks 1+2 accumulate in the "upload" segment; Task 3's subject
-change **closes** that segment and consolidates 1+2 together. Two tasks alone
-would sit unconsolidated until the 30-min idle timeout.
+*(Trim to two utilities for even fewer tokens.)*
 
 ---
 
-## What to watch (per feature)
+## What each feature looks like, and how to verify
 
-| Feature | Where | Working =  |
+| Feature | Where | Correct result |
 | --- | --- | --- |
-| Planner / parallel DAG | Plan tab (graph) | multiple nodes, right agent per description, parallel branches |
-| Live execution | Live Terminal + Members | ≥2 agents running at once; short chain-of-thought lines |
-| Codex/Ark | chat + a node's Trace | real, task-relevant output; files appear in shared `./code` |
-| Topic segmentation | (after Task 3) | tasks 1+2 consolidate together when Task 3 starts |
-| Consolidator | Review / approval cards | non-zero, sensible notes |
-| SBERT routing | a note's routed-to agents | note goes to the semantically right agents; no "degraded to fake" log |
+| Planner / parallel DAG | Plan tab (graph) | multiple nodes, right agent per **description**, parallel branches |
+| Persistent shared code | either task's Trace / `./code` | Task 2 sees Task 1's files (persists per group) |
+| Live execution | Live Terminal + Members | ≥2 agents running at once; short lines |
+| **Node-level drift (NEW)** | `run.log` → `[node-drift]` | Task 1 nodes **low** drift (<0.55, `"flush":false`); Task 2 nodes **high** (`"flush":true`) + `flushed N node(s)` |
+| Mid-DAG consolidation (NEW) | the conversation, **during** Task 2 | approval cards appear **before** the task finishes |
+| Topic-segment consolidation | after Task 2 starts | Task 1's learnings consolidate (segment closed by the subject change) |
+| SBERT routing | a note's routed-to agents | note goes to the semantically right agents; **no "degraded to fake"** in log |
 | Safety | approval card flags | secrets redacted; injection-y notes quarantined |
-| Human review | the conversation | severe/low-confidence notes appear as approval cards; Approve/edit/Reject |
+| Human review | approval cards | Approve / edits / Reject; auto-grant is off, so every match is review-gated |
 | Landing | Workspaces tab + filesystem | file only in target agents' workspaces; others hold nothing |
 | Ledger | Ledger tab | granted AND withheld rows, each with a reason |
 
-After a real run, catch silent failures:
+## Calibrate / confirm the drift threshold
+```bash
+node scripts/node-drift-stats.mjs run.log
+```
+Task 1 nodes should cluster **low**, Task 2 nodes **high**, with a clear gap; the
+default `MEMORY_NODE_DRIFT_THRESHOLD=0.55` should sit in it. Adjust if your live
+numbers say so.
+
+## After a real run — catch silent failures
 ```bash
 LOCAL_POC_DATA_ROOT=$HOME/.volc-agent-launchpad npm run verify:live
 ```
 
-## Gotchas / reading the messages
-
-- **"This task produced no governed memory…"** appears when a task did **not**
-  consolidate. Two causes: (a) you **cancelled** it (consolidation is skipped by
-  design), or (b) no node reached `completed`. Completing nodes ≠ finishing:
-  a cancelled or timed-out node counts as nothing.
-- **No memory after a single task is normal** — the segment is still open.
-  Consolidation runs when the segment *closes* (Task 3, or the caps).
-- **Don't cancel** a task you want memory from. Let it finish or fail naturally.
-- **Token levers:** the "do the minimum" instructions, tiny scoped tasks, and a
-  shorter `CODEX_TIMEOUT_MS`.
+## Gotchas
+- **Don't cancel** a task you want memory from — cancelling skips consolidation.
+- **No memory after a single coherent task is normal** — the segment is open;
+  it consolidates when Task 2 (different subject) starts, OR a node-drift flush
+  fires mid-task.
+- The **negative case is the strongest proof**: pick an agent a note was NOT
+  routed to (a non-member is cleanest, since shared code now persists) and show
+  its workspace holds nothing.
+- Token levers: minimal instructions, tiny tasks, `CODEX_TIMEOUT_MS`.
 
 ## One-command version
-
-`./scripts/demo-cheap.sh` does steps 1–3 headlessly (creates the agents + team,
-fires the three tasks in order). Watch the UI while it runs.
+`./scripts/demo-cheap.sh` fires the tasks headlessly; watch the UI + `run.log`.
