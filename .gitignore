@@ -28,9 +28,12 @@ deploy/volcengine/terraform.tfvars
 # Regenerated on every browser-automation run; scratch output, not source.
 .playwright-mcp/
 
-# Ad-hoc UI QA screenshots dropped at the repo root.
-# Scoped to the root on purpose: docs/assets/ holds real documentation images.
-/*.png
+# UI QA screenshots, wherever they land. These are regenerated on demand from a
+# running app, so they are scratch output rather than source — keeping them out
+# of history avoids committing a fresh megabyte every time someone re-runs a
+# visual check. Documentation images in docs/assets/ are JPEG and unaffected;
+# a PNG that genuinely needs to ship can be forced in with `git add -f`.
+*.png
 
 # Local Python venv for the SBERT recognition bridge. Provisioned per machine
 # from apps/server/requirements-sbert.txt; never committed (torch alone is
