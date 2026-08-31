@@ -1007,6 +1007,13 @@ export class GroupRunner {
     if (status !== "cancelled") {
       await this.maybeFlush(taskId);
     }
+    // The task is over, so its node-drift buffer is dead weight. Without this
+    // the module-level map keeps every finished task's embeddings for the life
+    // of the process. Dropped after maybeFlush, which is the last reader. A
+    // node-completion embed still in flight here (the drift block is
+    // deliberately fire-and-forget) can re-create one small orphan entry; that
+    // is bounded per task, unlike keeping every buffer forever.
+    nodeDriftBuffers.delete(taskId);
   }
 
   /**

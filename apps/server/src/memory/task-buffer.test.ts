@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { JsonStore } from "../store.js";
 import type {
   AgentRun,
+  GroupMessage,
   GroupPlanNode,
   GroupTask,
   TopicSegment,
@@ -237,5 +238,126 @@ describe("SegmentBufferBuilder node handling", () => {
     expect(JSON.stringify(buffer.entries).length).toBeLessThanOrEqual(
       MAX_SEGMENT_BUFFER_CHARS,
     );
+  });
+});
+
+/**
+ * The exactly-once invariant behind intra-task (node-drift) consolidation: a
+ * mid-DAG flush consolidates a subset of nodes and stamps them
+ * `consolidatedAt`; the later segment close must then sweep up only what is
+ * left. Without both halves a node is consolidated twice and the same work
+ * turns into duplicate memory notes.
+ */
+describe("SegmentBufferBuilder intra-task flush scoping", () => {
+  function nodeMessage(
+    seq: number,
+    planNodeId: string | null,
+    content: string,
+    speakerType: "human" | "agent" = "agent",
+  ): GroupMessage {
+    return {
+      id: `msg-${seq}`,
+      groupId: "group-1",
+      seq,
+      speakerType,
+      speakerAgentId: speakerType === "agent" ? "agent-a" : null,
+      groupTaskId: "task-1",
+      planNodeId,
+      content,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+  }
+
+  async function threeNodeStore(): Promise<JsonStore> {
+    const store = await freshStore();
+    await store.mutate((db) => {
+      db.topicSegments.push({ ...segment(), startSeq: 1, endSeq: 4 });
+      db.groupTasks.push(task());
+      db.groupPlanNodes.push(
+        node({ id: "a", dependsOn: [] }),
+        node({ id: "b", dependsOn: ["a"] }),
+        node({ id: "c", dependsOn: ["b"] }),
+      );
+      db.groupMessages.push(
+        nodeMessage(1, null, "the human prompt", "human"),
+        nodeMessage(2, "a", "work of a"),
+        nodeMessage(3, "b", "work of b"),
+        nodeMessage(4, "c", "work of c"),
+      );
+    });
+    return store;
+  }
+
+  it("restricts a drift-triggered flush to the named nodes", async () => {
+    const store = await threeNodeStore();
+    const buffer = new SegmentBufferBuilder(store).build({
+      segmentId: "seg-1",
+      onlyNodeIds: ["a", "b"],
+    });
+    expect(buffer.entries.map((entry) => entry.planNodeId)).toEqual(["a", "b"]);
+  });
+
+  it("keeps human turns but drops agent turns of nodes outside the flush", async () => {
+    const store = await threeNodeStore();
+    const buffer = new SegmentBufferBuilder(store).build({
+      segmentId: "seg-1",
+      onlyNodeIds: ["a", "b"],
+    });
+    expect(buffer.transcript.map((line) => line.content)).toEqual([
+      "the human prompt",
+      "work of a",
+      "work of b",
+    ]);
+  });
+
+  it("excludes already-consolidated nodes from a later segment close", async () => {
+    const store = await threeNodeStore();
+    // What flushNodeBuffer stamps once its pipeline call returns.
+    await store.mutate((db) => {
+      for (const stored of db.groupPlanNodes) {
+        if (stored.id === "a" || stored.id === "b") {
+          stored.consolidatedAt = "2026-01-01T00:06:00.000Z";
+        }
+      }
+    });
+
+    const buffer = new SegmentBufferBuilder(store).build({ segmentId: "seg-1" });
+    expect(buffer.entries.map((entry) => entry.planNodeId)).toEqual(["c"]);
+    expect(buffer.transcript.map((line) => line.content)).toEqual([
+      "the human prompt",
+      "work of c",
+    ]);
+  });
+
+  it("consolidates each node exactly once across a flush and the segment close", async () => {
+    const store = await threeNodeStore();
+    const builder = new SegmentBufferBuilder(store);
+
+    const flushed = builder.build({ segmentId: "seg-1", onlyNodeIds: ["a", "b"] });
+    await store.mutate((db) => {
+      for (const stored of db.groupPlanNodes) {
+        if (flushed.entries.some((entry) => entry.planNodeId === stored.id)) {
+          stored.consolidatedAt = "2026-01-01T00:06:00.000Z";
+        }
+      }
+    });
+    const closed = builder.build({ segmentId: "seg-1" });
+
+    const seen = [...flushed.entries, ...closed.entries].map(
+      (entry) => entry.planNodeId,
+    );
+    expect(seen).toEqual(["a", "b", "c"]);
+    expect(new Set(seen).size).toBe(seen.length);
+  });
+
+  it("yields an empty buffer once every node has been consolidated", async () => {
+    const store = await threeNodeStore();
+    await store.mutate((db) => {
+      for (const stored of db.groupPlanNodes) {
+        stored.consolidatedAt = "2026-01-01T00:06:00.000Z";
+      }
+    });
+    const buffer = new SegmentBufferBuilder(store).build({ segmentId: "seg-1" });
+    expect(buffer.entries).toEqual([]);
   });
 });
