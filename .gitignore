@@ -5,6 +5,7 @@ dist/
 .data/
 .local/
 data/
+scripts_ignored/
 workspaces/
 codex-home/
 coverage/
@@ -22,3 +23,8 @@ deploy/volcengine/terraform.tfvars
 # Ad-hoc UI QA screenshots dropped at the repo root.
 # Scoped to the root on purpose: docs/assets/ holds real documentation images.
 /*.png
+
+# Local Python venv for the SBERT recognition bridge. Provisioned per machine
+# from apps/server/requirements-sbert.txt; never committed (torch alone is
+# 322 MB, well past GitHub's 100 MB per-file limit).
+.venv-recognition/

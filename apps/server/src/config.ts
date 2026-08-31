@@ -1,14 +1,20 @@
+import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { z } from "zod";
+
+// `npm -w` runs the server with apps/server as cwd. Derive defaults from this
+// module instead so the server and root-level seed scripts share one store.
+const repositoryRoot = fileURLToPath(new URL("../../..", import.meta.url));
 
 const envSchema = z.object({
   HOST: z.string().default("0.0.0.0"),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   LOG_LEVEL: z.string().default("info"),
-  APP_DATA_DIR: z.string().default(path.resolve(".data")),
-  AGENT_WORKSPACE_ROOT: z.string().default(path.resolve("workspaces")),
-  CODEX_HOME: z.string().default(path.resolve("codex-home")),
+  APP_DATA_DIR: z.string().default(path.join(repositoryRoot, ".data")),
+  AGENT_WORKSPACE_ROOT: z.string().default(path.join(repositoryRoot, "workspaces")),
+  CODEX_HOME: z.string().default(path.join(repositoryRoot, "codex-home")),
   CODEX_BIN: z.string().default("codex"),
   CODEX_SANDBOX_MODE: z
     .enum(["read-only", "workspace-write", "danger-full-access"])
@@ -46,6 +52,24 @@ const envSchema = z.object({
   MEMORY_SEGMENT_MAX_TASKS: z.coerce.number().int().min(1).default(8),
   MEMORY_SEGMENT_MAX_CHARS: z.coerce.number().int().min(1000).default(120000),
   MEMORY_SEGMENT_IDLE_MS: z.coerce.number().int().min(1000).default(1800000),
+  // Recognition: routing authority for governed memory notes.
+  MEMORY_RECOGNIZER: z.enum(["ark", "fake", "sbert", "off"]).default("fake"),
+  MEMORY_EMBEDDING_MODEL: z.string().trim().optional(),
+  MEMORY_SBERT_PYTHON: z.string().trim().min(1).default("python3"),
+  MEMORY_SBERT_MODEL_DIR: z
+    .string()
+    .trim()
+    .min(1)
+    .default(path.join(repositoryRoot, "data", "recognition", "model")),
+  MEMORY_SBERT_BRIDGE: z
+    .string()
+    .trim()
+    .min(1)
+    .default(path.join(repositoryRoot, "scripts", "embed-recognizer.py")),
+  MEMORY_RECOGNITION_AGENT_THRESHOLD: z.coerce.number().min(-1).max(1).default(0.35),
+  MEMORY_RECOGNITION_SKILL_THRESHOLD: z.coerce.number().min(-1).max(1).default(0.45),
+  MEMORY_EMBEDDING_TIMEOUT_MS: z.coerce.number().int().min(1000).default(30000),
+  MEMORY_AUTO_GRANT_ENABLED: z.enum(["true", "false"]).default("false"),
   REVIEW_ALL_SKILLS: z.enum(["true", "false"]).default("false"),
   SKILLS_DIR: z.enum([".agents/skills", ".codex/skills"]).default(".agents/skills"),
   APP_AUTH_TOKEN: z
@@ -64,6 +88,13 @@ const envSchema = z.object({
 });
 
 export type AppConfig = ReturnType<typeof loadConfig>;
+
+/** Load the ignored repository .env for local development without shell-sourcing it. */
+export function loadLocalEnvironment(): void {
+  if (process.env.NODE_ENV === "production") return;
+  const localEnvPath = path.join(repositoryRoot, ".env");
+  if (existsSync(localEnvPath)) process.loadEnvFile(localEnvPath);
+}
 
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
   const env = envSchema.parse(environment);
@@ -109,6 +140,15 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
       maxChars: env.MEMORY_SEGMENT_MAX_CHARS,
       idleMs: env.MEMORY_SEGMENT_IDLE_MS,
     },
+    memoryRecognizer: env.MEMORY_RECOGNIZER,
+    memoryEmbeddingModel: env.MEMORY_EMBEDDING_MODEL?.trim() ?? "",
+    memorySbertPython: env.MEMORY_SBERT_PYTHON,
+    memorySbertModelDir: path.resolve(env.MEMORY_SBERT_MODEL_DIR),
+    memorySbertBridge: path.resolve(env.MEMORY_SBERT_BRIDGE),
+    memoryRecognitionAgentThreshold: env.MEMORY_RECOGNITION_AGENT_THRESHOLD,
+    memoryRecognitionSkillThreshold: env.MEMORY_RECOGNITION_SKILL_THRESHOLD,
+    memoryEmbeddingTimeoutMs: env.MEMORY_EMBEDDING_TIMEOUT_MS,
+    memoryAutoGrantEnabled: env.MEMORY_AUTO_GRANT_ENABLED === "true",
     reviewAllSkills: env.REVIEW_ALL_SKILLS === "true",
     skillsDir: env.SKILLS_DIR,
     authToken,

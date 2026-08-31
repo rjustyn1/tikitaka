@@ -101,23 +101,18 @@ export class ArkExtractorClient implements ExtractorClient {
  * consolidator embeds in the prompt. Never read its output as real extraction.
  *
  * It exists so `npm run check` runs offline and the demo works without a live
- * model. It parses the agent UUIDs (routing) and the short run/span indices
- * (provenance) from the prompt and wires the canned notes to REAL identifiers
- * from the buffer, so they survive consolidator validation. If it cannot find
- * those identifiers, it safely returns zero notes.
+ * model. It parses only short run/span indices (provenance); routing belongs to
+ * the recognition layer, not extraction. If it cannot find provenance, it
+ * safely returns zero notes.
  */
 export class FakeExtractorClient implements ExtractorClient {
   async extract(input: ExtractorRequest): Promise<ExtractorResponse> {
-    const uuid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
-
-    const agentIds = collectSection(input.prompt, "Agents you may target", uuid);
     // Provenance is now cited by the short integer indices the prompt prints as
     // `run N` and `[span N]`, not by echoing UUIDs. See consolidator.ts.
     const runIndices = collectInts(input.prompt, /\brun (\d+)/gi);
     const spanIndices = collectInts(input.prompt, /\[span (\d+)\]/gi);
 
     if (
-      agentIds.length === 0 ||
       runIndices.length === 0 ||
       spanIndices.length === 0
     ) {
@@ -129,7 +124,7 @@ export class FakeExtractorClient implements ExtractorClient {
         content:
           "The upload endpoint must reject files larger than 10MB and return HTTP 413.",
         severity: "severe",
-        targetAgentIds: [agentIds[0]],
+        skillKey: "upload-size-limits",
         description:
           "Hard size limit and error contract for the file upload endpoint.",
         sourceRunIndices: [runIndices[0]],
@@ -138,18 +133,16 @@ export class FakeExtractorClient implements ExtractorClient {
       },
     ];
 
-    if (agentIds.length > 1) {
-      notes.push({
-        content:
-          "Uploaded object keys are namespaced per user as uploads/{userId}/{uuid}.",
-        severity: "normal",
-        targetAgentIds: [agentIds[1]],
-        description: "Storage key layout for uploaded files.",
-        sourceRunIndices: [runIndices[0]],
-        sourceSpanIndices: [spanIndices[spanIndices.length > 1 ? 1 : 0]],
-        rationale: "Agreed storage convention worth reusing.",
-      });
-    }
+    notes.push({
+      content:
+        "Uploaded object keys are namespaced per user as uploads/{userId}/{uuid}.",
+      severity: "normal",
+      skillKey: "upload-storage-keys",
+      description: "Storage key layout for uploaded files.",
+      sourceRunIndices: [runIndices[0]],
+      sourceSpanIndices: [spanIndices[spanIndices.length > 1 ? 1 : 0]],
+      rationale: "Agreed storage convention worth reusing.",
+    });
 
     return { rawText: JSON.stringify({ notes }) };
   }
@@ -162,18 +155,4 @@ function collectInts(text: string, regex: RegExp): number[] {
     if (match[1]) out.push(Number(match[1]));
   }
   return [...new Set(out)];
-}
-
-/** Collect UUIDs that appear under a named "## <heading>" section of the prompt. */
-function collectSection(text: string, heading: string, uuid: RegExp): string[] {
-  const start = text.indexOf(heading);
-  if (start === -1) return [];
-  const rest = text.slice(start);
-  const nextHeading = rest.indexOf("\n##", heading.length);
-  const section = nextHeading === -1 ? rest : rest.slice(0, nextHeading);
-  return dedupe(section.match(uuid) ?? []);
-}
-
-function dedupe(items: string[]): string[] {
-  return [...new Set(items)];
 }

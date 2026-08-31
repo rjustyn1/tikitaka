@@ -102,6 +102,7 @@ function noteJson(overrides: Record<string, unknown>): string {
       {
         content: "The upload endpoint caps files at 10MB.",
         severity: "severe",
+        skillKey: "upload-size-limit",
         targetAgentIds: [AGENT_A],
         description: "Upload size limit.",
         // 1-based indices: run 1 -> RUN_A, span 1 -> SPAN_A (first entry).
@@ -115,13 +116,13 @@ function noteJson(overrides: Record<string, unknown>): string {
 }
 
 describe("Consolidator", () => {
-  it("extracts multiple targeted notes from a fixture buffer via the fake extractor", async () => {
+  it("extracts multiple un-routed notes from a fixture buffer via the fake extractor", async () => {
     const notes = await new Consolidator(new FakeExtractorClient()).consolidate(
       input,
     );
     expect(notes.length).toBeGreaterThanOrEqual(2);
     for (const note of notes) {
-      expect([AGENT_A, AGENT_B]).toContain(note.targetAgentIds[0]);
+      expect(note.targetAgentIds).toEqual([]);
       expect([SPAN_A, SPAN_B]).toContain(note.sourceSpanIds[0]);
       expect(note.segmentId).toBe("seg-1");
       // The segment's LAST task, so per-task queries downstream still resolve.
@@ -130,11 +131,12 @@ describe("Consolidator", () => {
     }
   });
 
-  it("rejects notes targeting out-of-group Agents", async () => {
+  it("ignores extractor-supplied target ids", async () => {
     const notes = await new Consolidator(
       new StubExtractor(noteJson({ targetAgentIds: [OUTSIDER] })),
     ).consolidate(input);
-    expect(notes).toEqual([]);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]!.targetAgentIds).toEqual([]);
   });
 
   it("drops out-of-range source span indices but keeps the note", async () => {
@@ -146,12 +148,13 @@ describe("Consolidator", () => {
     expect(notes[0]!.sourceSpanIds).toEqual([]);
   });
 
-  it("defaults missing severity/targets/description instead of dropping the note", async () => {
+  it("defaults missing severity and description without routing the note", async () => {
     // A minimal note like the real Ark model returned: only content + sources.
     const minimal = JSON.stringify({
       notes: [
         {
           content: "All API datetimes are UTC; the frontend localizes for display.",
+          skillKey: "api-datetime-format",
           sourceRunIndices: [1],
           sourceSpanIndices: [1],
         },
@@ -162,8 +165,7 @@ describe("Consolidator", () => {
     );
     expect(notes).toHaveLength(1);
     expect(notes[0]!.severity).toBe("normal");
-    // No targets given -> defaults to the whole group.
-    expect(notes[0]!.targetAgentIds.sort()).toEqual([AGENT_A, AGENT_B].sort());
+    expect(notes[0]!.targetAgentIds).toEqual([]);
     expect(notes[0]!.description.length).toBeGreaterThan(0);
   });
 
@@ -172,6 +174,7 @@ describe("Consolidator", () => {
       notes: Array.from({ length: 12 }, () => ({
         content: "A durable constraint.",
         severity: "normal",
+        skillKey: "durable-constraint",
         targetAgentIds: [AGENT_A],
         description: "desc",
         sourceRunIndices: [1],

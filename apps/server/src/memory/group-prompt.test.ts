@@ -46,11 +46,11 @@ function plannedNodes(raw: unknown[]): GroupPlanNode[] {
 }
 
 describe("group membership", () => {
-  it("accepts any explicitly selected number of Agents", () => {
-    // A4's exactly-three rule is gone: one, two and three are all valid.
+  it("accepts between two and twelve explicitly selected Agents", () => {
+    // A4's exactly-three rule is gone, but a team still needs two members.
     expect(findMembershipError(MEMBERS)).toBeNull();
-    expect(findMembershipError(MEMBERS.slice(0, 1))).toBeNull();
     expect(findMembershipError(MEMBERS.slice(0, 2))).toBeNull();
+    expect(findMembershipError(MEMBERS.slice(0, 1))).toContain("members");
   });
 
   it("no longer requires any particular role to be present", () => {
@@ -197,7 +197,11 @@ describe("turn prompts", () => {
     },
   ]);
 
-  function prompt(node: GroupPlanNode, injected: GroupMessage[] = []) {
+  function prompt(
+    node: GroupPlanNode,
+    injected: GroupMessage[] = [],
+    governedMemory: Parameters<typeof buildTurnPrompt>[0]["governedMemory"] = [],
+  ) {
     return buildTurnPrompt({
       taskPrompt: "Plan an upload feature.",
       node,
@@ -212,6 +216,7 @@ describe("turn prompts", () => {
         ["agent-backend", "Backend"],
         ["agent-frontend", "Frontend"],
       ]),
+      governedMemory,
     });
   }
 
@@ -246,6 +251,26 @@ describe("turn prompts", () => {
     expect(text).toContain("./code");
     // The stable identity is never replaced by another Agent's identity.
     expect(text).not.toContain("You are Frontend.");
+  });
+
+  it("injects active governed memory with its landing semantics", () => {
+    const text = prompt(nodes[1]!, [], [
+      {
+        severity: "severe",
+        description: "Upload limit",
+        content: "Reject uploads over 10MB.",
+      },
+      {
+        severity: "normal",
+        description: "when documenting uploads",
+        content: "Mention HTTP 413 in the API guide.",
+      },
+    ]);
+    expect(text).toContain("[Your governed memory]");
+    expect(text).toContain("(always apply) Reject uploads over 10MB.");
+    expect(text).toContain(
+      "(apply when: when documenting uploads) Mention HTTP 413 in the API guide.",
+    );
   });
 
   it("labels injected messages by speaker", () => {

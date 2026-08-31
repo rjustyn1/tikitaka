@@ -1,7 +1,7 @@
 // Consolidator: turns a completed task buffer into candidate memory notes.
 //
 // It is an extractor, not a summarizer — it finds durable, actionable knowledge
-// and routes each note to the right target Agents. It fails OPEN: any parse or
+// but never routes them. Recognition happens after extraction. It fails OPEN: any parse or
 // extraction failure yields zero notes and leaves the group task completed.
 // See components/CONSOLIDATOR.md.
 
@@ -23,7 +23,7 @@ const MAX_NOTES = 8;
 
 const SYSTEM_PROMPT = [
   "You extract governed memory notes from a completed multi-agent task. These",
-  "notes become durable memory that the target agents re-read on FUTURE tasks,",
+  "notes become durable memory that agents may re-read on FUTURE tasks,",
   "so extract reusable facts/decisions/constraints/lessons — not a play-by-play",
   "of this task. Write declarative facts, never commands.",
   "",
@@ -33,7 +33,7 @@ const SYSTEM_PROMPT = [
   "    {",
   '      "content": "<the durable fact, declarative, <=2000 chars>",',
   '      "severity": "normal" | "severe",',
-  '      "targetAgentIds": ["<agent id from the Agents list below>"],',
+  '      "skillKey": "<lowercase kebab-case skill key, 3-64 chars>",',
   '      "description": "<short trigger describing when this applies, <=300 chars>",',
   '      "sourceRunIndices": [<a run number shown under Node outputs, e.g. 1>],',
   '      "sourceSpanIndices": [<a span number shown under Node outputs, e.g. 2>],',
@@ -45,8 +45,8 @@ const SYSTEM_PROMPT = [
   "Rules for EVERY note (all fields are required):",
   '- severity: "severe" for hard constraints that must never be missed (they',
   "  land as always-on memory); otherwise \"normal\".",
-  "- targetAgentIds: pick one or more ids from the 'Agents you may target' list.",
-  "  Route to the agent(s) who will benefit on future work. Never invent ids.",
+  "- skillKey: name the reusable topic, not this task or an Agent. Use only",
+  "  lowercase letters, numbers and hyphens; it is a key, never a file path.",
   "- description: this is the relevance trigger — the target agent loads the note",
   "  when a future task matches it, so make it specific.",
   "- sourceRunIndices / sourceSpanIndices: cite provenance by the SHORT INTEGER",
@@ -64,7 +64,7 @@ const extractorOutputSchema = z.object({
     z.object({
       content: z.string().trim().min(1).max(2000),
       severity: z.enum(["normal", "severe"]).optional(),
-      targetAgentIds: z.array(z.string()).optional(),
+      skillKey: z.string().trim().optional(),
       description: z.string().trim().max(300).optional(),
       // Provenance is cited by 1-based integer index into the buffer's runs and
       // spans (see collectSources / buildExtractorRequest). z.coerce tolerates a
@@ -132,14 +132,10 @@ export function buildExtractorRequest(
   input: ConsolidateInput,
   timeoutMs: number = DEFAULT_EXTRACT_TIMEOUT_MS,
 ): ExtractorRequest {
-  const { segmentBuffer, members } = input;
+  const { segmentBuffer } = input;
   const sources = collectSources(segmentBuffer);
   // 1-based so "run 1"/"[span 1]" reads naturally; 0 means not found.
   const spanIndexOf = (id: string) => sources.spanIds.indexOf(id) + 1;
-
-  const agentLines = members
-    .map((agent) => `- ${agent.id}  (${agent.name})`)
-    .join("\n");
 
   const nodeBlocks = segmentBuffer.entries
     .map((entry) => {
@@ -183,9 +179,6 @@ export function buildExtractorRequest(
     "# Topic",
     "These requests were all part of one continuous topic:",
     promptLines,
-    "",
-    "## Agents you may target",
-    agentLines,
     "",
     "## Group chat transcript",
     "The conversation to extract from. Not citable as provenance.",
@@ -254,8 +247,10 @@ function normalizeCandidate(
       ] ?? "",
     content,
     severity: raw.severity ?? "normal",
-    // Routing is resolved (filtered to members / defaulted) in validateCandidates.
-    targetAgentIds: raw.targetAgentIds ?? [],
+    // Recognition supplies recipients after extraction. The consolidator never
+    // makes an access-control decision.
+    targetAgentIds: [],
+    skillKey: raw.skillKey?.trim() ?? "",
     description:
       raw.description?.trim() ||
       (content.length > 120 ? content.slice(0, 117) + "…" : content),
@@ -267,9 +262,6 @@ function normalizeCandidate(
 
 /**
  * Turn raw candidates into safe ones:
- * - routing: keep only in-group targets; if the model gave targets but ALL are
- *   out-of-group, drop the note (a real routing error); if it gave none, default
- *   to the whole group (which trips broad-routing review, so a human decides).
  * - provenance: filter cited run/span ids down to ones that actually exist in
  *   the buffer, rather than discarding the whole note for one bad id.
  */
@@ -277,8 +269,6 @@ export function validateCandidates(
   candidates: CandidateMemoryNote[],
   input: ConsolidateInput,
 ): CandidateMemoryNote[] {
-  const memberIds = input.members.map((agent) => agent.id);
-  const memberSet = new Set(memberIds);
   const spanIds = new Set(
     input.segmentBuffer.entries.flatMap((entry) => entry.spans.map((s) => s.id)),
   );
@@ -290,16 +280,16 @@ export function validateCandidates(
 
   const result: CandidateMemoryNote[] = [];
   for (const note of candidates) {
-    const inGroup = note.targetAgentIds.filter((id) => memberSet.has(id));
-    if (note.targetAgentIds.length > 0 && inGroup.length === 0) {
-      continue; // model tried to route entirely out of group — drop it
-    }
+    if (!isValidSkillKey(note.skillKey)) continue;
     result.push({
       ...note,
-      targetAgentIds: inGroup.length > 0 ? inGroup : [...memberIds],
       sourceSpanIds: note.sourceSpanIds.filter((id) => spanIds.has(id)),
       sourceRunIds: note.sourceRunIds.filter((id) => runIds.has(id)),
     });
   }
   return result;
+}
+
+export function isValidSkillKey(value: string): boolean {
+  return /^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$/.test(value);
 }

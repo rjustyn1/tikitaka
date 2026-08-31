@@ -120,4 +120,30 @@ describe("GroupWorkspace", () => {
     expect(screen.getByText("The server is unavailable.")).toBeInTheDocument();
     expect(screen.queryByText("Create your first team")).not.toBeInTheDocument();
   });
+
+  it("requires two Agents before creating the first team", () => {
+    const empty = workspaceProps({
+      groups: [],
+      selectedGroupId: null,
+      agents,
+    });
+    const { rerender } = render(<GroupWorkspace {...empty} />);
+
+    expect(
+      screen.getByRole("button", { name: "Create two Agents first" }),
+    ).toBeDisabled();
+
+    rerender(
+      <GroupWorkspace
+        {...empty}
+        agents={[
+          ...agents,
+          { ...agents[0]!, id: "a2", name: "Frontend Agent" },
+        ]}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Create your first team" }),
+    ).toBeEnabled();
+  });
 });

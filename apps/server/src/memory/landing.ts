@@ -36,16 +36,20 @@ export class LandingService {
 
     const fileWrites: LandedMemoryFile[] = [];
     for (const agent of agents) {
+      const skillKey = note.skillAssignments?.find(
+        (assignment) => assignment.agentId === agent.id,
+      )?.skillKey ?? note.skillKey;
       const path =
         note.severity === "severe"
           ? await this.writer.appendAgentsMemory(agent, note)
-          : await this.writer.writeSkill(agent, note);
+          : await this.writer.writeSkill(agent, note, skillKey);
       fileWrites.push({
         id: randomUUID(),
         noteId: note.id,
         agentId: agent.id,
         kind,
         path,
+        ...(kind === "skill" && skillKey ? { skillKey } : {}),
         createdAt: now(),
         removedAt: null,
       });
@@ -81,11 +85,11 @@ export class LandingService {
     for (const file of active) {
       const agent = agentsById.get(file.agentId);
       if (!agent) continue;
-      if (file.kind === "agents_md") {
-        await this.writer.removeAgentsMemory(agent, note);
-      } else {
-        await this.writer.removeSkill(agent, note);
-      }
+        if (file.kind === "agents_md") {
+          await this.writer.removeAgentsMemory(agent, note);
+        } else {
+          await this.writer.removeSkill(agent, note, file.skillKey);
+        }
     }
 
     const revokedAt = now();

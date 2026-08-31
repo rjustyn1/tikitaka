@@ -46,7 +46,7 @@ describe("GroupEditor", () => {
     }
   });
 
-  it("accepts a named team with one member", () => {
+  it("requires at least two members", () => {
     renderEditor();
     const submit = screen.getByRole("button", { name: "Create team" });
     fireEvent.change(screen.getByPlaceholderText("Upload Feature Team"), {
@@ -54,6 +54,8 @@ describe("GroupEditor", () => {
     });
     expect(submit).toBeDisabled();
     fireEvent.click(screen.getAllByRole("checkbox")[0] as HTMLElement);
+    expect(submit).toBeDisabled();
+    fireEvent.click(screen.getAllByRole("checkbox")[1] as HTMLElement);
     expect(submit).toBeEnabled();
   });
 
@@ -92,12 +94,14 @@ describe("GroupEditor", () => {
       target: { value: "Team" },
     });
     fireEvent.click(screen.getAllByRole("checkbox")[0] as HTMLElement);
+    fireEvent.click(screen.getAllByRole("checkbox")[1] as HTMLElement);
     fireEvent.change(screen.getByLabelText("Role for Backend Agent"), {
       target: { value: "security" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Create team" }));
     expect(onSubmit.mock.calls[0]?.[0].members).toEqual([
       { agentId: "a1", role: "security" },
+      { agentId: "a2", role: "frontend" },
     ]);
   });
 
@@ -105,14 +109,18 @@ describe("GroupEditor", () => {
     // "Ops Agent" derives to "ops", which is not offered, so it starts on the
     // first option rather than being added as a fourth.
     const onSubmit = vi.fn();
-    renderEditor(onSubmit, [agent("a4", "Ops Agent")]);
+    // Two candidates: a team needs MIN_MEMBERS, and the Ops Agent is still the
+    // one under test for role derivation.
+    renderEditor(onSubmit, [agent("a4", "Ops Agent"), agent("a1", "Backend Agent")]);
     fireEvent.change(screen.getByPlaceholderText("Upload Feature Team"), {
       target: { value: "Team" },
     });
     fireEvent.click(screen.getAllByRole("checkbox")[0] as HTMLElement);
+    fireEvent.click(screen.getAllByRole("checkbox")[1] as HTMLElement);
     fireEvent.click(screen.getByRole("button", { name: "Create team" }));
     expect(onSubmit.mock.calls[0]?.[0].members).toEqual([
       { agentId: "a4", role: "backend" },
+      { agentId: "a1", role: "backend" },
     ]);
   });
 
@@ -174,18 +182,24 @@ describe("the member counter", () => {
     expect(screen.queryByText(/of 12 selected/)).not.toBeInTheDocument();
   });
 
-  it("treats a single-member team as valid, not as missing two", () => {
-    // The old exactly-three rule is gone; one member is a complete team.
+  it("treats a two-member team as valid", () => {
+    // Recognition raised the floor to MIN_MEMBERS: routing needs somewhere to
+    // route. One member is an incomplete team, two is complete.
     renderEditor();
     fireEvent.click(screen.getAllByRole("checkbox")[0]!);
-    const counter = screen.getByText(/1 of 4 selected/);
+    fireEvent.click(screen.getAllByRole("checkbox")[1]!);
+    const counter = screen.getByText(/2 of 4 selected/);
     expect(counter.className).toContain("roster-ok");
     expect(counter.className).not.toContain("roster-missing");
   });
 
-  it("flags only an empty roster", () => {
+  it("flags a roster below the minimum", () => {
     renderEditor();
     expect(screen.getByText(/0 of 4 selected/).className).toContain(
+      "roster-missing",
+    );
+    fireEvent.click(screen.getAllByRole("checkbox")[0]!);
+    expect(screen.getByText(/1 of 4 selected/).className).toContain(
       "roster-missing",
     );
   });

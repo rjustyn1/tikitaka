@@ -10,7 +10,7 @@
 //     -> ReviewService.processCandidate()  (auto-land clean normals, park risky)
 //     -> Ledger records grants + withholdings (inside review)
 
-import type { Agent, AgentGroup } from "../types.js";
+import type { Agent, AgentGroup, MemorySkillAssignment } from "../types.js";
 import type { JsonStore } from "../store.js";
 import { Consolidator } from "./consolidator.js";
 import { GROUP_ROLES } from "./group-chain.js";
@@ -22,8 +22,16 @@ import {
 import { LandingService } from "./landing.js";
 import { LedgerService } from "./ledger.js";
 import { ReviewService } from "./review.js";
+import {
+  ArkEmbeddingClient,
+  FakeEmbeddingClient,
+  Recognizer,
+  SbertEmbeddingClient,
+} from "./recognizer.js";
 import { evaluateNoteSafety } from "./safety.js";
+import { loadAgentSkillProfiles } from "./skill-catalog.js";
 import { SegmentBufferBuilder } from "./task-buffer.js";
+import type { CandidateMemoryNote, NoteRecognizer } from "./types.js";
 
 const now = () => new Date().toISOString();
 
@@ -56,8 +64,21 @@ export interface MemoryPipelineOptions {
   reviewAllSkills?: boolean;
   /** Consolidator model-call timeout (MEMORY_EXTRACT_TIMEOUT_MS). */
   extractTimeoutMs?: number;
+  /** Optional runtime router; absent preserves legacy consolidator routing. */
+  recognizer?: NoteRecognizer;
   /** Optional sink for structured errors; defaults to console.error. */
   onError?: (message: string, error: unknown) => void;
+}
+
+export interface RecognitionRuntimeConfig {
+  memoryRecognizer?: "ark" | "fake" | "sbert" | "off";
+  memoryEmbeddingModel?: string;
+  memorySbertPython?: string;
+  memorySbertModelDir?: string;
+  memorySbertBridge?: string;
+  memoryRecognitionAgentThreshold?: number;
+  memoryRecognitionSkillThreshold?: number;
+  memoryEmbeddingTimeoutMs?: number;
 }
 
 export class RealMemoryPipeline implements MemoryPipeline {
@@ -66,6 +87,7 @@ export class RealMemoryPipeline implements MemoryPipeline {
   private readonly buffers: SegmentBufferBuilder;
   private readonly landing: LandingService;
   private readonly onError: (message: string, error: unknown) => void;
+  private readonly recognizer: NoteRecognizer | undefined;
 
   constructor(
     private readonly store: JsonStore,
@@ -82,6 +104,7 @@ export class RealMemoryPipeline implements MemoryPipeline {
       options.reviewAllSkills ?? false,
     );
     this.buffers = new SegmentBufferBuilder(store);
+    this.recognizer = options.recognizer;
     this.onError =
       options.onError ?? ((message, error) => console.error(message, error));
   }
@@ -112,10 +135,12 @@ export class RealMemoryPipeline implements MemoryPipeline {
       });
 
       for (const candidate of candidates) {
-        const safety = evaluateNoteSafety(candidate);
+        const routed = await this.routeCandidate(candidate, members);
+        if (!routed) continue;
+        const safety = evaluateNoteSafety(routed);
         // processCandidate reads candidate ids/severity/routing and safety's
         // redacted content; pass the pre-redaction candidate.
-        await this.review.processCandidate(candidate, safety);
+        await this.review.processCandidate(routed, safety);
       }
       // Note: TopicSegment.flushedAt is stamped by the GroupRunner after this
       // returns (it owns segment lifecycle and stamps it even if extraction
@@ -124,6 +149,80 @@ export class RealMemoryPipeline implements MemoryPipeline {
       // Memory must never fail the completed group task.
       this.onError(`Memory pipeline failed for segment ${segmentId}`, error);
     }
+  }
+
+  private async routeCandidate(
+    candidate: CandidateMemoryNote,
+    members: Agent[],
+  ): Promise<CandidateMemoryNote | null> {
+    if (!this.recognizer) return null;
+    try {
+      const recognition = await this.recognizer.recognizeAgents(
+        [candidate.description, candidate.content].join("\n"),
+        members,
+      );
+      if (recognition.matches.length === 0) return null;
+      const skillAssignments = await this.assignSkills(
+        [candidate.description, candidate.content].join("\n"),
+        candidate.skillKey,
+        recognition.matches,
+        members,
+      );
+      if (skillAssignments === null) return null;
+      return {
+        ...candidate,
+        targetAgentIds: recognition.matches.map((match) => match.agentId),
+        recognitionMatchKind: recognition.matches[0]!.matchKind,
+        recognitionScores: Object.fromEntries(
+          recognition.matches.map((match) => [match.agentId, match.score]),
+        ),
+        ...(skillAssignments.length > 0 ? { skillAssignments } : {}),
+      };
+    } catch (error) {
+      this.onError(
+        `Recognition failed for note ${candidate.id}; note withheld`,
+        error,
+      );
+      return null;
+    }
+  }
+
+  private async assignSkills(
+    noteText: string,
+    proposedSkillKey: string,
+    matches: Awaited<ReturnType<NoteRecognizer["recognizeAgents"]>>["matches"],
+    members: Agent[],
+  ): Promise<MemorySkillAssignment[] | null> {
+    if (!this.recognizer?.recognizeSkill) return [];
+    const assignments = await Promise.all(
+      matches.map(async (match) => {
+        const agent = members.find((member) => member.id === match.agentId);
+        if (!agent) return null;
+        const skills = await loadAgentSkillProfiles(agent);
+        const decision = await this.recognizer!.recognizeSkill!(noteText, skills);
+        if (decision.kind === "existing") {
+          return {
+            agentId: agent.id,
+            skillKey: decision.skill.skillKey,
+            score: decision.score,
+            matchKind: "threshold" as const,
+          };
+        }
+        // A generated key colliding with an unrelated existing skill is not a
+        // safe implicit merge. Drop the candidate for review/re-extraction.
+        if (skills.some((skill) => skill.skillKey === proposedSkillKey)) {
+          return null;
+        }
+        return {
+          agentId: agent.id,
+          skillKey: proposedSkillKey,
+          score: decision.score,
+          matchKind: "new-skill" as const,
+        };
+      }),
+    );
+    if (assignments.some((assignment) => assignment === null)) return null;
+    return assignments as MemorySkillAssignment[];
   }
 
   async resetAutoNotes(groupTaskId: string): Promise<void> {
@@ -228,11 +327,68 @@ function syntheticGroup(groupId: string, members: Agent[]): AgentGroup {
  */
 export function createMemoryPipeline(
   store: JsonStore,
-  config: MemoryConfig,
+  config: MemoryConfig & RecognitionRuntimeConfig,
   options: MemoryPipelineOptions = {},
 ): MemoryPipeline {
+  const recognizer = options.recognizer ?? createRuntimeRecognizer(config);
   return new RealMemoryPipeline(store, createExtractorClient(config), {
     extractTimeoutMs: config.memoryExtractTimeoutMs,
     ...options,
+    ...(recognizer ? { recognizer } : {}),
   });
+}
+
+function createRuntimeRecognizer(
+  config: MemoryConfig & RecognitionRuntimeConfig,
+): NoteRecognizer | undefined {
+  const mode = config.memoryRecognizer ?? "fake";
+  if (mode === "off") return undefined;
+  const options = {
+    ...(config.memoryRecognitionAgentThreshold !== undefined
+      ? { agentThreshold: config.memoryRecognitionAgentThreshold }
+      : {}),
+    ...(config.memoryRecognitionSkillThreshold !== undefined
+      ? { skillThreshold: config.memoryRecognitionSkillThreshold }
+      : {}),
+  };
+  if (mode === "fake") return new Recognizer(new FakeEmbeddingClient(), options);
+  if (mode === "sbert") {
+    const pythonPath = config.memorySbertPython?.trim() ?? "";
+    const modelPath = config.memorySbertModelDir?.trim() ?? "";
+    const bridgePath = config.memorySbertBridge?.trim() ?? "";
+    if (!pythonPath || !modelPath || !bridgePath) {
+      throw new Error(
+        "MEMORY_RECOGNIZER=sbert requires MEMORY_SBERT_PYTHON, MEMORY_SBERT_MODEL_DIR, and MEMORY_SBERT_BRIDGE",
+      );
+    }
+    return new Recognizer(
+      new SbertEmbeddingClient({
+        pythonPath,
+        modelPath,
+        bridgePath,
+        ...(config.memoryEmbeddingTimeoutMs !== undefined
+          ? { timeoutMs: config.memoryEmbeddingTimeoutMs }
+          : {}),
+      }),
+      options,
+    );
+  }
+
+  const model = config.memoryEmbeddingModel?.trim() ?? "";
+  if (!model || !config.arkApiKey.trim()) {
+    throw new Error(
+      "MEMORY_RECOGNIZER=ark requires MEMORY_EMBEDDING_MODEL and ARK_API_KEY",
+    );
+  }
+  return new Recognizer(
+    new ArkEmbeddingClient({
+      apiKey: config.arkApiKey,
+      model,
+      baseUrl: config.arkBaseUrl,
+      ...(config.memoryEmbeddingTimeoutMs !== undefined
+        ? { timeoutMs: config.memoryEmbeddingTimeoutMs }
+        : {}),
+    }),
+    options,
+  );
 }

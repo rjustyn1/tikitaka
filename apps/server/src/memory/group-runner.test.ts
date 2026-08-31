@@ -9,8 +9,8 @@ import { FakeRunner } from "../test-helpers.js";
 import type { Agent, TraceSpan } from "../types.js";
 import { WorkspaceManager } from "../workspace.js";
 import { MAX_NODE_ATTEMPTS } from "./group-runner.js";
-import { TaskPlanner } from "./planner.js";
 import type { MemoryPipeline } from "./pipeline.js";
+import { TaskPlanner, type PlannerClient } from "./planner.js";
 import { RecordingMemoryPipeline } from "../test-helpers.js";
 import { SegmentBufferBuilder } from "./task-buffer.js";
 import type { GroupMember } from "../types.js";
@@ -50,12 +50,20 @@ interface Harness {
 async function makeHarness(
   runner: FakeRunner = new FakeRunner(),
   pipeline: MemoryPipeline & { calls?: unknown } = new RecordingMemoryPipeline(),
-  extra: {
-    planJson?: string;
-    maxParallel?: number;
-    onPlanPrompt?: (prompt: string) => void;
-  } = {},
+  // Third arg accepts EITHER a ready TaskPlanner (recognition-branch call
+  // sites) OR a plan-fixture object (origin/main call sites). Both styles are
+  // in use across this file, so the harness discriminates at runtime.
+  plannerOrExtra:
+    | TaskPlanner
+    | {
+        planJson?: string;
+        maxParallel?: number;
+        onPlanPrompt?: (prompt: string) => void;
+      } = {},
 ): Promise<Harness> {
+  const explicitPlanner =
+    plannerOrExtra instanceof TaskPlanner ? plannerOrExtra : undefined;
+  const extra = plannerOrExtra instanceof TaskPlanner ? {} : plannerOrExtra;
   const root = await mkdtemp(path.join(tmpdir(), "launchpad-group-"));
   temporaryDirectories.push(root);
   const config = loadConfig({
@@ -76,23 +84,23 @@ async function makeHarness(
     MEMORY_SEGMENT_MAX_CHARS: "100000000",
   });
   const store = new JsonStore(path.join(root, "data", "db.json"));
-  const service = new AgentService(
-    config,
-    store,
-    new WorkspaceManager(path.join(root, "workspaces"), "local-process"),
-    runner,
-    pipeline,
-    extra.planJson === undefined && extra.onPlanPrompt === undefined
+  const workspaces = new WorkspaceManager(
+    path.join(root, "workspaces"),
+    "local-process",
+  );
+  const planner =
+    explicitPlanner ??
+    (extra.planJson === undefined && extra.onPlanPrompt === undefined
       ? undefined
       : new TaskPlanner({
           async extract(input) {
             extra.onPlanPrompt?.(input.prompt);
-            return {
-              rawText: extra.planJson ?? JSON.stringify({ nodes: [] }),
-            };
+            return { rawText: extra.planJson ?? JSON.stringify({ nodes: [] }) };
           },
-        }),
-  );
+        }));
+  const service = planner
+    ? new AgentService(config, store, workspaces, runner, pipeline, planner)
+    : new AgentService(config, store, workspaces, runner, pipeline);
   await service.initialize();
 
   const backend = await service.createAgent({ name: "Backend" });
@@ -258,6 +266,47 @@ describe("group lifecycle", () => {
     for (const agent of [harness.backend, harness.frontend, harness.security]) {
       await expect(lstat(path.join(agent.workspacePath, "code"))).rejects.toThrow();
     }
+  });
+
+  it("releases unselected members before a later task", async () => {
+    const subsetClient: PlannerClient = {
+      async extract() {
+        return {
+          rawText: JSON.stringify({
+            nodes: [
+              {
+                agent: 1,
+                nodeRole: "focused-work",
+                instruction: "Complete the focused work.",
+                expectedOutput: "A result.",
+                dependsOn: [],
+                area: "all",
+                writes: true,
+              },
+            ],
+          }),
+        };
+      },
+    };
+    const harness = await makeHarness(
+      new FakeRunner(),
+      new RecordingMemoryPipeline(),
+      new TaskPlanner(subsetClient),
+    );
+    const group = await harness.service.createGroup({
+      name: "Subset team",
+      members: harness.members,
+    });
+
+    const first = await harness.service.startGroupTask(group.id, "First task.");
+    await settle(harness, first.id);
+    for (const agent of [harness.backend, harness.frontend, harness.security]) {
+      await expect(lstat(path.join(agent.workspacePath, "code"))).rejects.toThrow();
+    }
+
+    const second = await harness.service.startGroupTask(group.id, "Second task.");
+    await settle(harness, second.id);
+    expect(harness.service.getGroupTask(second.id).task.status).toBe("completed");
   });
 
   it("gives a re-added Agent a new epoch and a fresh group thread", async () => {

@@ -5,7 +5,13 @@
 // Person 1. This file holds the in-flight shapes that flow between the memory
 // modules before anything is written to the store or disk.
 
-import type { MemorySeverity, TraceSpan } from "../types.js";
+import type {
+  GroupTaskStatus,
+  MemoryMatchKind,
+  MemorySkillAssignment,
+  MemorySeverity,
+  TraceSpan,
+} from "../types.js";
 
 /**
  * A note as produced by the consolidator, before safety, review, or landing.
@@ -25,10 +31,54 @@ export interface CandidateMemoryNote {
   content: string;
   severity: MemorySeverity;
   targetAgentIds: string[];
+  recognitionMatchKind?: MemoryMatchKind;
+  recognitionScores?: Record<string, number>;
+  skillKey: string;
+  skillAssignments?: MemorySkillAssignment[];
   description: string;
   sourceRunIds: string[];
   sourceSpanIds: string[];
   rationale: string;
+}
+
+export interface NoteRecognizer {
+  recognizeAgents(
+    noteText: string,
+    members: readonly {
+      id: string;
+      name: string;
+      description: string;
+      instructions: string;
+    }[],
+  ): Promise<{
+    matches: Array<{
+      agentId: string;
+      score: number;
+      matchKind: MemoryMatchKind;
+    }>;
+    threshold: number;
+  }>;
+  recognizeSkill?: (
+    noteText: string,
+    skills: readonly {
+      skillKey: string;
+      name: string;
+      description: string;
+      examples?: readonly string[];
+    }[],
+  ) => Promise<
+    | {
+        kind: "existing";
+        skill: { skillKey: string };
+        score: number;
+        matchKind: MemoryMatchKind;
+      }
+    | {
+        kind: "new-skill";
+        score: number;
+        suggestedDescription: string;
+      }
+  >;
 }
 
 /** Result of running a candidate note through safety (redaction + quarantine). */

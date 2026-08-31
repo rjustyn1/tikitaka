@@ -1,11 +1,30 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "./config.js";
 
 describe("memory configuration", () => {
+  it("anchors local storage defaults at the repository root", () => {
+    const root = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../..",
+    );
+    expect(loadConfig({ NODE_ENV: "test" })).toMatchObject({
+      dataDirectory: path.join(root, ".data"),
+      workspaceRoot: path.join(root, "workspaces"),
+      codexHome: path.join(root, "codex-home"),
+    });
+  });
+
   it("defaults extraction to Ark with the specified timeout", () => {
     expect(loadConfig({ NODE_ENV: "test" })).toMatchObject({
       memoryExtractor: "ark",
       memoryExtractTimeoutMs: 30_000,
+      memoryRecognizer: "fake",
+      memoryRecognitionAgentThreshold: 0.35,
+      memoryRecognitionSkillThreshold: 0.45,
+      memoryEmbeddingTimeoutMs: 30_000,
+      memoryAutoGrantEnabled: false,
     });
   });
 
@@ -19,6 +38,25 @@ describe("memory configuration", () => {
     ).toMatchObject({
       memoryExtractor: "fake",
       memoryExtractTimeoutMs: 4_242,
+    });
+  });
+
+  it("accepts the local SBERT embedding bridge configuration", () => {
+    expect(
+      loadConfig({
+        NODE_ENV: "test",
+        MEMORY_RECOGNIZER: "sbert",
+        MEMORY_SBERT_PYTHON: "/tmp/recognition-python",
+        MEMORY_SBERT_MODEL_DIR: "/tmp/recognition-model",
+        MEMORY_SBERT_BRIDGE: "/tmp/embed-recognizer.py",
+        MEMORY_AUTO_GRANT_ENABLED: "true",
+      }),
+    ).toMatchObject({
+      memoryRecognizer: "sbert",
+      memorySbertPython: "/tmp/recognition-python",
+      memorySbertModelDir: "/tmp/recognition-model",
+      memorySbertBridge: "/tmp/embed-recognizer.py",
+      memoryAutoGrantEnabled: true,
     });
   });
 });

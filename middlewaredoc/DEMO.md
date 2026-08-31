@@ -84,7 +84,7 @@ Three of them fail **silently**, which is why `verify:live` exists.
 
 | # | Claim | If it fails |
 |---|---|---|
-| 1 | The five-node chain runs against real Codex | Obvious — red in the Plan tab |
+| 1 | The planner-selected nodes run against real Codex | Obvious — red in the Plan tab |
 | 2 | Shared `./code` is writable from a real `codex exec` | **Silent.** The node still says `completed`; only `shared-code/` is empty |
 | 3 | Real Codex spans satisfy the consolidator | **Silent.** Review is just empty, exactly as if the feature were broken |
 | 4 | `codex exec` *fires* a landed skill | **Silent.** The Agent answers without the constraint and you blame the prompt |
@@ -108,9 +108,11 @@ governance beat below works on it. Say it was seeded if asked.
 
 ## Cast and setup
 
-**Backend**, **Frontend** and **Security** in a team called `Upload Feature
-Team`, one per role. **Ops** exists on the platform and is deliberately **not**
-a member — it is the withheld Agent, and it carries the demo.
+The seeded demo uses **Backend**, **Frontend** and **Security** in a team called
+`Upload Feature Team`. These are demo labels, not a membership constraint: a
+real team may contain 2-12 unique Agents. **Ops** exists on the platform and is
+deliberately **not** a member — it is the withheld Agent, and it carries the
+demo.
 
 Before you present:
 
@@ -202,12 +204,12 @@ If asked whether the run was live:
 
 ## Do not promise these
 
-The v1 chain is sequential (A4). There are no branches:
+Planner output may contain branches, but execution is currently sequential in
+validated topological order:
 
 ```text
-"branch context does not leak sibling output"   there are no siblings
-"the join owner receives branch outputs"        there are no joins
-runtime locks preventing a collision            one node runs at a time
+parallel nodes execute concurrently              one node runs at a time
+runtime locks prevent a live collision           collisions cannot occur serially
 ```
 
 In the Context tab, **“Already seen” is transcript de-duplication, not a
@@ -248,6 +250,6 @@ the task shows "failed"     A node could not reach Codex. Reseed
                             beats do not need a live model.
 notes never appear          The task is terminal but consolidation produced
                             nothing. The UI says so after ~20s. Reseed.
-the group screen 400s       Membership must be exactly three, one per role.
-                            The modal blocks this; the server enforces it.
+the group screen 400s       Membership must contain 2-12 unique Agents.
+                            The modal blocks invalid sizes and duplicates.
 ```

@@ -2,22 +2,21 @@
 
 > ⚠️ **SCOPE BANNER - read before building from this document.**
 >
-> This is the full design, including the branch-and-join DAG. **V1 is a
-> hardcoded five-node SEQUENTIAL chain** (see A4 in
-> `DECISIONS.md`). Treat as **STRETCH**, and do not build yet:
+> The current planner reads the task and each member's description, then emits
+> a bounded, validated DAG. The runner executes that DAG in topological order,
+> one node at a time. Treat concurrent node execution as **STRETCH**:
 >
 > ```text
-> branch nodes, join nodes, join-owner selection
 > parallel phases and parallel-set validation
 > runtime-lock COLLISION VALIDATION (lock RECORDS are still v1)
-> contextSnapshotSeq / allowedPlanNodeIds sibling-leak prevention
->   (keep the fields and the lastSeenSeq dedupe - both are v1)
+> automatic merge conflict resolution
 > ```
 >
 > Two corrections to this document that are **not** optional:
 >
 > ```text
-> AgentGroup.memberAgentIds is replaced by members: [{agentId, role}] (A4)
+> AgentGroup.memberAgentIds is replaced by 2-12 unique
+>   members: [{agentId, role}]. Role is a free-form display label.
 > the ./code symlink is LOCAL-PROCESS ONLY. Container runtime uses a nested
 >   bind mount at /workspace/code - a symlink is BROKEN there (A2, verified)
 > ```
@@ -1084,7 +1083,7 @@ memory: reviewed carryover after task completion
 
 The first version does not need:
 
-- free-form autonomous planning;
+- concurrent node execution;
 - manual speaker selection;
 - shared Codex threads;
 - automatic merge conflict resolution;

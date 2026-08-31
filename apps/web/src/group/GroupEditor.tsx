@@ -14,6 +14,7 @@ import { useMemo, useState } from "react";
 import type { Agent, AgentGroup, GroupMember } from "../types";
 import { deriveRole } from "./format";
 
+const MIN_MEMBERS = 2;
 const MAX_MEMBERS = 12;
 
 /**
@@ -85,7 +86,7 @@ export function GroupEditor({ agents, group, busy, onCancel, onSubmit }: Props) 
 
   const valid =
     name.trim().length > 0 &&
-    members.length >= 1 &&
+    members.length >= MIN_MEMBERS &&
     members.length <= MAX_MEMBERS;
 
   const toggle = (agentId: string) => {
@@ -160,12 +161,15 @@ export function GroupEditor({ agents, group, busy, onCancel, onSubmit }: Props) 
           <div className="roster-head">
             <span className="eyebrow">Members</span>
             {/*
-              A team is valid at ONE member now, so "3" is not a threshold any
-              more -- that was the old exactly-three rule. The denominator is
-              how many Agents exist to pick from, not the cap; showing "of 12"
-              beside four Agents read as though eight were missing.
+              The denominator is how many Agents exist to pick from, not the
+              cap; showing "of 12" beside four Agents read as though eight were
+              missing. Validity is MIN_MEMBERS, so the two always agree.
             */}
-            <span className={members.length > 0 ? "roster-ok" : "roster-missing"}>
+            <span
+              className={
+                members.length >= MIN_MEMBERS ? "roster-ok" : "roster-missing"
+              }
+            >
               {members.length} of {agents.length} selected
               {members.length >= MAX_MEMBERS && " (max " + MAX_MEMBERS + ")"}
             </span>

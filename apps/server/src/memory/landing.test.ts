@@ -158,4 +158,36 @@ describe("LandingService", () => {
     expect(rows[0]!.removedAt).not.toBeNull();
     expect(landing.listAgentMemory("agent-target")).toHaveLength(0);
   });
+
+  it("merges notes into one skill and revokes only the matching managed block", async () => {
+    const { landing, store, target } = await setup();
+    const first = note({
+      id: "11111111-1111-4111-8111-111111111111",
+      severity: "normal",
+      skillKey: "upload-contract",
+      content: "Reject uploads over 10MB.",
+    });
+    const second = note({
+      id: "22222222-2222-4222-8222-222222222222",
+      severity: "normal",
+      skillKey: "upload-contract",
+      content: "Return HTTP 413 for an oversized upload.",
+    });
+
+    await landing.landMemory(first);
+    await landing.landMemory(second);
+
+    const skillPath = store.snapshot().landedMemoryFiles[0]!.path;
+    let source = await readFile(skillPath, "utf8");
+    expect(source).toContain("memory:11111111-1111-4111-8111-111111111111");
+    expect(source).toContain("memory:22222222-2222-4222-8222-222222222222");
+
+    await landing.revokeMemory(first);
+    source = await readFile(skillPath, "utf8");
+    expect(source).not.toContain("memory:11111111-1111-4111-8111-111111111111");
+    expect(source).toContain("memory:22222222-2222-4222-8222-222222222222");
+
+    await landing.revokeMemory(second);
+    expect(await exists(path.join(target.workspacePath, ".agents", "skills", "upload-contract"))).toBe(false);
+  });
 });

@@ -260,6 +260,8 @@ export interface GroupRuntimeLock {
 // ---------------------------------------------------------------------------
 
 export type MemorySeverity = "normal" | "severe";
+export type MemoryMatchKind = "threshold" | "fallback";
+export type MemorySkillMatchKind = "threshold" | "new-skill";
 export type MemoryStatus =
   | "candidate"
   | "pending"
@@ -276,6 +278,10 @@ export interface MemoryNote {
   severity: MemorySeverity;
   status: MemoryStatus;
   targetAgentIds: string[];
+  recognitionMatchKind?: MemoryMatchKind;
+  recognitionScores?: Record<string, number>;
+  skillKey?: string;
+  skillAssignments?: MemorySkillAssignment[];
   description: string;
   sourceRunIds: string[];
   sourceSpanIds: string[];
@@ -287,12 +293,20 @@ export interface MemoryNote {
   updatedAt: string;
 }
 
+export interface MemorySkillAssignment {
+  agentId: string;
+  skillKey: string;
+  score: number;
+  matchKind: MemorySkillMatchKind;
+}
+
 export interface LandedMemoryFile {
   id: string;
   noteId: string;
   agentId: string;
   kind: "agents_md" | "skill";
   path: string;
+  skillKey?: string;
   createdAt: string;
   removedAt: string | null;
 }
@@ -306,6 +320,8 @@ export interface GrantRecord {
   reason: string;
   filePath: string | null;
   reviewerName: string | null;
+  recognitionMatchKind?: MemoryMatchKind;
+  recognitionScore?: number;
   createdAt: string;
 }
 

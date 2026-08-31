@@ -24,8 +24,8 @@ import {
   type PlannerAgent,
 } from "./planner.js";
 
-/** Smallest useful group. One Agent is allowed: it is a valid degenerate plan. */
-export const MIN_GROUP_MEMBERS = 1;
+/** A team needs at least two Agents to collaborate. */
+export const MIN_GROUP_MEMBERS = 2;
 
 /**
  * Membership cap. Higher than `MAX_PLAN_NODES` on purpose -- a group may carry

@@ -1,7 +1,12 @@
 import path from "node:path";
 import { AgentService } from "./agent-service.js";
 import { createApp } from "./app.js";
-import { isArkConfigured, loadConfig, writeCodexConfig } from "./config.js";
+import {
+  isArkConfigured,
+  loadConfig,
+  loadLocalEnvironment,
+  writeCodexConfig,
+} from "./config.js";
 import { createExtractorClient } from "./memory/extractor-client.js";
 import { createMemoryPipeline } from "./memory/pipeline.js";
 import { FakePlannerClient, TaskPlanner } from "./memory/planner.js";
@@ -12,6 +17,7 @@ import {
   WorkspaceManager,
 } from "./workspace.js";
 
+loadLocalEnvironment();
 const config = loadConfig();
 await writeCodexConfig(config);
 await assertNoGovernedMemoryInCodexHome(config.codexHome);
@@ -60,7 +66,13 @@ if (config.nodeEnv !== "test" && effectiveExtractor !== config.memoryExtractor) 
 const memoryPipeline = createMemoryPipeline(
   store,
   { ...config, memoryExtractor: effectiveExtractor },
-  { reviewAllSkills: config.reviewAllSkills },
+  {
+    // A local SBERT checkpoint trained only on synthetic labels may route notes,
+    // but it cannot auto-grant until a reviewed holdout explicitly authorizes it.
+    reviewAllSkills:
+      config.reviewAllSkills ||
+      (config.memoryRecognizer === "sbert" && !config.memoryAutoGrantEnabled),
+  },
 );
 const planner = new TaskPlanner(
   effectiveExtractor === "ark"

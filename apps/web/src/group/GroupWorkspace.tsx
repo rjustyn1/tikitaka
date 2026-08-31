@@ -370,10 +370,10 @@ export function GroupWorkspace({
         <button
           className="button button-primary"
           onClick={() => setEditing("new")}
-          disabled={agents.length < 3}
+          disabled={agents.length < 2}
         >
-          {agents.length < 3
-            ? "Create three Agents first"
+          {agents.length < 2
+            ? "Create two Agents first"
             : "Create your first team"}
         </button>
       </div>
