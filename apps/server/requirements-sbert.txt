@@ -1,0 +1,3 @@
+# Runtime dependencies for MEMORY_RECOGNIZER=sbert on the local CPU path.
+torch>=2.2
+sentence-transformers>=3.0

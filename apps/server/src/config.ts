@@ -53,7 +53,7 @@ const envSchema = z.object({
     .string()
     .trim()
     .min(1)
-    .default(path.join(repositoryRoot, "scripts_ignored", "embed-recognizer.py")),
+    .default(path.join(repositoryRoot, "scripts", "embed-recognizer.py")),
   MEMORY_RECOGNITION_AGENT_THRESHOLD: z.coerce.number().min(-1).max(1).default(0.35),
   MEMORY_RECOGNITION_SKILL_THRESHOLD: z.coerce.number().min(-1).max(1).default(0.45),
   MEMORY_EMBEDDING_TIMEOUT_MS: z.coerce.number().int().min(1000).default(30000),

@@ -28,9 +28,15 @@ directory.
 `EmbeddingClient` is the serving boundary. `FakeEmbeddingClient` is
 deterministic and network-free. `ArkEmbeddingClient` uses an
 OpenAI-compatible `/embeddings` endpoint. `SbertEmbeddingClient` invokes the
-local ignored `embed-recognizer.py` bridge over stdin/stdout and loads the
+tracked `scripts/embed-recognizer.py` bridge over stdin/stdout and loads the
 active CPU checkpoint at `data/recognition/model/`; it makes no network call.
 The previous base checkpoint is retained at `data/recognition/model-base/`.
+
+For a deployable local-SBERT runtime, install the tracked
+`apps/server/requirements-sbert.txt` into the Python environment selected by
+`MEMORY_SBERT_PYTHON`. Dataset generation and training utilities remain under
+ignored `scripts_ignored/` because they are developer tooling rather than a
+server runtime dependency.
 
 ## CPU Training Workflow
 
