@@ -121,7 +121,7 @@ All configuration is validated in apps/server/src/config.ts.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| MEMORY_ENABLED | true | Enables governed-memory lifecycle wiring. |
+| MEMORY_ENABLED | true | Master switch for governed-memory processing. false disables segmentation, extraction, routing, review activation, landing, and group-turn injection; group tasks continue to run. Existing landed files are not deleted. |
 | MEMORY_EXTRACTOR | ark | ark, fake, or off extractor choice. |
 | MEMORY_EXTRACT_TIMEOUT_MS | 30000 | Planner and extractor request timeout. |
 | MEMORY_TOPIC_DRIFT_THRESHOLD | 0.9 | Topic boundary threshold. |
@@ -200,4 +200,3 @@ with a lock file, such as pyproject.toml plus uv.lock, and install it into the
 same image or host environment as the Node server. That change should keep the
 Node-to-stdin/stdout boundary intact; it does not require a separate Python web
 backend.
-

@@ -6,7 +6,11 @@ import { JsonStore } from "../store.js";
 import type { Agent, GroupPlanNode, GroupTask, TraceSpan } from "../types.js";
 import { FakeExtractorClient, type ExtractorClient } from "./extractor-client.js";
 import { LandingService } from "./landing.js";
-import { RealMemoryPipeline } from "./pipeline.js";
+import {
+  createMemoryPipeline,
+  NoopMemoryPipeline,
+  RealMemoryPipeline,
+} from "./pipeline.js";
 import type { NoteRecognizer } from "./types.js";
 
 const temporaryDirectories: string[] = [];
@@ -248,6 +252,24 @@ describe("RealMemoryPipeline", () => {
     await pipeline.runMemoryPipeline("does-not-exist");
     expect(errors).toHaveLength(1);
     expect(errors[0]).toContain("does-not-exist");
+  });
+});
+
+describe("createMemoryPipeline", () => {
+  it("does not initialize governed memory when the master switch is off", async () => {
+    const { store } = await seededStore();
+    const pipeline = createMemoryPipeline(store, {
+      memoryEnabled: false,
+      memoryExtractor: "ark",
+      memoryExtractTimeoutMs: 30_000,
+      arkApiKey: "",
+      arkModel: "",
+      arkBaseUrl: "https://example.test",
+    });
+
+    expect(pipeline).toBeInstanceOf(NoopMemoryPipeline);
+    await pipeline.runMemoryPipeline("seg-1");
+    expect(store.snapshot().notes).toEqual([]);
   });
 });
 

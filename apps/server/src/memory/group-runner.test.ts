@@ -6,7 +6,7 @@ import { AgentService } from "../agent-service.js";
 import { loadConfig } from "../config.js";
 import { JsonStore } from "../store.js";
 import { FakeRunner } from "../test-helpers.js";
-import type { Agent, TraceSpan } from "../types.js";
+import type { Agent, MemoryNote, TraceSpan } from "../types.js";
 import { WorkspaceManager } from "../workspace.js";
 import { MAX_NODE_ATTEMPTS } from "./group-runner.js";
 import type { MemoryPipeline } from "./pipeline.js";
@@ -58,6 +58,7 @@ async function makeHarness(
     | {
         planJson?: string;
         maxParallel?: number;
+        memoryEnabled?: boolean;
         onPlanPrompt?: (prompt: string) => void;
       } = {},
 ): Promise<Harness> {
@@ -76,6 +77,9 @@ async function makeHarness(
     ...(extra.maxParallel === undefined
       ? {}
       : { GROUP_MAX_PARALLEL_NODES: String(extra.maxParallel) }),
+    ...(extra.memoryEnabled === undefined
+      ? {}
+      : { MEMORY_ENABLED: String(extra.memoryEnabled) }),
     // FakeRunner echoes the injected transcript back as its output, so message
     // content compounds run over run and a few nodes blow the real 120k char
     // cap on their own. Raise it here so segment tests exercise topic drift
@@ -152,6 +156,45 @@ describe("group lifecycle", () => {
         ],
       }),
     ).rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  it("disables memory segmentation, consolidation, and prompt injection", async () => {
+    const pipeline = new RecordingMemoryPipeline();
+    const harness = await makeHarness(new FakeRunner(), pipeline, {
+      memoryEnabled: false,
+    });
+    const group = await harness.service.createGroup({
+      name: "Memory-off team",
+      members: harness.members,
+    });
+    const legacyNote: MemoryNote = {
+      id: "legacy-note",
+      groupTaskId: "earlier-task",
+      groupId: group.id,
+      content: "Memory that must not appear while the switch is off.",
+      severity: "normal",
+      status: "active",
+      targetAgentIds: [harness.backend.id],
+      description: "legacy governed memory",
+      sourceRunIds: [],
+      sourceSpanIds: [],
+      rationale: "",
+      redactionFired: false,
+      quarantineHit: false,
+      safetyReasons: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    await harness.store.mutate((database) => {
+      database.notes.push(legacyNote);
+    });
+
+    const task = await harness.service.startGroupTask(group.id, "Plan an upload feature.");
+    await settle(harness, task.id);
+
+    expect(harness.store.snapshot().topicSegments).toEqual([]);
+    expect(pipeline.calls).toEqual([]);
+    expect(harness.runner.prompts.join("\n")).not.toContain(legacyNote.content);
   });
 
   it("freezes membership while a task is running", async () => {

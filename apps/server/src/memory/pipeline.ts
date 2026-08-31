@@ -333,6 +333,10 @@ export function createMemoryPipeline(
   config: MemoryConfig & RecognitionRuntimeConfig,
   options: MemoryPipelineOptions = {},
 ): MemoryPipeline {
+  // This is intentionally the first branch. A disabled memory subsystem must
+  // not initialize a recognizer, inspect local model files, or construct an
+  // extractor client that could later make a network call.
+  if (config.memoryEnabled === false) return new NoopMemoryPipeline();
   const recognizer = options.recognizer ?? createRuntimeRecognizer(config);
   return new RealMemoryPipeline(store, createExtractorClient(config), {
     extractTimeoutMs: config.memoryExtractTimeoutMs,

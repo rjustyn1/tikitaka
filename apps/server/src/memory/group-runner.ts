@@ -634,10 +634,12 @@ export class GroupRunner {
           nodeRole: candidate.nodeRole,
           output: candidate.output ?? "",
         }));
-      const governedMemory = database.notes.filter(
-        (note) =>
-          note.status === "active" && note.targetAgentIds.includes(node.agentId),
-      );
+      const governedMemory = this.config.memoryEnabled
+        ? database.notes.filter(
+            (note) =>
+              note.status === "active" && note.targetAgentIds.includes(node.agentId),
+          )
+        : [];
 
       const prompt = buildTurnPrompt({
         taskPrompt: task.prompt,
@@ -902,6 +904,7 @@ export class GroupRunner {
     seq: number,
     timestamp: string,
   ): string | null {
+    if (!this.config.memoryEnabled) return null;
     const open = findOpenSegment(database.topicSegments, groupId);
 
     if (!open) {
@@ -946,6 +949,7 @@ export class GroupRunner {
    * extraction produced nothing, so a barren segment is not retried forever.
    */
   private async consolidateSegment(segmentId: string): Promise<void> {
+    if (!this.config.memoryEnabled) return;
     try {
       const database = this.store.snapshot();
       const segment = database.topicSegments.find(
@@ -998,6 +1002,7 @@ export class GroupRunner {
    * waiting for a prompt that may never arrive.
    */
   private async maybeFlush(taskId: string): Promise<void> {
+    if (!this.config.memoryEnabled) return;
     try {
       const database = this.store.snapshot();
       const groupTask = database.groupTasks.find((item) => item.id === taskId);
@@ -1056,6 +1061,7 @@ export class GroupRunner {
    * cost of not running a sweep.
    */
   async sweepIdleSegments(groupId: string): Promise<void> {
+    if (!this.config.memoryEnabled) return;
     try {
       const database = this.store.snapshot();
       const policy = this.config.segmentPolicy;
@@ -1161,7 +1167,9 @@ export class GroupRunner {
 
     // Drop the earlier partial flush's auto notes so the final flush over the
     // full transcript is authoritative. Human-decided notes are kept.
-    await this.memoryPipeline.resetAutoNotes(taskId);
+    if (this.config.memoryEnabled) {
+      await this.memoryPipeline.resetAutoNotes(taskId);
+    }
 
     const timestamp = now();
     await this.store.mutate((db) => {
