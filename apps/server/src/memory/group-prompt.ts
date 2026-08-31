@@ -63,7 +63,6 @@ export interface TurnPromptInput {
   template?: ChainNodeTemplate | undefined;
   agentName: string;
   agentDescription: string;
-  role: string;
   /** Messages selected by the context packet, in seq order. */
   injectedMessages: readonly GroupMessage[];
   /** Completed dependency outputs, in chain order. */
@@ -101,7 +100,6 @@ export function buildTurnPrompt(input: TurnPromptInput): string {
     "",
     "[Plan node]",
     "Node: " + input.node.nodeRole,
-    "Role: " + input.role,
     "Depends on: " +
       (input.dependencyOutputs.length > 0
         ? input.dependencyOutputs.map((item) => item.nodeRole).join(", ")
@@ -150,7 +148,7 @@ export function buildTurnPrompt(input: TurnPromptInput): string {
   sections.push(
     "[Your identity for this turn]",
     "You are " + input.agentName + ".",
-    "Stable role: " + (input.agentDescription || input.role) + ".",
+    "What you do: " + (input.agentDescription || "general engineering work") + ".",
     "Node role: " + input.node.nodeRole + ".",
     "",
     "[Shared code]",
@@ -162,7 +160,7 @@ export function buildTurnPrompt(input: TurnPromptInput): string {
     // only a fallback for rows persisted before instructions were stored.
     input.node.instruction.trim() ||
       input.template?.instruction ||
-      "Complete this plan node from your role.",
+      "Complete this plan node using what you do best.",
     "Respect the file ownership above and preserve other Agents' work. Stay",
     "within your own Agent identity; do not answer as another Agent.",
     "",
@@ -175,7 +173,7 @@ export function buildTurnPrompt(input: TurnPromptInput): string {
 export function buildGroupTaskCharter(input: {
   groupName: string;
   taskPrompt: string;
-  roster: ReadonlyArray<{ name: string; role: string }>;
+  roster: ReadonlyArray<{ name: string; description: string }>;
 }): string {
   return [
     "This Agent is participating in the " + input.groupName + " group task.",
@@ -186,7 +184,10 @@ export function buildGroupTaskCharter(input: {
     "private workspace root and are never written into shared code.",
     "",
     "Members:",
-    ...input.roster.map((member) => "  " + member.name + " - " + member.role),
+    ...input.roster.map(
+      (member) =>
+        "  " + member.name + " - " + (member.description || "general engineering work"),
+    ),
     "",
     "Rules:",
     "  Follow the active Agent identity supplied in the turn prompt.",

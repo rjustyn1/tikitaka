@@ -18,19 +18,14 @@ const MIN_MEMBERS = 2;
 const MAX_MEMBERS = 12;
 
 /**
- * The only labels a team member may carry. Free text and "member" are gone:
- * the label is cosmetic (the planner reads each Agent's `description`, never
- * this), so a closed set of three keeps every dot and caption in the sidebar,
- * member rail and chat to a known colour.
+ * The label is cosmetic: it only picks the colour of a dot in the sidebar,
+ * member rail and chat. Nothing reads it -- the planner and the recognizer both
+ * read the Agent's `description`. So it is derived from the Agent rather than
+ * chosen, which is what makes it impossible for it to disagree with the Agent.
  */
 const ROLE_OPTIONS = ["backend", "frontend", "security"] as const;
 
-/**
- * The label to start an Agent on: its own name when that is one of the three,
- * otherwise the first option. A human can always change it -- that is what the
- * picker is for -- but the default never contradicts the Agent it is on.
- */
-function defaultRole(agentName: string): string {
+function labelFor(agentName: string): string {
   const derived = deriveRole(agentName);
   return (ROLE_OPTIONS as readonly string[]).includes(derived)
     ? derived
@@ -56,32 +51,13 @@ export function GroupEditor({ agents, group, busy, onCancel, onSubmit }: Props) 
   const [selected, setSelected] = useState<string[]>(
     () => (group?.members ?? []).map((member) => member.agentId),
   );
-  const [roles, setRoles] = useState<Record<string, string>>(() => {
-    const initial: Record<string, string> = {};
-    for (const member of group?.members ?? []) {
-      const stored = member.role?.trim().toLowerCase() ?? "";
-      // A stored label outside the three (legacy "member", or a name-derived
-      // one) is clamped rather than added as a fourth option.
-      initial[member.agentId] = (ROLE_OPTIONS as readonly string[]).includes(
-        stored,
-      )
-        ? stored
-        : defaultRole(
-            agents.find((agent) => agent.id === member.agentId)?.name ?? "",
-          );
-    }
-    return initial;
-  });
-
   const members = useMemo<GroupMember[]>(
     () =>
       selected.map((agentId) => ({
         agentId,
-        role:
-          roles[agentId] ??
-          defaultRole(agents.find((agent) => agent.id === agentId)?.name ?? ""),
+        role: labelFor(agents.find((agent) => agent.id === agentId)?.name ?? ""),
       })),
-    [selected, roles, agents],
+    [selected, agents],
   );
 
   const valid =
@@ -95,22 +71,8 @@ export function GroupEditor({ agents, group, busy, onCancel, onSubmit }: Props) 
         return previous.filter((id) => id !== agentId);
       }
       if (previous.length >= MAX_MEMBERS) return previous;
-      setRoles((current) =>
-        Object.hasOwn(current, agentId)
-          ? current
-          : {
-              ...current,
-              [agentId]: defaultRole(
-                agents.find((agent) => agent.id === agentId)?.name ?? "",
-              ),
-            },
-      );
       return [...previous, agentId];
     });
-  };
-
-  const assignRole = (agentId: string, role: string) => {
-    setRoles((previous) => ({ ...previous, [agentId]: role }));
   };
 
   const submit = (event: React.FormEvent) => {
@@ -207,24 +169,6 @@ export function GroupEditor({ agents, group, busy, onCancel, onSubmit }: Props) 
                       <span>{agent.description || "Coding Agent"}</span>
                     </span>
                   </label>
-                  {picked && (
-                    <select
-                      className="role-select"
-                      aria-label={"Role for " + agent.name}
-                      value={
-                        roles[agent.id] ?? defaultRole(agent.name)
-                      }
-                      onChange={(event) =>
-                        assignRole(agent.id, event.target.value)
-                      }
-                    >
-                      {ROLE_OPTIONS.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                  )}
                 </div>
               );
             })}

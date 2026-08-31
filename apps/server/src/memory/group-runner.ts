@@ -303,9 +303,7 @@ export class GroupRunner {
         taskPrompt: prompt,
         roster: agents.map((agent) => ({
           name: agent.name,
-          role:
-            members.find((member) => member.agentId === agent.id)?.role ??
-            "member",
+          description: agent.description,
         })),
       });
       for (const agent of agents) {
@@ -647,7 +645,6 @@ export class GroupRunner {
         node,
         agentName: agentAtStart.name,
         agentDescription: agentAtStart.description,
-        role: participant.role,
         injectedMessages,
         dependencyOutputs,
         agentNames: new Map(

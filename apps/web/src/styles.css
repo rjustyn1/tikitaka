@@ -1522,19 +1522,6 @@ textarea:focus {
 .roster-copy { display: flex; flex-direction: column; min-width: 0; }
 .roster-copy strong { font-size: 13px; }
 .roster-copy span { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.role-select {
-  flex: none;
-  width: 118px;
-  height: 34px;
-  margin-top: 0;
-  padding: 0 8px;
-  font-size: 12px;
-  border-radius: 9px;
-  background: var(--paper);
-  text-transform: capitalize;
-  cursor: pointer;
-}
-.role-picker { display: flex; gap: 4px; }
 .role-chip {
   border: 1px solid var(--line);
   background: var(--paper);
