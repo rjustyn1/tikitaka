@@ -80,14 +80,14 @@ describe("useGroupTask", () => {
   });
 
   it("does not report memory ready on the status flip alone", async () => {
-    // finishTask persists the terminal status, THEN runs the pipeline. Reading
-    // notes here reliably returns an empty list.
+    // memoryReady tracks flushedAt, not status. (Notes ARE fetched every poll
+    // now — the intra-task node-drift flush lands them mid-task — so this test
+    // only pins the readiness flag, not whether notes were fetched.)
     mocked.groupTask.mockResolvedValue(response("completed", null));
     const { result } = renderHook(() => useGroupTask("g1", "t1", []));
 
     await waitFor(() => expect(result.current.task).not.toBeNull());
     expect(result.current.memoryReady).toBe(false);
-    expect(mocked.notes).not.toHaveBeenCalled();
   });
 
   it("fetches memory once the task reports flushedAt", async () => {
