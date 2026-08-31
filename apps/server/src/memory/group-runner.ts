@@ -841,6 +841,19 @@ export class GroupRunner {
               drift !== null &&
               drift > this.config.memoryNodeDriftThreshold &&
               buf.ids.length > 0;
+            // Persist the drift so the embedding result is visible in the store
+            // (tikitaka/.data), not only in the server log.
+            void this.store
+              .mutate((db) => {
+                const stored = db.groupPlanNodes.find(
+                  (item) => item.id === nodeId,
+                );
+                if (stored) {
+                  stored.driftScore =
+                    drift === null ? null : Number(drift.toFixed(4));
+                }
+              })
+              .catch(() => undefined);
             if (this.config.nodeEnv !== "test") {
               console.info(
                 "[node-drift] " +

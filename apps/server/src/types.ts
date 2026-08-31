@@ -238,6 +238,13 @@ export interface GroupPlanNode {
    * consolidated twice. Optional: nodes created before this feature carry none.
    */
   consolidatedAt?: string | null;
+  /**
+   * Cosine drift of this node's explanation vs the mean of the task's buffered
+   * nodes, at completion. Observability so the drift/embedding result is
+   * readable from the store without the server log. null on the first node of a
+   * buffer (nothing to compare); undefined on nodes from before this feature.
+   */
+  driftScore?: number | null;
 }
 
 export interface GroupContextInjection {
