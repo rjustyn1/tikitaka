@@ -1,3 +1,5 @@
 # Runtime dependencies for MEMORY_RECOGNIZER=sbert on the local CPU path.
 torch>=2.2
 sentence-transformers>=3.0
+# Required by the SentenceTransformers training loop (Transformers Trainer).
+accelerate>=0.26.0
