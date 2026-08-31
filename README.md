@@ -335,7 +335,7 @@ cp deploy/volcengine/terraform.tfvars.example \
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `MEMORY_DRIFT_MODEL_DIR` | `sentence-transformers/all-MiniLM-L6-v2` | GENERAL embedder for node-level topic drift, **auto-downloaded** on first use. Deliberately not the routing checkpoint, which groups by Agent, not subject. A local path also works. |
+| `MEMORY_DRIFT_MODEL_DIR` | `data/drift-model` | GENERAL embedder for node drift. Fetch once: `.venv-recognition/bin/python scripts/fetch-drift-model.py`. Deliberately not the routing checkpoint, which groups by Agent, not subject. A local path also works. |
 | `MEMORY_NODE_DRIFT_THRESHOLD` | `0.55` | Cosine drift above which the accumulated node buffer is consolidated mid-DAG. Calibrate with `scripts/node-drift-stats.mjs`. |
 
 See [.env.example](.env.example) for the annotated full list.

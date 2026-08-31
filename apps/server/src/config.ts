@@ -75,7 +75,7 @@ const envSchema = z.object({
     .string()
     .trim()
     .min(1)
-    .default("sentence-transformers/all-MiniLM-L6-v2"),
+    .default(path.join(repositoryRoot, "data", "drift-model")),
   // Cosine-drift above which a node's work is a NEW subject, so the accumulated
   // node buffer is flushed to consolidation mid-DAG. Calibrated ~0.55 on the
   // general drift model (scripts/probe-drift.mjs); range 0..2.
@@ -159,9 +159,9 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
     memorySbertPython: env.MEMORY_SBERT_PYTHON,
     memorySbertModelDir: path.resolve(env.MEMORY_SBERT_MODEL_DIR),
     memorySbertBridge: path.resolve(env.MEMORY_SBERT_BRIDGE),
-    // NOT path.resolve: a HF model id (the default) must pass through verbatim
-    // for the bridge to auto-download it; a local path still works either way.
-    memoryDriftModelDir: env.MEMORY_DRIFT_MODEL_DIR,
+    // The drift bridge is local-only (local_files_only=True), so this must be a
+    // local checkpoint dir — provisioned by scripts/fetch-drift-model.py.
+    memoryDriftModelDir: path.resolve(env.MEMORY_DRIFT_MODEL_DIR),
     memoryNodeDriftThreshold: env.MEMORY_NODE_DRIFT_THRESHOLD,
     memoryRecognitionAgentThreshold: env.MEMORY_RECOGNITION_AGENT_THRESHOLD,
     memoryRecognitionSkillThreshold: env.MEMORY_RECOGNITION_SKILL_THRESHOLD,
