@@ -29,6 +29,45 @@ export function noteSlug(note: MemoryNote): string {
   return `${base || "memory"}-${note.id.slice(0, 8)}`;
 }
 
+/**
+ * Compose what `AGENTS.md` becomes once this note lands, without writing it.
+ *
+ * Split out so the review preview and the real write share one implementation:
+ * a preview computed by a second copy of this logic would drift from what
+ * actually lands, and the diff a human approves has to be the change they get.
+ */
+export function composeAgentsMemory(existing: string, note: MemoryNote): string {
+  let base = existing;
+  if (!base.includes(GOVERNED_HEADING)) {
+    const separator = base.length === 0 || base.endsWith("\n") ? "" : "\n";
+    base = `${base}${separator}${GOVERNED_HEADING}\n`;
+  }
+  const body = `- ${note.content}\n  Source task: ${note.groupTaskId}`;
+  return replaceManagedBlock(base, `memory:${note.id}`, body);
+}
+
+/** The starting content of a skill file that does not exist yet. */
+export function newSkillScaffold(note: MemoryNote, skillKey: string): string {
+  return [
+    "---",
+    `name: ${skillKey}`,
+    `description: ${note.description}`,
+    "---",
+    "",
+  ].join("\n");
+}
+
+/** Compose what a skill's `SKILL.md` becomes once this note lands. */
+export function composeSkill(
+  existing: string | null,
+  note: MemoryNote,
+  skillKey: string,
+): string {
+  const base = existing ?? newSkillScaffold(note, skillKey);
+  const body = [note.content, "", `Source task: ${note.groupTaskId}`].join("\n");
+  return replaceManagedBlock(base, `memory:${note.id}`, body);
+}
+
 export class WorkspaceMemoryWriter {
   private agentsMdPath(agent: Agent): string {
     return path.join(agent.workspacePath, "AGENTS.md");
@@ -48,15 +87,7 @@ export class WorkspaceMemoryWriter {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
 
-    if (!existing.includes(GOVERNED_HEADING)) {
-      const separator =
-        existing.length === 0 || existing.endsWith("\n") ? "" : "\n";
-      existing = `${existing}${separator}${GOVERNED_HEADING}\n`;
-    }
-
-    const body = `- ${note.content}\n  Source task: ${note.groupTaskId}`;
-    const next = replaceManagedBlock(existing, `memory:${note.id}`, body);
-    await writeFile(filePath, next, "utf8");
+    await writeFile(filePath, composeAgentsMemory(existing, note), "utf8");
     return filePath;
   }
 
@@ -72,29 +103,13 @@ export class WorkspaceMemoryWriter {
     const dir = this.skillDir(agent, skillKey);
     await mkdir(dir, { recursive: true });
     const filePath = path.join(dir, "SKILL.md");
-    let existing = "";
+    let existing: string | null = null;
     try {
       existing = await readFile(filePath, "utf8");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      existing = [
-        "---",
-        `name: ${skillKey}`,
-        `description: ${note.description}`,
-        "---",
-        "",
-      ].join("\n");
     }
-    const body = [
-      note.content,
-      "",
-      `Source task: ${note.groupTaskId}`,
-    ].join("\n");
-    await writeFile(
-      filePath,
-      replaceManagedBlock(existing, `memory:${note.id}`, body),
-      "utf8",
-    );
+    await writeFile(filePath, composeSkill(existing, note, skillKey), "utf8");
     return filePath;
   }
 

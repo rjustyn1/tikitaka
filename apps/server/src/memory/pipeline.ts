@@ -36,12 +36,76 @@ import type { CandidateMemoryNote, NoteRecognizer } from "./types.js";
 
 const now = () => new Date().toISOString();
 
+/**
+ * What the consolidator is doing right now.
+ *
+ * The pipeline is deliberately fire-and-forget -- memory must never fail a
+ * completed task -- which also means nothing in the store says "a run is in
+ * flight". Without this the UI could only infer activity from its after
+ * effects, and would show "idle" through the whole of a slow extraction. So
+ * the phase is tracked in memory here and read over the API.
+ */
+/**
+ * The pipeline's stages, in the order MEMORY_PIPELINE.md runs them:
+ * buffer -> consolidate -> recognize agents -> recognize skills -> safety ->
+ * review. Recognition is two levels -- which Agents a note is for, then which
+ * skill file it becomes inside each of those Agents -- and they are reported
+ * separately because the second is where a new skill gets proposed.
+ *
+ * Landing is not its own phase: LandingService is driven by ReviewService, so
+ * the write happens inside `reviewing` and claiming otherwise would invent an
+ * ordering the code does not have.
+ */
+export const MEMORY_PHASES = [
+  "buffering",
+  "consolidating",
+  "recognizing-agents",
+  "recognizing-skills",
+  "safety",
+  "reviewing",
+] as const;
+
+export type MemoryPhase = (typeof MEMORY_PHASES)[number];
+
+export interface MemoryRunStatus {
+  segmentId: string;
+  groupId: string | null;
+  phase: MemoryPhase;
+  startedAt: string;
+  /** Nodes in scope: a mid-DAG drift flush covers only part of a task. */
+  nodeCount: number | null;
+  /** Candidates the consolidator returned; 0 until consolidation finishes. */
+  candidates: number;
+  /** 1-based position in that list, so the panel can count runs through. */
+  candidateIndex: number;
+}
+
+export interface MemoryLastRun {
+  segmentId: string;
+  groupId: string | null;
+  finishedAt: string;
+  durationMs: number;
+  ok: boolean;
+  /** Candidates the consolidator returned, before routing dropped any. */
+  candidates: number;
+  /** Candidates that survived routing and reached review. */
+  notes: number;
+  error: string | null;
+}
+
+export interface MemoryPipelineStatus {
+  active: MemoryRunStatus[];
+  lastRun: MemoryLastRun | null;
+}
+
 export interface MemoryPipeline {
   /**
    * Consolidate one CLOSED topic segment. Keyed on the segment, not a task:
    * a segment spans every task that stayed on one subject, which is the point.
    */
   runMemoryPipeline(segmentId: string, onlyNodeIds?: string[]): Promise<void>;
+  /** Live consolidator activity, for the status panel. */
+  status(): MemoryPipelineStatus;
   /**
    * Called when a task is RESUMED. Removes the auto-generated notes (and their
    * files + grant rows) from the earlier partial flush, so the final flush over
@@ -55,6 +119,9 @@ export interface MemoryPipeline {
 export class NoopMemoryPipeline implements MemoryPipeline {
   async runMemoryPipeline(): Promise<void> {
     /* no-op */
+  }
+  status(): MemoryPipelineStatus {
+    return { active: [], lastRun: null };
   }
   async resetAutoNotes(): Promise<void> {
     /* no-op */
@@ -89,6 +156,9 @@ export class RealMemoryPipeline implements MemoryPipeline {
   private readonly landing: LandingService;
   private readonly onError: (message: string, error: unknown) => void;
   private readonly recognizer: NoteRecognizer | undefined;
+  /** Runs in flight, keyed by segment: concurrent flushes are possible. */
+  private readonly active = new Map<string, MemoryRunStatus>();
+  private lastRun: MemoryLastRun | null = null;
 
   constructor(
     private readonly store: JsonStore,
@@ -110,12 +180,34 @@ export class RealMemoryPipeline implements MemoryPipeline {
       options.onError ?? ((message, error) => console.error(message, error));
   }
 
+  status(): MemoryPipelineStatus {
+    return {
+      active: [...this.active.values()],
+      lastRun: this.lastRun,
+    };
+  }
+
   async runMemoryPipeline(
     segmentId: string,
     onlyNodeIds?: string[],
   ): Promise<void> {
+    const startedAtMs = Date.now();
+    const run: MemoryRunStatus = {
+      segmentId,
+      groupId: null,
+      phase: "buffering",
+      startedAt: now(),
+      nodeCount: onlyNodeIds?.length ?? null,
+      candidates: 0,
+      candidateIndex: 0,
+    };
+    this.active.set(segmentId, run);
+    let candidateCount = 0;
+    let noteCount = 0;
     try {
       const buffer = this.buffers.build({ segmentId, onlyNodeIds });
+      run.groupId = buffer.groupId;
+      run.phase = "consolidating";
       const db = this.store.snapshot();
 
       // Every agent that worked anywhere in the segment, not just in one task.
@@ -137,11 +229,17 @@ export class RealMemoryPipeline implements MemoryPipeline {
         group,
         members,
       });
+      candidateCount = candidates.length;
+      run.candidates = candidates.length;
 
-      for (const candidate of candidates) {
-        const routed = await this.routeCandidate(candidate, members);
+      for (const [index, candidate] of candidates.entries()) {
+        run.candidateIndex = index + 1;
+        const routed = await this.routeCandidate(candidate, members, run);
         if (!routed) continue;
+        noteCount += 1;
+        run.phase = "safety";
         const safety = evaluateNoteSafety(routed);
+        run.phase = "reviewing";
         // processCandidate reads candidate ids/severity/routing and safety's
         // redacted content; pass the pre-redaction candidate.
         await this.review.processCandidate(routed, safety);
@@ -149,23 +247,49 @@ export class RealMemoryPipeline implements MemoryPipeline {
       // Note: TopicSegment.flushedAt is stamped by the GroupRunner after this
       // returns (it owns segment lifecycle and stamps it even if extraction
       // produced nothing), so the pipeline does not set it here.
+      this.lastRun = {
+        segmentId,
+        groupId: run.groupId,
+        finishedAt: now(),
+        durationMs: Date.now() - startedAtMs,
+        ok: true,
+        candidates: candidateCount,
+        notes: noteCount,
+        error: null,
+      };
     } catch (error) {
       // Memory must never fail the completed group task.
       this.onError(`Memory pipeline failed for segment ${segmentId}`, error);
+      this.lastRun = {
+        segmentId,
+        groupId: run.groupId,
+        finishedAt: now(),
+        durationMs: Date.now() - startedAtMs,
+        ok: false,
+        candidates: candidateCount,
+        notes: noteCount,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      // Always clear, or a failed run leaves the panel claiming it is busy.
+      this.active.delete(segmentId);
     }
   }
 
   private async routeCandidate(
     candidate: CandidateMemoryNote,
     members: Agent[],
+    run?: MemoryRunStatus,
   ): Promise<CandidateMemoryNote | null> {
     if (!this.recognizer) return null;
     try {
+      if (run) run.phase = "recognizing-agents";
       const recognition = await this.recognizer.recognizeAgents(
         [candidate.description, candidate.content].join("\n"),
         members,
       );
       if (recognition.matches.length === 0) return null;
+      if (run) run.phase = "recognizing-skills";
       const skillAssignments = await this.assignSkills(
         [candidate.description, candidate.content].join("\n"),
         candidate.skillKey,

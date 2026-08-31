@@ -309,3 +309,51 @@ export interface UpdateGroupInput {
   description?: string;
   members?: GroupMember[];
 }
+
+/** Live consolidator activity. Mirrors MemoryPipelineStatus on the server. */
+export const MEMORY_PHASES = [
+  "buffering",
+  "consolidating",
+  "recognizing-agents",
+  "recognizing-skills",
+  "safety",
+  "reviewing",
+] as const;
+
+export type MemoryPhase = (typeof MEMORY_PHASES)[number];
+
+export interface MemoryRunStatus {
+  segmentId: string;
+  groupId: string | null;
+  phase: MemoryPhase;
+  startedAt: string;
+  nodeCount: number | null;
+  candidates: number;
+  candidateIndex: number;
+}
+
+export interface MemoryLastRun {
+  segmentId: string;
+  groupId: string | null;
+  finishedAt: string;
+  durationMs: number;
+  ok: boolean;
+  candidates: number;
+  notes: number;
+  error: string | null;
+}
+
+export interface MemoryPipelineStatus {
+  active: MemoryRunStatus[];
+  lastRun: MemoryLastRun | null;
+}
+
+/** What approving a note would write to one Agent's file. */
+export interface MemoryFilePreview {
+  agentId: string;
+  path: string;
+  kind: "agents_md" | "skill";
+  mode: "create" | "modify";
+  before: string;
+  after: string;
+}

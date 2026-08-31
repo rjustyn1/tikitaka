@@ -20,6 +20,7 @@ import type {
   AgentGroup,
   GroupMember,
   GroupTask,
+  MemoryNote,
   ReviewNoteInput,
 } from "../types";
 import { ConversationPanel } from "./ConversationPanel";
@@ -35,6 +36,7 @@ import {
   Pill,
 } from "./panels";
 import { ProofPanel } from "./ProofPanel";
+import { ReviewDialog } from "./ReviewDialog";
 import { ReviewPanel } from "./ReviewPanel";
 import { useAgentMemory } from "./useAgentMemory";
 import { useGroupTask } from "./useGroupTask";
@@ -69,15 +71,13 @@ const PLAN_VIEWS: { id: View; label: string }[] = [
   { id: "chain", label: "Plan" },
 ];
 
-// The audit surfaces — everything that inspects what a finished task produced.
-// Memory approval itself happens inline in the conversation (the approval card);
-// Review here is the full surface (severity, routing, the match description).
+// Review is the only audit surface in the strip now. Context, Ledger,
+// Workspaces and Proof each answered a question the rail now answers in place:
+// what an Agent holds and what it is still waiting on is on its member card,
+// and the file evidence is in the workspace explorer. Their panels are still
+// mounted by `view`, so nothing was deleted -- only the tabs.
 const AUDIT_VIEWS: { id: View; label: string }[] = [
-  { id: "context", label: "Context" },
   { id: "review", label: "Review" },
-  { id: "ledger", label: "Ledger" },
-  { id: "memory", label: "Workspaces" },
-  { id: "proof", label: "Proof" },
 ];
 
 const REVIEWER_KEY = "launchpad.reviewerName";
@@ -117,6 +117,8 @@ export function GroupWorkspace({
   const [auditOpen, setAuditOpen] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [editing, setEditing] = useState<"new" | "edit" | null>(null);
+  /** The note open in the approval popup, if any. */
+  const [reviewingNote, setReviewingNote] = useState<MemoryNote | null>(null);
   const [busy, setBusy] = useState(false);
   const [busyNoteId, setBusyNoteId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -679,10 +681,26 @@ export function GroupWorkspace({
               memoryLoading={railMemory.loading}
               memoryFailed={railMemory.failed}
               onOpenTrace={onOpenTrace}
+              pendingNotes={state.notes.filter(isAwaitingReview)}
+              onReviewNote={setReviewingNote}
             />
           </div>
         )}
       </div>
+
+      {reviewingNote && group && (
+        <ReviewDialog
+          note={reviewingNote}
+          agents={agents}
+          reviewer={reviewer.trim() || "operator"}
+          busy={busyNoteId === reviewingNote.id}
+          onReview={(noteId, input) => {
+            reviewNote(noteId, input);
+            setReviewingNote(null);
+          }}
+          onClose={() => setReviewingNote(null)}
+        />
+      )}
 
       {editing && (
         <GroupEditor

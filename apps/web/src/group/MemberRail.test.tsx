@@ -4,7 +4,7 @@
  * here, including the two ways an empty rail can lie — a revoked file counted as
  * held, and a failed fetch rendered as an empty workspace.
  */
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type {
   Agent,
@@ -83,6 +83,8 @@ function renderRail(
       nodes={[runningNode]}
       taskStatus="running"
       memory={{ a2: [file] }}
+      pendingNotes={[]}
+      onReviewNote={() => undefined}
       memoryLoading={false}
       memoryFailed={false}
       onOpenTrace={vi.fn()}
@@ -125,5 +127,46 @@ describe("MemberRail", () => {
     expect(
       screen.queryByText("Holds no governed memory"),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("MemberRail outstanding approvals", () => {
+  const pending = {
+    id: "note-1",
+    groupTaskId: "task-1",
+    groupId: "g1",
+    content: "Keys are namespaced by tenant.",
+    severity: "severe" as const,
+    status: "pending" as const,
+    targetAgentIds: ["a2"],
+    description: "Storage key layout",
+    sourceRunIds: [],
+    sourceSpanIds: [],
+    rationale: "",
+    redactionFired: false,
+    quarantineHit: false,
+    safetyReasons: [],
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+
+  it("lists what an Agent is waiting on, and opens the review", () => {
+    const onReviewNote = vi.fn();
+    renderRail({ pendingNotes: [pending], onReviewNote });
+
+    expect(screen.getByText("Waiting for you · 1")).toBeInTheDocument();
+    expect(screen.getByText("Storage key layout")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    expect(onReviewNote).toHaveBeenCalledWith(pending);
+  });
+
+  it("shows nothing waiting on an Agent the note is not routed to", () => {
+    // The note targets a2; a1 must not be told it has something to approve.
+    renderRail({ pendingNotes: [{ ...pending, targetAgentIds: ["a1"] }] });
+    const cards = document.querySelectorAll(".member-card");
+    const withPending = [...cards].filter((card) =>
+      card.querySelector(".member-pending"),
+    );
+    expect(withPending).toHaveLength(1);
   });
 });

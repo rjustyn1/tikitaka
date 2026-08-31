@@ -1,6 +1,8 @@
 import type {
   Agent,
   AgentWorkspaceFile,
+  MemoryFilePreview,
+  MemoryPipelineStatus,
   AgentGroup,
   AgentRun,
   CreateGroupInput,
@@ -174,6 +176,9 @@ export const api = {
     }),
   agentMemory: (id: string) =>
     request<{ files: LandedMemoryFile[] }>("/api/agents/" + id + "/memory"),
+  notePreview: (id: string) =>
+    request<{ files: MemoryFilePreview[] }>("/api/notes/" + id + "/preview"),
+  memoryStatus: () => request<MemoryPipelineStatus>("/api/memory/status"),
   groupCodebase: (id: string) =>
     request<{ files: SharedCodeFile[] }>("/api/groups/" + id + "/codebase"),
   groupCodebaseFile: (id: string, path: string) =>

@@ -18,11 +18,15 @@
  * competes with the conversation. Maximised, it becomes a real file viewer.
  * File contents are only ever fetched in the maximised panel.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import type { Agent, AgentGroup, AgentWorkspaceFile, SharedCodeFile } from "../types";
 import { buildTreeRows } from "./file-tree";
 import { buildGovernedDiff, hasGovernedContent } from "./governed";
+
+/** Listing refresh cadence: while a task runs, and while it does not. */
+const LIVE_MS = 2500;
+const IDLE_MS = 10000;
 
 type ExplorerSource = "shared" | "agent";
 type ExplorerFile = SharedCodeFile | AgentWorkspaceFile;
@@ -34,6 +38,15 @@ function formatBytes(size: number): string {
 
 function isAgentWorkspaceFile(file: ExplorerFile): file is AgentWorkspaceFile {
   return "kind" in file;
+}
+
+/** Same paths at the same sizes: nothing the tree would draw differently. */
+function sameListing(a: ExplorerFile[], b: ExplorerFile[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((file, index) => {
+    const other = b[index];
+    return other !== undefined && file.path === other.path && file.size === other.size;
+  });
 }
 
 export function WorkspaceExplorer({
@@ -56,6 +69,11 @@ export function WorkspaceExplorer({
   const [error, setError] = useState<string | null>(null);
   const [diffMode, setDiffMode] = useState(true);
   const [expanded, setExpanded] = useState(false);
+  /** Bumped by the poll timer to re-run the listing effects. */
+  const [tick, setTick] = useState(0);
+  /** Scopes already loaded once, so a poll never re-shows the spinner. */
+  const loadedScopes = useRef(new Set<string>());
+  const scopeKey = source + ":" + (source === "agent" ? selectedAgentId : group.id);
   /** Skill count per member, so "granted vs withheld" is legible at a glance. */
   const [skillCounts, setSkillCounts] = useState<Record<string, number>>({});
 
@@ -78,13 +96,21 @@ export function WorkspaceExplorer({
   }, [group.members, selectedAgentId]);
 
   const loadFiles = useCallback(async () => {
-    setLoading(true);
+    // Only the first load of a scope shows a spinner. A poll that flipped
+    // "Loading…" on every tick would strobe, worst of all on an empty
+    // codebase where there is nothing else on screen.
+    if (!loadedScopes.current.has(scopeKey)) setLoading(true);
     setError(null);
     try {
       const response = source === "shared"
         ? await api.groupCodebase(group.id)
         : await api.groupAgentWorkspace(group.id, selectedAgentId);
-      setFiles(response.files);
+      loadedScopes.current.add(scopeKey);
+      // Replace only on a real change, so an unchanged listing does not
+      // re-render the tree every couple of seconds.
+      setFiles((current) =>
+        sameListing(current, response.files) ? current : response.files,
+      );
       setSelectedPath((current) =>
         current && response.files.some((file) => file.path === current)
           ? current
@@ -98,11 +124,26 @@ export function WorkspaceExplorer({
     } finally {
       setLoading(false);
     }
-  }, [group.id, selectedAgentId, source]);
+  }, [group.id, scopeKey, selectedAgentId, source]);
 
   useEffect(() => {
     void loadFiles();
-  }, [loadFiles, refreshKey]);
+  }, [loadFiles, refreshKey, tick]);
+
+  /**
+   * The listing polls itself, so files an Agent writes appear without anyone
+   * pressing anything -- which is why there is no refresh button. Fast while a
+   * task is running (that is when the shared tree changes), relaxed otherwise
+   * so an idle team is not polled hard for nothing.
+   */
+  useEffect(() => {
+    const running = refreshKey.endsWith(":running") || refreshKey.endsWith(":queued");
+    const timer = setInterval(
+      () => setTick((value) => value + 1),
+      running ? LIVE_MS : IDLE_MS,
+    );
+    return () => clearInterval(timer);
+  }, [refreshKey]);
 
   /**
    * Counts for every member, not just the selected one. A member whose listing
@@ -134,7 +175,7 @@ export function WorkspaceExplorer({
     return () => {
       current = false;
     };
-  }, [group.id, group.members, source, refreshKey]);
+  }, [group.id, group.members, source, refreshKey, tick]);
 
   /** Contents are for the viewer only; the rail never reads a file. */
   useEffect(() => {
@@ -158,7 +199,7 @@ export function WorkspaceExplorer({
     return () => {
       current = false;
     };
-  }, [expanded, group.id, selectedAgentId, selectedPath, source]);
+  }, [expanded, group.id, selectedAgentId, selectedPath, source, tick]);
 
   // Escape closes the viewer, like every other overlay in the app.
   useEffect(() => {

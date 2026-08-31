@@ -390,3 +390,197 @@ async function exists(target: string): Promise<boolean> {
     return false;
   }
 }
+
+/**
+ * The consolidator is fire-and-forget, so nothing in the store says a run is
+ * in flight. The status panel reads this instead; if it is wrong the panel
+ * lies about whether memory is working.
+ */
+describe("RealMemoryPipeline status", () => {
+  it("reports idle before anything has run", async () => {
+    const { store } = await seededStore();
+    const pipeline = new RealMemoryPipeline(store, new FakeExtractorClient());
+    expect(pipeline.status()).toEqual({ active: [], lastRun: null });
+  });
+
+  it("reports the run as active, with its phase, while it is in flight", async () => {
+    const { store } = await seededStore();
+    let seen: ReturnType<RealMemoryPipeline["status"]> | null = null;
+    // Capture the status from inside the extractor call, which is the slow
+    // phase the panel is meant to show.
+    const slow: ExtractorClient = {
+      async extract() {
+        seen = pipeline.status();
+        return { notes: [] };
+      },
+    };
+    const pipeline = new RealMemoryPipeline(store, slow);
+
+    await pipeline.runMemoryPipeline("seg-1");
+
+    expect(seen).not.toBeNull();
+    const active = (seen as NonNullable<typeof seen>).active;
+    expect(active).toHaveLength(1);
+    expect(active[0]).toMatchObject({
+      segmentId: "seg-1",
+      phase: "consolidating",
+      nodeCount: null,
+    });
+  });
+
+  it("clears the active run once it finishes", async () => {
+    const { store } = await seededStore();
+    const pipeline = new RealMemoryPipeline(store, new FakeExtractorClient());
+    await pipeline.runMemoryPipeline("seg-1");
+    expect(pipeline.status().active).toEqual([]);
+  });
+
+  it("clears the active run even when the pipeline throws", async () => {
+    const { store } = await seededStore();
+    const throwing: ExtractorClient = {
+      async extract() {
+        throw new Error("boom");
+      },
+    };
+    const pipeline = new RealMemoryPipeline(store, throwing, {
+      onError: () => undefined,
+    });
+
+    await pipeline.runMemoryPipeline("seg-1");
+
+    // A leaked entry would leave the panel claiming it is busy forever.
+    expect(pipeline.status().active).toEqual([]);
+  });
+
+  it("records what the last run produced", async () => {
+    const { store } = await seededStore();
+    const recognizer: NoteRecognizer = {
+      async recognizeAgents(_noteText, members) {
+        return {
+          threshold: 0.5,
+          matches: [
+            { agentId: members[0]!.id, score: 0.9, matchKind: "threshold" },
+          ],
+        };
+      },
+    };
+    const pipeline = new RealMemoryPipeline(store, new FakeExtractorClient(), {
+      recognizer,
+    });
+    await pipeline.runMemoryPipeline("seg-1");
+
+    const { lastRun } = pipeline.status();
+    expect(lastRun).toMatchObject({ segmentId: "seg-1", ok: true });
+    expect(lastRun?.candidates).toBeGreaterThan(0);
+    expect(lastRun?.notes).toBeGreaterThan(0);
+    expect(lastRun?.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("counts a candidate the recognizer routed nowhere as a candidate, not a note", async () => {
+    // Recognition is the recipient authority: with no recognizer wired, the
+    // consolidator's candidates reach nobody. The panel must not report those
+    // as notes, or it claims memory landed when none did.
+    const { store } = await seededStore();
+    const pipeline = new RealMemoryPipeline(store, new FakeExtractorClient());
+    await pipeline.runMemoryPipeline("seg-1");
+
+    const { lastRun } = pipeline.status();
+    expect(lastRun?.candidates).toBeGreaterThan(0);
+    expect(lastRun?.notes).toBe(0);
+    expect(store.snapshot().notes).toHaveLength(0);
+  });
+
+  it("carries the node scope of a mid-DAG drift flush", async () => {
+    const { store } = await seededStore();
+    let seen: number | null | undefined;
+    const slow: ExtractorClient = {
+      async extract() {
+        seen = pipeline.status().active[0]?.nodeCount;
+        return { notes: [] };
+      },
+    };
+    const pipeline = new RealMemoryPipeline(store, slow);
+
+    await pipeline.runMemoryPipeline("seg-1", ["node-1", "node-2"]);
+
+    expect(seen).toBe(2);
+  });
+});
+
+describe("RealMemoryPipeline concurrent runs", () => {
+  /**
+   * A mid-DAG drift flush can be consolidating one segment while another
+   * segment closes. The status panel renders a row per run, so the pipeline
+   * has to report them independently rather than collapsing to one.
+   */
+  it("reports two overlapping runs, each with its own phase", async () => {
+    const { store } = await seededStore();
+    // A second closed segment over the same task, so both runs build a buffer.
+    await store.mutate((db) => {
+      const first = db.topicSegments[0]!;
+      db.topicSegments.push({ ...first, id: "seg-2" });
+    });
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    // Hold BOTH runs inside extraction, so they are genuinely overlapping when
+    // the status is sampled.
+    const gated: ExtractorClient = {
+      async extract() {
+        await gate;
+        return { notes: [] };
+      },
+    };
+    const pipeline = new RealMemoryPipeline(store, gated);
+
+    const first = pipeline.runMemoryPipeline("seg-1");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const second = pipeline.runMemoryPipeline("seg-2", ["n1"]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const seen = pipeline.status();
+
+    release();
+    await Promise.all([first, second]);
+
+    expect(seen.active.map((run) => run.segmentId).sort()).toEqual(["seg-1", "seg-2"]);
+    // The second run is the mid-task flush, and carries its own node scope.
+    expect(seen.active.find((run) => run.segmentId === "seg-2")?.nodeCount).toBe(1);
+    expect(seen.active.find((run) => run.segmentId === "seg-1")?.nodeCount).toBeNull();
+
+    // Both cleared once they finish; neither leaks into the other.
+    expect(pipeline.status().active).toEqual([]);
+  });
+
+  it("walks the architecture's stages in order", async () => {
+    const { store } = await seededStore();
+    const recognizer: NoteRecognizer = {
+      async recognizeAgents(_noteText, members) {
+        seenPhases.push(pipeline.status().active[0]!.phase);
+        return {
+          threshold: 0.5,
+          matches: [
+            { agentId: members[0]!.id, score: 0.9, matchKind: "threshold" },
+          ],
+        };
+      },
+    };
+    const seenPhases: string[] = [];
+    const fake = new FakeExtractorClient();
+    const extractor: ExtractorClient = {
+      async extract(input) {
+        seenPhases.push(pipeline.status().active[0]!.phase);
+        return fake.extract(input);
+      },
+    };
+    const pipeline = new RealMemoryPipeline(store, extractor, { recognizer });
+
+    await pipeline.runMemoryPipeline("seg-1");
+
+    // Consolidation happens before recognition, and recognition reports the
+    // Agent level rather than a single lumped "routing".
+    expect(seenPhases[0]).toBe("consolidating");
+    expect(seenPhases[1]).toBe("recognizing-agents");
+  });
+});

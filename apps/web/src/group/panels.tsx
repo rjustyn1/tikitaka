@@ -27,7 +27,9 @@ import {
   statusTone,
   withheldReason,
 } from "./format";
+import { ConsolidatorStatus } from "./ConsolidatorStatus";
 import { PlanGraph } from "./PlanGraph";
+import { useMemoryStatus } from "./useMemoryStatus";
 
 export function Pill({
   tone,
@@ -118,6 +120,7 @@ function ChainBody({
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const cardRefs = useRef(new Map<string, HTMLDivElement>());
+  const memory = useMemoryStatus(group.id);
 
   // Picking a node in the graph brings its card into view; the graph is the
   // map, the card is the detail.
@@ -137,6 +140,11 @@ function ChainBody({
         group={group}
         selectedId={selectedId}
         onSelect={(id) => setSelectedId((current) => (current === id ? null : id))}
+      />
+      <ConsolidatorStatus
+        status={memory.status}
+        loaded={memory.loaded}
+        failed={memory.failed}
       />
       {parallelGroups > 0 && (
         <p className="chain-shape">

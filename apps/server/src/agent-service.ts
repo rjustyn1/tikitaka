@@ -3,11 +3,12 @@ import type { AppConfig } from "./config.js";
 import { isArkConfigured } from "./config.js";
 import { HttpError, RunCancelledError } from "./errors.js";
 import { GroupRunner } from "./memory/group-runner.js";
-import { LandingService } from "./memory/landing.js";
+import { LandingService, type MemoryFilePreview } from "./memory/landing.js";
 import { LedgerService } from "./memory/ledger.js";
 import {
   NoopMemoryPipeline,
   type MemoryPipeline,
+  type MemoryPipelineStatus,
 } from "./memory/pipeline.js";
 import { FakePlannerClient, TaskPlanner } from "./memory/planner.js";
 import { ReviewService } from "./memory/review.js";
@@ -81,7 +82,7 @@ export class AgentService implements AgentLease {
     private readonly store: JsonStore,
     private readonly workspaces: WorkspaceManager,
     private readonly runner: AgentRunner,
-    memoryPipeline: MemoryPipeline = new NoopMemoryPipeline(),
+    private readonly memoryPipeline: MemoryPipeline = new NoopMemoryPipeline(),
     planner: TaskPlanner = new TaskPlanner(
       new FakePlannerClient(),
       config.memoryExtractTimeoutMs,
@@ -678,6 +679,23 @@ export class AgentService implements AgentLease {
       throw new HttpError(404, "Agent is not a member of this group");
     }
     return this.getAgent(agentId);
+  }
+
+  /**
+   * The file change approving this note would make, per recipient. Read-only:
+   * nothing is written until the note is actually reviewed.
+   */
+  previewNote(noteId: string): MemoryFilePreview[] {
+    const note = this.store
+      .snapshot()
+      .notes.find((item) => item.id === noteId);
+    if (!note) throw new HttpError(404, `Note ${noteId} not found`);
+    return this.landing.previewMemory(note);
+  }
+
+  /** Live consolidator activity, for the status panel. */
+  memoryStatus(): MemoryPipelineStatus {
+    return this.memoryPipeline.status();
   }
 
   listNotes(query: ListNotesQuery): MemoryNote[] {

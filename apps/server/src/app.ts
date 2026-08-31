@@ -304,9 +304,21 @@ export async function createApp(
 
   // --- Governed memory notes --------------------------------------------------
 
+  /**
+   * Live consolidator activity. Polled by the status panel, so it must stay
+   * cheap: it reads in-memory state and never touches the store.
+   */
+  app.get("/api/memory/status", async () => service.memoryStatus());
+
   app.get("/api/notes", async (request) => {
     const query = notesQuery.parse(request.query);
     return { notes: service.listNotes(query) };
+  });
+
+  /** What approving this note would write, per recipient. Read-only. */
+  app.get("/api/notes/:id/preview", async (request) => {
+    const { id } = noteIdParams.parse(request.params);
+    return { files: service.previewNote(id) };
   });
 
   app.post("/api/notes/:id/review", async (request) => {

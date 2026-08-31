@@ -2054,11 +2054,15 @@ textarea:focus {
 }
 
 /* --- command center: right column (Live Terminal + Members) --- */
+/* The column scrolls as one, and the member list runs to its natural height.
+   It used to be the other way round -- a fixed-height rail with its own
+   scrollbar -- which cropped the member cards and hid whatever sat lowest,
+   now including anything waiting for approval. */
 .cc-rail {
   min-height: 0;
   height: 100%;
   max-height: 100%;
-  overflow: hidden; /* the column itself never scrolls */
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -2067,12 +2071,15 @@ textarea:focus {
 /* The Live Terminal is pinned at the top of the column: fixed height, does not
    scroll away. Only the member list below it scrolls. */
 .cc-rail .live-terminal { flex: none; }
+/* The explorer keeps a fixed height at the top of the column; the members
+   below it grow, and the column scrolls. */
+.cc-rail .workspace-explorer { flex: none; height: 340px; }
 .cc-rail .member-rail {
   position: static;
-  flex: 1;
+  flex: none;
   min-height: 0;
   max-height: none;
-  overflow-y: auto;
+  overflow: visible;
   padding-bottom: 4px;
 }
 
@@ -2500,3 +2507,128 @@ textarea:focus {
 .workspace-viewer-body .workspace-tree-scroll { border-right: 1px solid var(--line); padding: 10px 8px; }
 .workspace-viewer-body .workspace-tree { font-size: 11px; }
 .workspace-viewer-body .workspace-code-preview { min-height: 0; }
+
+/* --- Memory consolidator status ----------------------------------------
+   Sits under the plan graph. The pipeline is fire-and-forget, so this is the
+   only place its activity is visible while it happens rather than after. */
+.consolidator { margin-bottom: 14px; background: #f0efea; border-radius: 12px; padding: 12px 14px; }
+.consolidator-head { display: flex; align-items: flex-start; gap: 9px; }
+.consolidator-headline { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.consolidator-headline strong { font-size: 13px; color: var(--ink); }
+.consolidator-sub { font-size: 11px; color: var(--muted); }
+.consolidator-elapsed { flex: none; font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--muted); }
+
+.consolidator-dot { flex: none; width: 8px; height: 8px; margin-top: 4px; border-radius: 50%; background: var(--muted); }
+.consolidator-dot.is-idle { background: #c2c1b8; }
+.consolidator-dot.is-unknown { background: var(--red); }
+.consolidator-dot.is-working { background: var(--purple); animation: consolidator-pulse 1.2s ease-in-out infinite; }
+@keyframes consolidator-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(105, 84, 217, 0.45); }
+  50% { opacity: 0.55; box-shadow: 0 0 0 5px rgba(105, 84, 217, 0); }
+}
+
+/* --- Concurrent runs ---
+   Consolidation is concurrent, so each run is its own row with its own place
+   in the flow. */
+.consolidator-runs { margin: 10px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+.consolidator-run { border-top: 1px solid #e2e1da; padding-top: 9px; }
+.consolidator-runs > .consolidator-run:first-child { border-top: 0; padding-top: 0; }
+.consolidator-run-head { display: flex; align-items: center; gap: 7px; }
+.consolidator-run-scope { font-size: 11px; font-weight: 600; color: var(--ink); }
+.consolidator-run-count { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; color: var(--muted); }
+.consolidator-run-head .consolidator-elapsed { margin-left: auto; }
+
+/* --- The stage flow ---
+   Left to right in the order MEMORY_PIPELINE.md runs them. Chevrons are drawn
+   between steps rather than on them, so the last step has no trailing arrow. */
+.consolidator-flow {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 3px;
+  margin: 8px 0 0; padding: 0; list-style: none;
+}
+.consolidator-step { display: flex; align-items: center; }
+.consolidator-step + .consolidator-step::before {
+  content: "›"; margin: 0 3px; color: #c2c1b8; font-size: 12px; line-height: 1;
+}
+.consolidator-step-label {
+  border-radius: 999px; padding: 2px 8px;
+  background: #e6e5de; color: var(--muted);
+  font-size: 10px; font-weight: 600; white-space: nowrap;
+}
+.consolidator-step.is-done .consolidator-step-label { background: #e2f0e9; color: #2c7a5c; }
+.consolidator-step.is-current .consolidator-step-label {
+  background: var(--purple); color: #fff;
+  animation: consolidator-step-pulse 1.4s ease-in-out infinite;
+}
+@keyframes consolidator-step-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(105, 84, 217, 0.4); }
+  50% { box-shadow: 0 0 0 4px rgba(105, 84, 217, 0); }
+}
+
+.consolidator-hint { margin: 7px 0 0; font-size: 11px; line-height: 1.5; color: var(--muted); }
+.consolidator-last { margin-top: 10px; }
+.consolidator-last p { margin: 3px 0 0; font-size: 11px; color: var(--muted); }
+.consolidator-last.is-error p { color: var(--red); }
+
+@media (prefers-reduced-motion: reduce) {
+  .consolidator-dot.is-working,
+  .consolidator-step.is-current .consolidator-step-label { animation: none; }
+}
+
+/* --- Outstanding approvals on a member card -----------------------------
+   What an Agent is waiting on belongs next to what it already holds: both are
+   answers to "what does this Agent know?", one settled and one pending. */
+.member-pending { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 9px; }
+.member-pending .eyebrow { color: var(--purple-dark); }
+.member-pending-list { margin: 6px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.member-pending-list li { display: flex; align-items: center; gap: 6px; }
+.member-pending-kind {
+  flex: none; border-radius: 4px; padding: 2px 5px;
+  font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+}
+.member-pending-kind.is-severe { color: #8a4514; background: #fff0d6; }
+.member-pending-kind.is-skill { color: #5c398d; background: var(--purple-soft); }
+.member-pending-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--ink); }
+.member-pending-review {
+  flex: none; border: 1px solid var(--purple); border-radius: 6px; padding: 2px 8px;
+  background: var(--purple-soft); color: var(--purple-dark);
+  font-size: 10px; font-weight: 700; cursor: pointer;
+}
+.member-pending-review:hover { background: var(--purple); color: #fff; }
+
+/* --- Review dialog ------------------------------------------------------ */
+.review-dialog-backdrop { place-items: stretch; }
+.review-dialog {
+  display: flex; flex-direction: column; min-height: 0; width: 100%;
+  border-radius: 16px; background: var(--paper);
+  border: 1px solid rgba(255, 255, 255, 0.55); box-shadow: var(--shadow); overflow: hidden;
+}
+.review-dialog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 16px 18px 12px; border-bottom: 1px solid var(--line); }
+.review-dialog-head h2 { margin: 0; font-size: 17px; }
+.review-dialog-head p { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
+.review-dialog-body { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 18px; }
+.review-note-content { margin: 0 0 14px; border-left: 3px solid var(--purple); padding: 2px 0 2px 11px; color: var(--ink); font-size: 13px; line-height: 1.55; }
+.review-file { margin-bottom: 16px; }
+.review-file-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.review-file-head strong { font-size: 13px; }
+.review-file-head code { font-size: 10px; color: var(--muted); }
+.review-mode { border-radius: 4px; padding: 2px 6px; font-size: 9px; font-weight: 700; }
+.review-mode.is-create { color: #2c7a5c; background: #e2f0e9; }
+.review-mode.is-modify { color: #8a4514; background: #fff0d6; }
+
+/* Two panes for an edit, one for a create. Each scrolls on its own axis so a
+   long line never widens the dialog. */
+.review-diff { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+.review-diff.is-create { grid-template-columns: 1fr; }
+.review-diff-pane { min-width: 0; display: flex; flex-direction: column; background: #242421; }
+.review-pane-head { padding: 6px 10px; border-bottom: 1px solid #3a3a36; background: #2b2b27; color: #b9b7ad; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+.review-diff-pane pre { margin: 0; max-height: 320px; overflow: auto; padding: 6px 0; font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; line-height: 1.55; color: #e9e7df; }
+.review-line { display: block; padding-right: 10px; white-space: pre; }
+.review-line.is-added { background: rgba(51, 144, 109, 0.2); }
+.review-line.is-removed { background: rgba(197, 83, 83, 0.18); }
+.review-gutter { display: inline-block; width: 30px; padding-right: 8px; text-align: right; color: #7f8078; user-select: none; }
+.review-sign { display: inline-block; width: 12px; color: #7f8078; user-select: none; }
+.review-line.is-added .review-sign { color: #7fd3ab; }
+.review-line.is-removed .review-sign { color: #e79a9a; }
+
+.review-dialog-foot { display: flex; align-items: center; gap: 9px; padding: 12px 18px; border-top: 1px solid var(--line); }
+.review-reason { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; background: #fff; font: inherit; font-size: 12px; }
