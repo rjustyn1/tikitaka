@@ -36,4 +36,4 @@ deploy/volcengine/terraform.tfvars
 # from apps/server/requirements-sbert.txt; never committed (torch alone is
 # 322 MB, well past GitHub's 100 MB per-file limit).
 .venv-recognition/
-/data/drift-model/
+!data/drift-model/

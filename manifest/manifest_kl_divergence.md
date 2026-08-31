@@ -49,8 +49,10 @@ listed at the end and are explicitly *not* part of this work.
   with no crash and no note. This is the single bug that made a live run produce
   zero mid-DAG memory.
 - **What changed.** Default is now a **local** dir, `data/drift-model`
-  (`path.resolve`d). `scripts/fetch-drift-model.py` provisions it once from the
-  SBERT venv; the dir is gitignored.
+  (`path.resolve`d), which **ships via Git LFS** alongside the routing
+  checkpoint (`data/drift-model/**/*.safetensors` in `.gitattributes`) — so
+  `git lfs pull` provides it, no separate download.
+  `scripts/fetch-drift-model.py` remains a fallback to regenerate it.
 - **Intention.** Match the bridge's local-only contract; keep the ~90 MB model
   out of git while making provisioning one command.
 - **State.** Fixed and verified — after the fix, `consolidatedAt` appeared on
@@ -114,11 +116,13 @@ listed at the end and are explicitly *not* part of this work.
 
 ## Setup required after pulling
 
-1. The SBERT venv (same one as note routing — `apps/server/requirements-sbert.txt`).
-2. **One new step:** `.venv-recognition/bin/python scripts/fetch-drift-model.py`
-   (downloads `all-MiniLM` into `data/drift-model`, which is gitignored).
+1. `git lfs pull` — the drift model (`data/drift-model`, 87 MB) ships via Git LFS
+   alongside the routing checkpoint, so there is **no separate download step**.
+2. The SBERT venv (same one as note routing — `apps/server/requirements-sbert.txt`)
+   provides torch + sentence-transformers for the bridge.
 
-Without these, drift **degrades gracefully**: the embed is caught, no flush
+`scripts/fetch-drift-model.py` remains as a fallback to regenerate the model.
+Without the venv, drift **degrades gracefully**: the embed is caught, no flush
 fires, and segment-close consolidation still runs. Nothing crashes.
 
 ## Current state
