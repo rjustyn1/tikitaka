@@ -2067,8 +2067,13 @@ textarea:focus {
 /* The Live Terminal is pinned at the top of the column: fixed height, does not
    scroll away. Only the member list below it scrolls. */
 .cc-rail .live-terminal { flex: none; }
+/* The base rail sets `align-self: start` for its old grid parent, where the
+   cross axis is vertical. Here the parent is a flex *column*, so that same
+   declaration works horizontally and shrinks the rail to its content width,
+   leaving the cards stranded in half the column. Stretch it back. */
 .cc-rail .member-rail {
   position: static;
+  align-self: stretch;
   flex: 1;
   min-height: 0;
   max-height: none;
