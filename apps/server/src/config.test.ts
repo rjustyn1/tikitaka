@@ -16,11 +16,15 @@ describe("memory configuration", () => {
     });
   });
 
-  it("defaults extraction to Ark with the specified timeout", () => {
+  it("defaults extraction to Ark and recognition to the local checkpoint", () => {
+    // Both default to the real thing. Each degrades on its own when the
+    // prerequisite is absent: the extractor in index.ts when ARK_* is
+    // unusable, the recognizer in pipeline.ts when the checkpoint or bridge
+    // is not provisioned.
     expect(loadConfig({ NODE_ENV: "test" })).toMatchObject({
       memoryExtractor: "ark",
       memoryExtractTimeoutMs: 30_000,
-      memoryRecognizer: "fake",
+      memoryRecognizer: "sbert",
       memoryRecognitionAgentThreshold: 0.35,
       memoryRecognitionSkillThreshold: 0.45,
       memoryEmbeddingTimeoutMs: 30_000,

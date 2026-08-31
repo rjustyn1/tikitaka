@@ -34,6 +34,9 @@ beforeEach(async () => {
       AGENT_WORKSPACE_ROOT: path.join(root, "workspaces"),
       CODEX_HOME: path.join(root, "codex-home"),
       MEMORY_EXTRACTOR: "fake",
+      // Pinned: the default is now sbert, and this test must not depend on
+      // whether a local checkpoint happens to be provisioned.
+      MEMORY_RECOGNIZER: "fake",
       // Consolidation is per TOPIC SEGMENT, and a segment normally stays open
       // until the subject changes. One task per segment keeps this end-to-end
       // test a single-task scenario; segment accumulation across tasks is

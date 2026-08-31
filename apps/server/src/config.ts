@@ -53,7 +53,7 @@ const envSchema = z.object({
   MEMORY_SEGMENT_MAX_CHARS: z.coerce.number().int().min(1000).default(120000),
   MEMORY_SEGMENT_IDLE_MS: z.coerce.number().int().min(1000).default(1800000),
   // Recognition: routing authority for governed memory notes.
-  MEMORY_RECOGNIZER: z.enum(["ark", "fake", "sbert", "off"]).default("fake"),
+  MEMORY_RECOGNIZER: z.enum(["ark", "fake", "sbert", "off"]).default("sbert"),
   MEMORY_EMBEDDING_MODEL: z.string().trim().optional(),
   MEMORY_SBERT_PYTHON: z.string().trim().min(1).default("python3"),
   MEMORY_SBERT_MODEL_DIR: z

@@ -10,6 +10,7 @@
 //     -> ReviewService.processCandidate()  (auto-land clean normals, park risky)
 //     -> Ledger records grants + withholdings (inside review)
 
+import { existsSync, statSync } from "node:fs";
 import type { Agent, AgentGroup, MemorySkillAssignment } from "../types.js";
 import type { JsonStore } from "../store.js";
 import { Consolidator } from "./consolidator.js";
@@ -79,6 +80,8 @@ export interface RecognitionRuntimeConfig {
   memoryRecognitionAgentThreshold?: number;
   memoryRecognitionSkillThreshold?: number;
   memoryEmbeddingTimeoutMs?: number;
+  /** Only used to keep the sbert-fallback warning quiet under vitest. */
+  nodeEnv?: string;
 }
 
 export class RealMemoryPipeline implements MemoryPipeline {
@@ -338,10 +341,56 @@ export function createMemoryPipeline(
   });
 }
 
+/**
+ * MEMORY_RECOGNIZER defaults to "sbert", the real local checkpoint. But sbert
+ * has two prerequisites that a plain `git clone` does not satisfy: the 87 MB
+ * checkpoint arrives only after `git lfs pull`, and the bridge needs a Python
+ * env from requirements-sbert.txt.
+ *
+ * Rather than fail a fresh checkout, degrade to the deterministic offline
+ * recognizer and say so once. This mirrors how index.ts already handles
+ * MEMORY_EXTRACTOR=ark without a usable key.
+ *
+ * The LFS-pointer case is checked explicitly: cloning without git-lfs leaves a
+ * ~133-byte text stub where the weights should be, which would otherwise fail
+ * deep inside the Python bridge with an unhelpful error.
+ */
+function resolveRecognizerMode(
+  config: MemoryConfig & RecognitionRuntimeConfig,
+): "ark" | "fake" | "sbert" | "off" {
+  const mode = config.memoryRecognizer ?? "sbert";
+  if (mode !== "sbert") return mode;
+
+  const modelPath = config.memorySbertModelDir?.trim() ?? "";
+  const bridgePath = config.memorySbertBridge?.trim() ?? "";
+  const weights = modelPath ? modelPath + "/model.safetensors" : "";
+
+  const reason = !modelPath || !existsSync(modelPath)
+    ? "checkpoint directory is missing"
+    : !bridgePath || !existsSync(bridgePath)
+      ? "embedding bridge is missing"
+      : !existsSync(weights)
+        ? "model.safetensors is missing"
+        : statSync(weights).size < 1_000_000
+          ? "model.safetensors is a Git LFS pointer, not real weights (run: git lfs pull)"
+          : null;
+  if (reason === null) return "sbert";
+
+  if (config.nodeEnv !== "test") {
+    console.warn(
+      "[memory] MEMORY_RECOGNIZER=sbert but " +
+        reason +
+        ". Falling back to the offline recognizer; note routing will be " +
+        "deterministic rather than model-driven.",
+    );
+  }
+  return "fake";
+}
+
 function createRuntimeRecognizer(
   config: MemoryConfig & RecognitionRuntimeConfig,
 ): NoteRecognizer | undefined {
-  const mode = config.memoryRecognizer ?? "fake";
+  const mode = resolveRecognizerMode(config);
   if (mode === "off") return undefined;
   const options = {
     ...(config.memoryRecognitionAgentThreshold !== undefined
