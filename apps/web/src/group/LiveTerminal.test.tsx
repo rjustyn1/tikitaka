@@ -2,7 +2,12 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Agent, TraceSpan } from "../types";
 import { api } from "../api";
-import { LiveTerminal } from "./LiveTerminal";
+import {
+  LiveTerminalOverlay,
+  TerminalPanel,
+  useLiveSpans,
+} from "./LiveTerminal";
+import userEvent from "@testing-library/user-event";
 
 vi.mock("../api", () => ({ api: { trace: vi.fn() } }));
 
@@ -46,6 +51,25 @@ function span(
   };
 }
 
+/**
+ * The rail's pairing of the poller with the small panel. Production wires these
+ * together in GroupWorkspace so that ONE poller can also feed the overlay; this
+ * harness reproduces that pairing so the streaming tests below exercise the
+ * real hook rather than a stub.
+ */
+function Live({
+  runIds,
+  agents,
+  running,
+}: {
+  runIds: string[];
+  agents: Agent[];
+  running: boolean;
+}) {
+  const live = useLiveSpans(runIds, running);
+  return <TerminalPanel {...live} agents={agents} running={running} />;
+}
+
 const traced = api.trace as unknown as ReturnType<typeof vi.fn>;
 
 describe("LiveTerminal with several nodes running at once", () => {
@@ -72,7 +96,7 @@ describe("LiveTerminal with several nodes running at once", () => {
           },
     );
 
-    render(<LiveTerminal runIds={["r1", "r2"]} agents={agents} running />);
+    render(<Live runIds={["r1", "r2"]} agents={agents} running />);
 
     await waitFor(() =>
       expect(screen.getByText("backend third")).toBeInTheDocument(),
@@ -97,7 +121,7 @@ describe("LiveTerminal with several nodes running at once", () => {
       ],
     }));
 
-    render(<LiveTerminal runIds={["r1", "r2"]} agents={agents} running />);
+    render(<Live runIds={["r1", "r2"]} agents={agents} running />);
 
     await waitFor(() =>
       expect(screen.getByText("frontend line")).toBeInTheDocument(),
@@ -119,7 +143,7 @@ describe("LiveTerminal with several nodes running at once", () => {
       };
     });
 
-    render(<LiveTerminal runIds={["r1", "r2"]} agents={agents} running />);
+    render(<Live runIds={["r1", "r2"]} agents={agents} running />);
 
     await waitFor(() =>
       expect(screen.getByText("still here")).toBeInTheDocument(),
@@ -133,11 +157,111 @@ describe("LiveTerminal with several nodes running at once", () => {
       spans: [span("r1", "a1", 1, "2026-01-01T00:00:01.000Z", "only one")],
     });
 
-    render(<LiveTerminal runIds={["r1"]} agents={agents} running />);
+    render(<Live runIds={["r1"]} agents={agents} running />);
 
     await waitFor(() =>
       expect(screen.getByText("only one")).toBeInTheDocument(),
     );
     expect(screen.queryByText(/agents$/)).not.toBeInTheDocument();
+  });
+});
+
+describe("expanding the terminal to the big view", () => {
+  beforeEach(() => traced.mockReset());
+
+  it("offers an expand control that asks its owner to open the big view", async () => {
+    const onExpand = vi.fn();
+    render(
+      <TerminalPanel
+        spans={[]}
+        failed={false}
+        liveCount={0}
+        agents={agents}
+        running={false}
+        onExpand={onExpand}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /expand/i }));
+
+    expect(onExpand).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the expanded overlay", () => {
+  beforeEach(() => traced.mockReset());
+
+  const overlay = (onClose: () => void) => (
+    <LiveTerminalOverlay
+      spans={[]}
+      failed={false}
+      liveCount={0}
+      agents={agents}
+      running={false}
+      onClose={onClose}
+    />
+  );
+
+  it("closes on Escape", async () => {
+    const onClose = vi.fn();
+    render(overlay(onClose));
+
+    await userEvent.keyboard("{Escape}");
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes when the click lands on the backdrop", async () => {
+    const onClose = vi.fn();
+    const { container } = render(overlay(onClose));
+
+    const backdrop = container.querySelector(".live-terminal-backdrop");
+    await userEvent.click(backdrop as Element);
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays open when the click lands inside the terminal itself", async () => {
+    const onClose = vi.fn();
+    render(overlay(onClose));
+
+    await userEvent.click(screen.getByText(/No activity yet/));
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("is announced as a dialog so assistive tech traps it as one", () => {
+    render(overlay(vi.fn()));
+
+    expect(screen.getByRole("dialog", { name: /live terminal/i })).toBeInTheDocument();
+  });
+});
+
+describe("one poller feeding both views", () => {
+  beforeEach(() => traced.mockReset());
+
+  // Regression guard: a second self-polling terminal would double the request
+  // rate against a running Codex task for no new information.
+  it("fetches each run once even with the rail and the overlay both mounted", async () => {
+    traced.mockResolvedValue({
+      run: { status: "succeeded" },
+      spans: [span("r1", "a1", 1, "2026-01-01T00:00:01.000Z", "single fetch")],
+    });
+
+    function Harness() {
+      const live = useLiveSpans(["r1"], false);
+      return (
+        <>
+          <TerminalPanel {...live} agents={agents} running={false} />
+          <TerminalPanel {...live} agents={agents} running={false} expanded />
+        </>
+      );
+    }
+    render(<Harness />);
+
+    await waitFor(() =>
+      expect(screen.getAllByText("single fetch")).toHaveLength(2),
+    );
+    expect(traced).toHaveBeenCalledTimes(1);
   });
 });

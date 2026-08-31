@@ -25,7 +25,11 @@ import type {
 import { ConversationPanel } from "./ConversationPanel";
 import { GroupEditor } from "./GroupEditor";
 import { isAwaitingReview, isTerminal, statusTone } from "./format";
-import { LiveTerminal } from "./LiveTerminal";
+import {
+  LiveTerminalOverlay,
+  TerminalPanel,
+  useLiveSpans,
+} from "./LiveTerminal";
 import { MemberRail } from "./MemberRail";
 import {
   ChainPanel,
@@ -166,6 +170,11 @@ export function GroupWorkspace({
     .find((node) => node.runId)?.runId;
   const liveRunIds =
     runningRunIds.length > 0 ? runningRunIds : lastRunId ? [lastRunId] : [];
+
+  // ONE poller, two views. The rail panel and the expanded overlay render the
+  // same spans, so opening the big terminal costs no extra requests.
+  const liveSpans = useLiveSpans(liveRunIds, running);
+  const [terminalExpanded, setTerminalExpanded] = useState(false);
 
   // The rail reads each member's workspace through the API. Bump the revision
   // — never poll — whenever something could have changed one: a different
@@ -678,10 +687,13 @@ export function GroupWorkspace({
 
         {group && (
           <div className="cc-rail">
-            <LiveTerminal
-              runIds={liveRunIds}
+            <TerminalPanel
+              spans={liveSpans.spans}
+              failed={liveSpans.failed}
+              liveCount={liveSpans.liveCount}
               agents={agents}
               running={running}
+              onExpand={() => setTerminalExpanded(true)}
             />
             <MemberRail
               group={group}
@@ -696,6 +708,17 @@ export function GroupWorkspace({
           </div>
         )}
       </div>
+
+      {terminalExpanded && group && (
+        <LiveTerminalOverlay
+          spans={liveSpans.spans}
+          failed={liveSpans.failed}
+          liveCount={liveSpans.liveCount}
+          agents={agents}
+          running={running}
+          onClose={() => setTerminalExpanded(false)}
+        />
+      )}
 
       {editing && (
         <GroupEditor

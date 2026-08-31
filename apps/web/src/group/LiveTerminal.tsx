@@ -61,24 +61,18 @@ function lineFor(span: TraceSpan): { text: string; tone: string } {
   }
 }
 
-export function LiveTerminal({
-  runIds,
-  agents,
-  running,
-}: {
-  /**
-   * Every run to stream: the runs of all nodes running right now, or the most
-   * recent run once nothing is live.
-   */
-  runIds: string[];
-  agents: Agent[];
-  running: boolean;
-}) {
+/**
+ * The polling half of the terminal: fetch the traces for every live run and
+ * keep them merged.
+ *
+ * It lives apart from the rendering so that ONE poller can feed BOTH the rail
+ * panel and the expanded overlay. Mounting a second self-polling terminal would
+ * double the request rate against a running Codex task for no new information.
+ */
+export function useLiveSpans(runIds: string[], running: boolean) {
   const [spans, setSpans] = useState<TraceSpan[]>([]);
   const [failed, setFailed] = useState(false);
   const [liveCount, setLiveCount] = useState(0);
-  const feedRef = useRef<HTMLDivElement>(null);
-  const pinnedToBottom = useRef(true);
 
   // Poll the active run's trace. Same cadence as the rest of the app (~900ms),
   // and only while the task is running; a terminal run is fetched once.
@@ -118,6 +112,69 @@ export function LiveTerminal({
     };
   }, [runKey, running]);
 
+  return { spans, failed, liveCount };
+}
+
+/** Outward corner brackets — "make this bigger". */
+function ExpandIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+      <path
+        d="M6 2H2v4M10 2h4v4M6 14H2v-4M10 14h4v-4"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** Inward corner brackets — "put it back". */
+function CollapseIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+      <path
+        d="M2 6h4V2M14 6h-4V2M2 10h4v4M14 10h-4v4"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/**
+ * The rendering half: a feed of one-line spans, at either size.
+ *
+ * `expanded` only swaps the size affordance and the toggle's direction — the
+ * lines themselves are identical, because it is the same terminal.
+ */
+export function TerminalPanel({
+  spans,
+  failed,
+  liveCount,
+  agents,
+  running,
+  expanded = false,
+  onExpand,
+  onCollapse,
+}: {
+  spans: TraceSpan[];
+  failed: boolean;
+  liveCount: number;
+  agents: Agent[];
+  running: boolean;
+  expanded?: boolean;
+  onExpand?: () => void;
+  onCollapse?: () => void;
+}) {
+  const feedRef = useRef<HTMLDivElement>(null);
+  const pinnedToBottom = useRef(true);
+
   // Keep the newest line in view, but only if the reader has not scrolled up to
   // read history — the same courtesy a real terminal extends.
   useEffect(() => {
@@ -144,7 +201,10 @@ export function LiveTerminal({
   });
 
   return (
-    <section className="live-terminal" aria-label="Live terminal">
+    <section
+      className={"live-terminal" + (expanded ? " is-expanded" : "")}
+      aria-label="Live terminal"
+    >
       <div className="live-terminal-head">
         <span className="live-terminal-title">
           Live Terminal
@@ -152,10 +212,31 @@ export function LiveTerminal({
             <span className="live-terminal-count">{liveCount} agents</span>
           )}
         </span>
-        <span
-          className={"live-terminal-pip " + (running ? "is-live" : "is-idle")}
-          aria-label={running ? "Live" : "Idle"}
-        />
+        <div className="live-terminal-tools">
+          <span
+            className={"live-terminal-pip " + (running ? "is-live" : "is-idle")}
+            aria-label={running ? "Live" : "Idle"}
+          />
+          {expanded ? (
+            <button
+              type="button"
+              className="live-terminal-toggle"
+              onClick={onCollapse}
+              aria-label="Collapse terminal"
+            >
+              <CollapseIcon />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="live-terminal-toggle"
+              onClick={onExpand}
+              aria-label="Expand terminal"
+            >
+              <ExpandIcon />
+            </button>
+          )}
+        </div>
       </div>
       <div className="live-terminal-feed" ref={feedRef} onScroll={onScroll}>
         {ordered.length === 0 ? (
@@ -184,5 +265,77 @@ export function LiveTerminal({
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * The same terminal, big, over the app.
+ *
+ * It takes spans rather than run ids on purpose: the caller already polls for
+ * the rail copy, so the overlay adds a second view of that feed without a
+ * second request stream. See `useLiveSpans`.
+ */
+export function LiveTerminalOverlay({
+  spans,
+  failed,
+  liveCount,
+  agents,
+  running,
+  onClose,
+}: {
+  spans: TraceSpan[];
+  failed: boolean;
+  liveCount: number;
+  agents: Agent[];
+  running: boolean;
+  onClose: () => void;
+}) {
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  // Move focus in on open and hand it back on close, so a keyboard reader is
+  // not left stranded at the top of the page behind the overlay.
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    panelRef.current?.focus();
+    return () => previous?.focus?.();
+  }, []);
+
+  return (
+    <div
+      className="live-terminal-backdrop"
+      // Only a press that STARTS on the backdrop dismisses: a drag that began
+      // on a terminal line and ended out here is a text selection, not a click
+      // away.
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div
+        className="live-terminal-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Live terminal"
+        tabIndex={-1}
+        ref={panelRef}
+      >
+        <TerminalPanel
+          spans={spans}
+          failed={failed}
+          liveCount={liveCount}
+          agents={agents}
+          running={running}
+          expanded
+          onCollapse={onClose}
+        />
+      </div>
+    </div>
   );
 }

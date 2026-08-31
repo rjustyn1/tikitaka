@@ -2151,6 +2151,73 @@ textarea:focus {
   .live-terminal-pip.is-live { animation: none; }
 }
 
+/* --- the terminal, expanded ---
+   Same panel, same feed, more room. Width is the point: `clip()` lets a command
+   line run to 150 characters, which the 340px rail wraps across four rows. 1240
+   is the measured width at which that worst-case line prints on ONE row, prefix
+   included — below it the line wraps and the expansion buys much less. */
+.live-terminal-tools {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.live-terminal-toggle {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: #8f8f88;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.live-terminal-toggle:hover { background: #33332f; color: #f5f3ed; }
+.live-terminal-toggle:focus-visible {
+  outline: 2px solid var(--purple);
+  outline-offset: 1px;
+  color: #f5f3ed;
+}
+.live-terminal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 25;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+  background: rgba(26, 26, 24, 0.58);
+  backdrop-filter: blur(7px);
+}
+.live-terminal-dialog {
+  width: min(1240px, 94vw);
+  height: min(780px, 88vh);
+  /* The panel draws its own border and dark ground, so the dialog is purely a
+     sizing box — nothing here should paint over the terminal. */
+  display: flex;
+  outline: none;
+  box-shadow: var(--shadow);
+  border-radius: 14px;
+}
+/* The rail pins the terminal at 300px; expanded, it fills the box instead. */
+.live-terminal.is-expanded {
+  height: 100%;
+  width: 100%;
+}
+.live-terminal.is-expanded .live-terminal-head { padding: 13px 17px; }
+.live-terminal.is-expanded .live-terminal-feed {
+  padding: 14px 17px;
+  font-size: 12.5px;
+}
+@media (max-width: 1180px) {
+  .live-terminal-backdrop { padding: 12px; }
+  .live-terminal-dialog {
+    width: 96vw;
+    height: 92vh;
+  }
+}
+
 /* --- Audit overflow (demoted Ledger / Workspaces / Proof) --- */
 .team-audit { position: relative; }
 .team-audit-menu {
