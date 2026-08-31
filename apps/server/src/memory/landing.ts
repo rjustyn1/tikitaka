@@ -5,8 +5,10 @@
 // See components/LANDING.md.
 
 import { randomUUID } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import type { Agent, LandedMemoryFile, MemoryNote } from "../types.js";
 import type { JsonStore } from "../store.js";
+import { memoryMarkerId } from "../workspace.js";
 import { WorkspaceMemoryWriter } from "./workspace-memory.js";
 
 const now = () => new Date().toISOString();
@@ -19,6 +21,39 @@ export interface LandMemoryResult {
 
 function kindForSeverity(note: MemoryNote): LandedMemoryFile["kind"] {
   return note.severity === "severe" ? "agents_md" : "skill";
+}
+
+/**
+ * A ledger row is evidence that landing once succeeded; it is not current
+ * availability. The exact managed block must still be present in its recorded
+ * file before a note can be exposed again.
+ */
+export function isLandedMemoryFileAvailable(file: LandedMemoryFile): boolean {
+  if (file.removedAt !== null || !existsSync(file.path)) return false;
+  const marker = memoryMarkerId(file.noteId);
+  try {
+    const content = readFileSync(file.path, "utf8");
+    return (
+      content.includes("<!-- " + marker + " -->") &&
+      content.includes("<!-- /" + marker + " -->")
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** True only when this Agent still has the note's recorded governed block. */
+export function isNoteAvailableToAgent(
+  files: readonly LandedMemoryFile[],
+  noteId: string,
+  agentId: string,
+): boolean {
+  return files.some(
+    (file) =>
+      file.noteId === noteId &&
+      file.agentId === agentId &&
+      isLandedMemoryFileAvailable(file),
+  );
 }
 
 export class LandingService {
@@ -106,7 +141,7 @@ export class LandingService {
     return this.store
       .snapshot()
       .landedMemoryFiles.filter(
-        (file) => file.agentId === agentId && file.removedAt === null,
+        (file) => file.agentId === agentId && isLandedMemoryFileAvailable(file),
       );
   }
 }

@@ -48,6 +48,7 @@ import {
   transcriptCharsIn,
 } from "./topic-segment.js";
 import { findMembershipError, readMembers } from "./group-chain.js";
+import { isNoteAvailableToAgent } from "./landing.js";
 import {
   buildContextPacket,
   buildGroupTaskCharter,
@@ -637,7 +638,13 @@ export class GroupRunner {
       const governedMemory = this.config.memoryEnabled
         ? database.notes.filter(
             (note) =>
-              note.status === "active" && note.targetAgentIds.includes(node.agentId),
+              note.status === "active" &&
+              note.targetAgentIds.includes(node.agentId) &&
+              isNoteAvailableToAgent(
+                database.landedMemoryFiles,
+                note.id,
+                node.agentId,
+              ),
           )
         : [];
 

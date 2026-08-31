@@ -169,8 +169,7 @@ A candidate requires human review when any of these apply:
 - redaction fired;
 - quarantine fired;
 - Agent routing used a fallback;
-- any recipient needs a new skill;
-- more than two Agents would receive it.
+- any recipient needs a new skill.
 
 Additionally, startup sets review-first behavior for MEMORY_RECOGNIZER=sbert
 unless MEMORY_AUTO_GRANT_ENABLED=true. This prevents a checkpoint calibrated

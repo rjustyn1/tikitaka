@@ -190,7 +190,7 @@ export function reviewReasons(note: MemoryNote): string[] {
   if (note.severity === "severe") reasons.push("severe");
   if (note.redactionFired) reasons.push("redaction fired");
   if (note.quarantineHit) reasons.push("quarantine hit");
-  if (note.targetAgentIds.length > 2) reasons.push("broad routing");
+  if (note.recognitionMatchKind === "fallback") reasons.push("low-confidence routing");
   return reasons;
 }
 

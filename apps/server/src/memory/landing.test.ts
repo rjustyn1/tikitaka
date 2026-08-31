@@ -159,6 +159,19 @@ describe("LandingService", () => {
     expect(landing.listAgentMemory("agent-target")).toHaveLength(0);
   });
 
+  it("does not expose an active landing row after its governed file is deleted", async () => {
+    const { store, landing } = await setup();
+    await landing.landMemory(note({ severity: "normal" }));
+    const filePath = store.snapshot().landedMemoryFiles[0]!.path;
+
+    await rm(filePath, { force: true });
+
+    // The database row remains as audit history, but it no longer represents
+    // available memory.
+    expect(store.snapshot().landedMemoryFiles[0]?.removedAt).toBeNull();
+    expect(landing.listAgentMemory("agent-target")).toEqual([]);
+  });
+
   it("merges notes into one skill and revokes only the matching managed block", async () => {
     const { landing, store, target } = await setup();
     const first = note({

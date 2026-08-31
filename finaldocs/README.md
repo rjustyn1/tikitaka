@@ -31,7 +31,8 @@ and group-specific threads. When a topic segment closes, the memory pipeline
 extracts durable notes with provenance, routes them using a recognizer, redacts
 or quarantines unsafe content, records grants and withholdings, and lands only
 approved knowledge inside recipient workspaces. A note is available to an
-Agent only when the corresponding governed file exists in that Agent's private
+Agent only when its active landing record still points to a corresponding
+governed file containing that note's managed block in the Agent's private
 workspace.
 
 ## Source Layout

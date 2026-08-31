@@ -2,7 +2,7 @@
  * The inline memory-approval card.
  *
  * When the pipeline parks a note for a human (severe, quarantined, redaction, or
- * broad routing — see `requiresHumanReview` on the server), it surfaces right in
+ * low-confidence routing — see `requiresHumanReview` on the server), it surfaces in
  * the conversation as a card: "this is what the team learned, here is where it
  * would land, approve it?" The three actions map straight onto the existing
  * review contract:

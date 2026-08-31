@@ -206,9 +206,10 @@ The landing service is the only governed-memory writer:
   model context.
 - Regenerating Agent instructions preserves managed memory blocks.
 
-The filesystem is the availability state. The ledger proves that this middleware
-granted, withheld, rejected, or revoked a note; it cannot prove that Codex used
-the note during a future turn.
+The filesystem is the availability state: a note is injected only when its
+active landing record's file still contains the note's managed block. The ledger
+proves that this middleware granted, withheld, rejected, or revoked a note; it
+cannot prove that Codex used the note during a future turn.
 
 ## Persistence Model
 

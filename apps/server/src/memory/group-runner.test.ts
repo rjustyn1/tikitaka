@@ -1,4 +1,4 @@
-import { lstat, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -13,6 +13,7 @@ import type { MemoryPipeline } from "./pipeline.js";
 import { TaskPlanner, type PlannerClient } from "./planner.js";
 import { RecordingMemoryPipeline } from "../test-helpers.js";
 import { SegmentBufferBuilder } from "./task-buffer.js";
+import { LandingService } from "./landing.js";
 import type { GroupMember } from "../types.js";
 
 const temporaryDirectories: string[] = [];
@@ -195,6 +196,44 @@ describe("group lifecycle", () => {
     expect(harness.store.snapshot().topicSegments).toEqual([]);
     expect(pipeline.calls).toEqual([]);
     expect(harness.runner.prompts.join("\n")).not.toContain(legacyNote.content);
+  });
+
+  it("does not inject an active note whose governed artifact was deleted", async () => {
+    const harness = await makeHarness();
+    const group = await harness.service.createGroup({
+      name: "Availability team",
+      members: harness.members,
+    });
+    const staleNote: MemoryNote = {
+      id: "stale-note",
+      groupTaskId: "earlier-task",
+      groupId: group.id,
+      content: "This must not be injected after the file disappears.",
+      severity: "normal",
+      status: "active",
+      targetAgentIds: [harness.backend.id],
+      description: "stale governed memory",
+      sourceRunIds: [],
+      sourceSpanIds: [],
+      rationale: "",
+      redactionFired: false,
+      quarantineHit: false,
+      safetyReasons: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const landing = new LandingService(harness.store);
+    await landing.landMemory(staleNote);
+    await harness.store.mutate((database) => {
+      database.notes.push(staleNote);
+    });
+    const filePath = harness.store.snapshot().landedMemoryFiles[0]!.path;
+    await rm(filePath, { force: true });
+
+    const task = await harness.service.startGroupTask(group.id, "Plan an upload feature.");
+    await settle(harness, task.id);
+
+    expect(harness.runner.prompts.join("\n")).not.toContain(staleNote.content);
   });
 
   it("freezes membership while a task is running", async () => {

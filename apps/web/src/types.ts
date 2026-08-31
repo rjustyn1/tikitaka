@@ -105,6 +105,7 @@ export type GroupTaskStatus =
 export type GroupPlanNodeKind = "work" | "join";
 export type GroupRole = "backend" | "frontend" | "security" | (string & {});
 export type MemorySeverity = "normal" | "severe";
+export type MemoryMatchKind = "threshold" | "fallback";
 export type MemoryStatus =
   | "candidate"
   | "pending"
@@ -229,6 +230,12 @@ export interface MemoryNote {
   redactionFired: boolean;
   quarantineHit: boolean;
   safetyReasons: string[];
+  /**
+   * How the recognizer chose the recipients. "fallback" means nothing cleared
+   * the similarity threshold and it took the single best guess -- which is what
+   * sends the note to review, so the UI needs it to explain why.
+   */
+  recognitionMatchKind?: MemoryMatchKind;
   createdAt: string;
   updatedAt: string;
 }
