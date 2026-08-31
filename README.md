@@ -65,29 +65,38 @@ Volcengine ECS.
 - A Volcengine Ark API key and endpoint that supports the Responses API
 
 Codex CLI is included in the Runtime image and is not required on the host.
-Git LFS and Python are needed only to run note routing on the real
-[local SBERT checkpoint](#note-routing-the-sbert-checkpoint); without them the
-app still runs and falls back to deterministic offline routing.
+**Git LFS is required**: `MEMORY_RECOGNIZER` defaults to `sbert` and never
+falls back, so startup fails without the checkpoint. Python is needed for the
+same path — see
+[the checkpoint section](#note-routing-the-sbert-checkpoint). Set
+`MEMORY_RECOGNIZER=fake` if you deliberately want an offline run without
+either.
 
 ---
 
 # Setup
 
-## Quick start — this is the whole thing
+## Quick start
 
 ```bash
 git clone <repository-url> volc-agent-launchpad
 cd volc-agent-launchpad
+git lfs pull            # the recognition checkpoint; startup fails without it
 
 ARK_API_KEY=your-ark-api-key \
 ARK_MODEL=ep-your-endpoint-id \
 npm run poc
 ```
 
-That is the complete setup. `npm run poc` runs `npm ci` on first use, builds
-the Runtime image and the app, picks Docker / Colima / Podman, sets
-`RUNTIME_PROVIDER=container`, and points the data, workspace, and Codex-home
-paths at your local state directory. Nothing else to install or configure.
+`npm run poc` runs `npm ci` on first use, builds the Runtime image and the app,
+picks Docker / Colima / Podman, sets `RUNTIME_PROVIDER=container`, and points
+the data, workspace, and Codex-home paths at your local state directory.
+
+`git lfs pull` is not optional: `MEMORY_RECOGNIZER` defaults to `sbert`, which
+never falls back, so a clone without the checkpoint fails at startup rather
+than routing with stub embeddings. See
+[the checkpoint section](#note-routing-the-sbert-checkpoint) for the Python
+bridge, or set `MEMORY_RECOGNIZER=fake` for a deliberately offline run.
 
 Add demo data in the same command — idempotent, safe to leave on:
 
@@ -95,16 +104,15 @@ Add demo data in the same command — idempotent, safe to leave on:
 SEED_DEMO=1 ARK_API_KEY=... ARK_MODEL=... npm run poc
 ```
 
-Both model-backed features default to the real thing and degrade on their own
-when a prerequisite is missing, so a fresh clone always starts:
+The extractor degrades to fake when Ark is unconfigured. SBERT is required for
+the default recognizer and does not silently change routing behavior:
 
 | Default | Degrades to | When |
 | --- | --- | --- |
 | `MEMORY_EXTRACTOR=ark` | `fake` | `ARK_API_KEY` / `ARK_MODEL` unusable |
-| `MEMORY_RECOGNIZER=sbert` | `fake` | checkpoint or Python bridge not provisioned |
 
-Each prints one warning saying which prerequisite is missing and what to run.
-To get real model-driven note routing, provision the checkpoint below.
+The extractor prints a warning when it falls back. If SBERT is not provisioned,
+startup fails with a clear error; provision the checkpoint below.
 
 > `npm run poc` does **not** read `.env` — only `docker compose` does. Pass
 > `ARK_*` on the command line as above. See [Development](#development) for why
@@ -139,10 +147,10 @@ xdg-open http://localhost:3000   # Linux desktop
 
 ## Note routing: the SBERT checkpoint
 
-`MEMORY_RECOGNIZER` defaults to `sbert`, the trained local checkpoint. Until
-you provision it the app falls back to deterministic offline routing and says
-so — nothing breaks, but note routing is not model-driven. This section is the
-**only** reason this project needs Git LFS or Python.
+`MEMORY_RECOGNIZER` defaults to `sbert`, the trained local checkpoint. The
+checkpoint and bridge must be provisioned before startup; there is no automatic
+fallback to deterministic routing. This section is the **only** reason this
+project needs Git LFS or Python.
 
 The checkpoint (87 MB) ships via LFS, so fetch it and confirm you got real
 weights rather than a pointer stub:
@@ -300,11 +308,10 @@ cp deploy/volcengine/terraform.tfvars.example \
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `MEMORY_ENABLED` | `true` | Master switch; `false` restores the exact baseline. |
+| `MEMORY_ENABLED` | `true` | Master switch for governed-memory runtime processing; existing landed files are retained. |
 | `MEMORY_EXTRACTOR` | `ark` | `ark` \| `fake` \| `off`. Falls back to `fake` automatically when `ARK_*` is unusable. |
 | `MEMORY_EXTRACT_TIMEOUT_MS` | `30000` | Consolidator model-call timeout. The code default is low for real runs; `.env.example` raises it to `120000`. |
 | `REVIEW_ALL_SKILLS` | `false` | Force every note through human review. |
-| `SKILLS_DIR` | `.agents/skills` | Where landed skills go inside each workspace. |
 
 **Topic segmentation**
 
@@ -319,7 +326,7 @@ cp deploy/volcengine/terraform.tfvars.example \
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `MEMORY_RECOGNIZER` | `sbert` | `sbert` \| `ark` \| `fake` \| `off`. Falls back to `fake` automatically when the checkpoint or bridge is missing. |
+| `MEMORY_RECOGNIZER` | `sbert` | `sbert` \| `ark` \| `fake` \| `off`. SBERT has no automatic fallback when the checkpoint or bridge is missing. |
 | `MEMORY_RECOGNITION_AGENT_THRESHOLD` | see note | Similarity floor for routing to an Agent. Use `0.72` with the shipped checkpoint. |
 | `MEMORY_RECOGNITION_SKILL_THRESHOLD` | `0.45` | Similarity floor for matching an existing skill. |
 | `MEMORY_AUTO_GRANT_ENABLED` | `false` | Must stay `false` until a reviewed holdout authorizes auto-grant. |
@@ -367,10 +374,9 @@ terraform fmt -check -recursive deploy/volcengine
 docker compose config
 ```
 
-`npm run check` stays fully offline. Neither default reaches the network under
-test: the extractor falls back without a key, and the tests that build a
-pipeline pin `MEMORY_RECOGNIZER=fake` explicitly rather than depending on
-whether a checkpoint happens to be present on the machine.
+`npm run check` stays fully offline. The extractor falls back without an Ark
+key, and tests that build a pipeline pin `MEMORY_RECOGNIZER=fake` explicitly
+rather than depending on a local SBERT checkpoint.
 
 After a real end-to-end run, diagnose it with:
 

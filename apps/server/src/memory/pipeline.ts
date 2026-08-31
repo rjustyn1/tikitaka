@@ -80,8 +80,6 @@ export interface RecognitionRuntimeConfig {
   memoryRecognitionAgentThreshold?: number;
   memoryRecognitionSkillThreshold?: number;
   memoryEmbeddingTimeoutMs?: number;
-  /** Only used to keep the sbert-fallback warning quiet under vitest. */
-  nodeEnv?: string;
 }
 
 export class RealMemoryPipeline implements MemoryPipeline {
@@ -345,32 +343,20 @@ export function createMemoryPipeline(
   });
 }
 
-/**
- * MEMORY_RECOGNIZER defaults to "sbert", the real local checkpoint. But sbert
- * has two prerequisites that a plain `git clone` does not satisfy: the 87 MB
- * checkpoint arrives only after `git lfs pull`, and the bridge needs a Python
- * env from requirements-sbert.txt.
- *
- * Rather than fail a fresh checkout, degrade to the deterministic offline
- * recognizer and say so once. This mirrors how index.ts already handles
- * MEMORY_EXTRACTOR=ark without a usable key.
- *
- * The LFS-pointer case is checked explicitly: cloning without git-lfs leaves a
- * ~133-byte text stub where the weights should be, which would otherwise fail
- * deep inside the Python bridge with an unhelpful error.
- */
-function resolveRecognizerMode(
-  config: MemoryConfig & RecognitionRuntimeConfig,
-): "ark" | "fake" | "sbert" | "off" {
-  const mode = config.memoryRecognizer ?? "sbert";
-  if (mode !== "sbert") return mode;
-
+function sbertRuntime(config: MemoryConfig & RecognitionRuntimeConfig): {
+  pythonPath: string;
+  modelPath: string;
+  bridgePath: string;
+} {
+  const pythonPath = config.memorySbertPython?.trim() ?? "";
   const modelPath = config.memorySbertModelDir?.trim() ?? "";
   const bridgePath = config.memorySbertBridge?.trim() ?? "";
   const weights = modelPath ? modelPath + "/model.safetensors" : "";
 
-  const reason = !modelPath || !existsSync(modelPath)
-    ? "checkpoint directory is missing"
+  const reason = !pythonPath
+    ? "MEMORY_SBERT_PYTHON is empty"
+    : !modelPath || !existsSync(modelPath)
+      ? "checkpoint directory is missing"
     : !bridgePath || !existsSync(bridgePath)
       ? "embedding bridge is missing"
       : !existsSync(weights)
@@ -378,23 +364,20 @@ function resolveRecognizerMode(
         : statSync(weights).size < 1_000_000
           ? "model.safetensors is a Git LFS pointer, not real weights (run: git lfs pull)"
           : null;
-  if (reason === null) return "sbert";
-
-  if (config.nodeEnv !== "test") {
-    console.warn(
-      "[memory] MEMORY_RECOGNIZER=sbert but " +
+  if (reason !== null) {
+    throw new Error(
+      "MEMORY_RECOGNIZER=sbert requires a usable local runtime: " +
         reason +
-        ". Falling back to the offline recognizer; note routing will be " +
-        "deterministic rather than model-driven.",
+        ". No automatic fake fallback is configured.",
     );
   }
-  return "fake";
+  return { pythonPath, modelPath, bridgePath };
 }
 
 function createRuntimeRecognizer(
   config: MemoryConfig & RecognitionRuntimeConfig,
 ): NoteRecognizer | undefined {
-  const mode = resolveRecognizerMode(config);
+  const mode = config.memoryRecognizer ?? "sbert";
   if (mode === "off") return undefined;
   const options = {
     ...(config.memoryRecognitionAgentThreshold !== undefined
@@ -406,14 +389,7 @@ function createRuntimeRecognizer(
   };
   if (mode === "fake") return new Recognizer(new FakeEmbeddingClient(), options);
   if (mode === "sbert") {
-    const pythonPath = config.memorySbertPython?.trim() ?? "";
-    const modelPath = config.memorySbertModelDir?.trim() ?? "";
-    const bridgePath = config.memorySbertBridge?.trim() ?? "";
-    if (!pythonPath || !modelPath || !bridgePath) {
-      throw new Error(
-        "MEMORY_RECOGNIZER=sbert requires MEMORY_SBERT_PYTHON, MEMORY_SBERT_MODEL_DIR, and MEMORY_SBERT_BRIDGE",
-      );
-    }
+    const { pythonPath, modelPath, bridgePath } = sbertRuntime(config);
     return new Recognizer(
       new SbertEmbeddingClient({
         pythonPath,

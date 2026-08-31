@@ -90,7 +90,7 @@ project-specific dataset with multi-agent labels.
       `backend`, `frontend`, `qa`, `planner`, `researcher`, `docs`, and
       `calculator`, with name, description, instructions, examples of positive
       work, and examples of neighboring work it should not own. The catalog
-      must support arbitrary additional Agents and 2–12 active group members;
+      must support arbitrary additional Agents and 2–8 active group members;
       no fixed three-Agent assumption may enter the data generator.
 
 - [ ] **Generate project-specific durable-note examples with the OpenAI API.**
@@ -126,7 +126,7 @@ project-specific dataset with multi-agent labels.
       from a frozen embedding baseline, score each note against all current
       profile snapshots, and select high-scoring incorrect profiles as
       `hard-negative` pairs. Repeat after each recognizer checkpoint or
-      calibration update. For the runtime's 2–12 member group, use an exact
+      calibration update. For the runtime's 2–8 member group, use an exact
       cosine scan rather than introducing an ANN index; this preserves ANCE's
       realistic-negative principle while keeping the implementation small.
       Hard negatives must include backend/frontend, backend/qa, planner/docs,

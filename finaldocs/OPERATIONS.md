@@ -11,9 +11,11 @@
 | Python 3 plus a virtual environment | Optional local SBERT inference. |
 
 The application can still run offline when Ark credentials are unavailable:
-startup selects the fake planner and extractor. The recognizer similarly falls
-back to deterministic fake embeddings when a local SBERT checkpoint or bridge is
-missing.
+startup selects the fake planner and extractor. The recognizer does NOT behave
+this way: MEMORY_RECOGNIZER=sbert never falls back. A missing checkpoint or
+bridge fails startup with the reason, so routing is never silently downgraded
+to stub embeddings. Choose MEMORY_RECOGNIZER=fake explicitly for an offline
+run.
 
 ## JavaScript Dependencies And Verification
 
@@ -133,7 +135,7 @@ All configuration is validated in apps/server/src/config.ts.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| MEMORY_RECOGNIZER | sbert | sbert, ark, fake, or off. |
+| MEMORY_RECOGNIZER | sbert | sbert, ark, fake, or off. sbert never automatically falls back to fake. |
 | MEMORY_EMBEDDING_MODEL | unset | Ark embedding model when recognizer is ark. |
 | MEMORY_SBERT_PYTHON | python3 | Python executable for local SBERT bridge. |
 | MEMORY_SBERT_MODEL_DIR | repository data/recognition/model | Local checkpoint directory. |
@@ -143,7 +145,6 @@ All configuration is validated in apps/server/src/config.ts.
 | MEMORY_EMBEDDING_TIMEOUT_MS | 30000 | Bridge or embedding request timeout. |
 | MEMORY_AUTO_GRANT_ENABLED | false | Explicit opt-in for automatic SBERT-routed grants. |
 | REVIEW_ALL_SKILLS | false | Force all notes through review. |
-| SKILLS_DIR | .agents/skills | Configured skill-root value; the private catalog currently uses this path. |
 
 ### Ark And Environment
 

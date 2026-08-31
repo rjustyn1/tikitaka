@@ -113,12 +113,12 @@ in work anywhere in the segment.
 | --- | --- |
 | sbert | Runs a local CPU SentenceTransformers checkpoint through the tracked Python bridge. This is the default. |
 | ark | Uses an OpenAI-compatible Ark embeddings endpoint. |
-| fake | Deterministic offline embeddings for tests and fallback operation. |
+| fake | Deterministic offline embeddings for tests or an explicit offline configuration. |
 | off | Disables recognition; candidates are withheld because there is no routing authority. |
 
-When SBERT prerequisites are missing or appear to be an LFS pointer rather than
-weights, the runtime warns and falls back to fake. It does not download a model
-or make an implicit network call.
+SBERT is not silently replaced. If its checkpoint directory, bridge, or weights
+are missing (including an LFS pointer), startup fails with a clear configuration
+error. The runtime never downloads a model or makes an implicit network call.
 
 ### Per-Agent skill routing
 

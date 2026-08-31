@@ -157,18 +157,21 @@ describe("GroupEditor", () => {
 
 
 
-  it("caps membership at twelve Agents", () => {
-    const candidates = Array.from({ length: 13 }, (_, index) =>
+  it("caps membership at the server's limit of eight Agents", () => {
+    // The cap must match MAX_GROUP_MEMBERS on the server. When the UI allowed
+    // twelve, picking a ninth Agent produced a roster the API rejected with
+    // "A group needs between 2 and 8 members".
+    const candidates = Array.from({ length: 9 }, (_, index) =>
       agent("a" + index, "Agent " + index),
     );
     renderEditor(vi.fn(), candidates);
     const boxes = screen.getAllByRole("checkbox");
-    for (const box of boxes.slice(0, 12)) fireEvent.click(box);
-    expect(boxes[12]).toBeDisabled();
-    // The denominator is the Agents available (13); the cap is called out
+    for (const box of boxes.slice(0, 8)) fireEvent.click(box);
+    expect(boxes[8]).toBeDisabled();
+    // The denominator is the Agents available (9); the cap is called out
     // separately, and only once it actually binds.
-    expect(screen.getByText(/12 of 13 selected/)).toBeInTheDocument();
-    expect(screen.getByText(/\(max 12\)/)).toBeInTheDocument();
+    expect(screen.getByText(/8 of 9 selected/)).toBeInTheDocument();
+    expect(screen.getByText(/\(max 8\)/)).toBeInTheDocument();
   });
 });
 

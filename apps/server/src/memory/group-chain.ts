@@ -27,11 +27,8 @@ import {
 /** A team needs at least two Agents to collaborate. */
 export const MIN_GROUP_MEMBERS = 2;
 
-/**
- * Membership cap. Higher than `MAX_PLAN_NODES` on purpose -- a group may carry
- * more Agents than any single task uses, because the planner selects a subset.
- */
-export const MAX_GROUP_MEMBERS = 12;
+/** The group cap matches the planner and fallback node cap. */
+export const MAX_GROUP_MEMBERS = 8;
 
 export const MEMBERSHIP_MESSAGE =
   "A group needs between " +

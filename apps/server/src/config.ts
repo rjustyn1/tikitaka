@@ -71,7 +71,6 @@ const envSchema = z.object({
   MEMORY_EMBEDDING_TIMEOUT_MS: z.coerce.number().int().min(1000).default(30000),
   MEMORY_AUTO_GRANT_ENABLED: z.enum(["true", "false"]).default("false"),
   REVIEW_ALL_SKILLS: z.enum(["true", "false"]).default("false"),
-  SKILLS_DIR: z.enum([".agents/skills", ".codex/skills"]).default(".agents/skills"),
   APP_AUTH_TOKEN: z
     .string()
     .trim()
@@ -150,7 +149,6 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
     memoryEmbeddingTimeoutMs: env.MEMORY_EMBEDDING_TIMEOUT_MS,
     memoryAutoGrantEnabled: env.MEMORY_AUTO_GRANT_ENABLED === "true",
     reviewAllSkills: env.REVIEW_ALL_SKILLS === "true",
-    skillsDir: env.SKILLS_DIR,
     authToken,
     arkApiKey: env.ARK_API_KEY?.trim() ?? "",
     arkModel: env.ARK_MODEL?.trim() ?? "",

@@ -17,10 +17,8 @@ describe("memory configuration", () => {
   });
 
   it("defaults extraction to Ark and recognition to the local checkpoint", () => {
-    // Both default to the real thing. Each degrades on its own when the
-    // prerequisite is absent: the extractor in index.ts when ARK_* is
-    // unusable, the recognizer in pipeline.ts when the checkpoint or bridge
-    // is not provisioned.
+    // Both default to the real thing. The extractor degrades to fake when
+    // ARK_* is unusable; SBERT is required and fails startup if unprovisioned.
     expect(loadConfig({ NODE_ENV: "test" })).toMatchObject({
       memoryExtractor: "ark",
       memoryExtractTimeoutMs: 30_000,

@@ -34,11 +34,11 @@ flowchart LR
 | Principle | Implementation consequence |
 | --- | --- |
 | Private by default | Each Agent has a workspace, solo thread, and group participant thread distinct from every other Agent. |
-| Explicit collaboration | A group has 2-12 unique members. Roles are display labels; they do not grant access or select work. |
+| Explicit collaboration | A group has 2-8 unique members. Roles are display labels; they do not grant access or select work. |
 | Untrusted model output | Planner and extractor output is parsed, index-resolved, bounded, and validated before persistence. |
 | Extracting is not granting | Consolidation identifies durable knowledge only; recognition selects potential recipients. |
 | Placement is enforcement | Governed memory is available only if LandingService wrote it under the recipient's private workspace. |
-| Review before risk | Safety findings and uncertain or broad routes are parked for a human before activation. |
+| Review before risk | Safety findings, fallback routing, and new-skill proposals are parked for a human before activation. |
 | Task completion is independent | Memory errors never retroactively fail a completed or partial group task. |
 | Evidence is persisted | Runs, spans, plans, context injections, notes, landed files, and grants drive the UI and audit views. |
 
@@ -62,7 +62,7 @@ flowchart TB
     subgraph AgentRuntime["Agent runtime"]
         Solo["Solo Codex thread"]
         Participant["Group participant thread"]
-        Code["shared-code/task-id"]
+        Code["shared-code/group-id"]
         Space["agent-id private workspace"]
     end
 
@@ -94,7 +94,7 @@ process invoked by the Node server; it is not a separate HTTP backend.
 
 ### Membership and planning
 
-A group contains 2-12 explicitly chosen, non-duplicate Agents. The planner
+A group contains 2-8 explicitly chosen, non-duplicate Agents. The planner
 receives the new task prompt plus each candidate's name and description. It can
 choose a subset and produce up to eight task nodes. A node includes an Agent
 index, dependency indices, instruction, expected output, work area, and write
@@ -142,8 +142,11 @@ locks, and allow a task to become partial when completed branches remain useful.
 - A solo run resumes Agent.codexThreadId unless it starts fresh.
 - A group run uses GroupParticipantState.groupThreadId, preserving the solo
   session.
-- Every group task owns shared-code/task-id, exposed to selected group nodes as
-  ./code.
+- Every group owns shared-code/group-id, exposed to its Agents as ./code. It is
+  keyed by GROUP, not by task, so a team's codebase persists across prompts:
+  task two continues the work task one left. The transcript and governed memory
+  already span tasks, so per-task code left an Agent reading that it had built
+  something while ./code was empty.
 - Agent-specific AGENTS.md task blocks give group context without turning the
   workspace into a shared memory root.
 - GroupContextInjection records which messages and dependency outputs were
@@ -185,7 +188,7 @@ The detailed contract is in [MEMORY_PIPELINE.md](MEMORY_PIPELINE.md).
 ```mermaid
 flowchart TB
     subgraph Root["AGENT_WORKSPACE_ROOT"]
-        Shared["shared-code/task-id<br/>team source files"]
+        Shared["shared-code/group-id<br/>team source files, kept across tasks"]
         subgraph Agent["agent-id private workspace"]
             Identity["AGENTS.md<br/>identity, group charter, severe notes"]
             Skills[".agents/skills/skill-key/SKILL.md<br/>normal notes"]
@@ -259,7 +262,7 @@ ledger, workspaces, proof, and history views.
 | --- | --- |
 | Invalid planner output or planner failure | Use deterministic fallback plan. |
 | Unusable Ark configuration | Startup chooses fake planner/extractor and warns. |
-| Missing SBERT prerequisites | Runtime chooses fake embeddings and warns. |
+| Missing SBERT checkpoint or bridge | Startup fails clearly; there is no automatic fake fallback. |
 | Recognition error | Withhold candidate note; never guess recipients. |
 | Safety error | Quarantine candidate note. |
 | Memory pipeline error | Log error; do not fail a settled group task. |

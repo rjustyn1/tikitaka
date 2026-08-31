@@ -276,6 +276,24 @@ describe("createMemoryPipeline", () => {
     await pipeline.runMemoryPipeline("seg-1");
     expect(store.snapshot().notes).toEqual([]);
   });
+
+  it("fails clearly instead of replacing an unavailable SBERT runtime with fake", async () => {
+    const { store, root } = await seededStore();
+
+    expect(() =>
+      createMemoryPipeline(store, {
+        memoryExtractor: "fake",
+        memoryExtractTimeoutMs: 30_000,
+        arkApiKey: "",
+        arkModel: "",
+        arkBaseUrl: "https://example.test",
+        memoryRecognizer: "sbert",
+        memorySbertPython: "python3",
+        memorySbertModelDir: path.join(root, "missing-model"),
+        memorySbertBridge: path.join(root, "missing-bridge.py"),
+      }),
+    ).toThrow("No automatic fake fallback is configured");
+  });
 });
 
 describe("RealMemoryPipeline.resetAutoNotes", () => {

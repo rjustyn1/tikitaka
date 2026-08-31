@@ -23,7 +23,7 @@ The strongest live story is not "the model remembered something." It is:
    pair is:
    - Backend Agent: API validation, storage, and error handling.
    - Frontend Agent: React interactions, forms, and user-visible states.
-4. Create a team containing both Agents. The group UI requires 2-12 unique
+4. Create a team containing both Agents. The group UI requires 2-8 unique
    Agents.
 5. For a predictable no-network demo, use MEMORY_EXTRACTOR=fake and either
    MEMORY_RECOGNIZER=fake or a provisioned local SBERT checkpoint. Keep
@@ -121,7 +121,7 @@ defense-in-depth and review-backed, not perfect detection.
 | --- | --- |
 | Planner shows a simple sequential plan | This is the deterministic fallback; check Ark extractor configuration if a model-generated DAG is required. |
 | No notes appear | The segment may still be open. Close it with an unrelated task, a size cap, or idle sweep. Fake extraction can be used for a predictable demo. |
-| SBERT warning at startup | Provision the local checkpoint and Python bridge, or select MEMORY_RECOGNIZER=fake deliberately. |
+| SBERT startup error | Provision the local checkpoint and Python bridge. There is no automatic fake fallback. |
 | Note is pending | This is expected in review-first operation. Approve it to demonstrate landing. |
 | No auto-grant occurs | Expected while MEMORY_AUTO_GRANT_ENABLED=false; this is the safe demo setting. |
 | Task node fails | Show the trace and explain that partial execution can preserve completed branches and potentially produce partial-segment memory. |
@@ -132,4 +132,3 @@ defense-in-depth and review-backed, not perfect detection.
 team work into bounded, provenance-backed knowledge, puts it only where it is
 approved to be available, and leaves an auditable trail for both grants and
 denials."
-

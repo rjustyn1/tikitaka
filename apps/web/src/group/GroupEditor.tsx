@@ -15,7 +15,10 @@ import type { Agent, AgentGroup, GroupMember } from "../types";
 import { deriveRole } from "./format";
 
 const MIN_MEMBERS = 2;
-const MAX_MEMBERS = 12;
+// Mirrors MAX_GROUP_MEMBERS in apps/server/src/memory/group-chain.ts, which is
+// itself the planner's node cap. The server rejects anything larger, so a
+// higher value here would offer a roster the API then refuses.
+const MAX_MEMBERS = 8;
 
 /**
  * The label is cosmetic: it only picks the colour of a dot in the sidebar,

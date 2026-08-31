@@ -17,7 +17,7 @@ import { isValidSkillKey } from "./skill-catalog.js";
 export { removeManagedBlock, replaceManagedBlock };
 
 const GOVERNED_HEADING = "## Governed Memories";
-const SKILLS_DIR = ".agents/skills";
+const PRIVATE_SKILLS_DIR = ".agents/skills";
 
 /** Deterministic skill slug from a note's description + id. */
 export function noteSlug(note: MemoryNote): string {
@@ -35,7 +35,7 @@ export class WorkspaceMemoryWriter {
   }
 
   private skillDir(agent: Agent, skillKey: string): string {
-    return path.join(agent.workspacePath, SKILLS_DIR, skillKey);
+    return path.join(agent.workspacePath, PRIVATE_SKILLS_DIR, skillKey);
   }
 
   /** Severe note -> upsert a managed block in the target Agent's AGENTS.md. */

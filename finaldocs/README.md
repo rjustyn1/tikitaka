@@ -50,7 +50,7 @@ finaldocs/                This final documentation set
 
 ## Core Claims
 
-- Group membership is explicit: a team has 2-12 unique Agents; display roles
+- Group membership is explicit: a team has 2-8 unique Agents; display roles
   are labels, not access-control permissions.
 - The planner owns task decomposition. It receives Agent descriptions and
   returns a validated DAG; invalid model output falls back to a deterministic

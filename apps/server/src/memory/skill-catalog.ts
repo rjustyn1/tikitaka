@@ -4,11 +4,11 @@ import path from "node:path";
 import type { Agent } from "../types.js";
 import type { SkillProfile } from "./recognizer.js";
 
-const SKILLS_DIR = ".agents/skills";
+const PRIVATE_SKILLS_DIR = ".agents/skills";
 
 /** Read only the public skill metadata for one Agent's private workspace. */
 export async function loadAgentSkillProfiles(agent: Agent): Promise<SkillProfile[]> {
-  const root = path.join(agent.workspacePath, SKILLS_DIR);
+  const root = path.join(agent.workspacePath, PRIVATE_SKILLS_DIR);
   let entries: Dirent<string>[];
   try {
     entries = await readdir(root, { withFileTypes: true });

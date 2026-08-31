@@ -5,10 +5,10 @@
 | Area | Current state |
 | --- | --- |
 | Agent lifecycle | Implemented: create, edit, start, stop, delete, message, run, trace, and persistent private workspaces. |
-| Group membership | Implemented: 2-12 unique Agents with free-form display roles. |
+| Group membership | Implemented: 2-8 unique Agents with free-form display roles. |
 | Group planning | Implemented: model-assisted planner, full validation, deterministic fallback, persisted node instructions and dependencies. |
 | DAG execution | Implemented: dependency-aware scheduling, bounded parallelism, Agent leases, runtime locks, context injection, cancellation, and resume. |
-| Shared code | Implemented: per-task shared code exposed as ./code, while Agent memory remains private. |
+| Shared code | Implemented: per-group shared code exposed as ./code, persisting across tasks, while Agent memory remains private. |
 | Topic segmentation | Implemented: topic drift, task and character cap, idle closure, segment-scoped buffering and consolidation. |
 | Extraction | Implemented: Ark, fake, and off modes; provenance indices resolve to persisted runs and spans. |
 | Recognition | Implemented: local SBERT, Ark, fake, and off modes; Agent and private-skill matching. |
@@ -76,4 +76,3 @@ explain how the integrated system was assembled. They may retain superseded task
 assignments, interim defaults, or implementation handoffs. Use finaldocs/ for
 the final architecture and operations story; use source code and tests as the
 executable contract.
-

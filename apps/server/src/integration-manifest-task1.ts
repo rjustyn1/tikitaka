@@ -23,7 +23,6 @@ export const integrationManifestTask1 = {
     "MEMORY_EXTRACTOR",
     "MEMORY_EXTRACT_TIMEOUT_MS",
     "REVIEW_ALL_SKILLS",
-    "SKILLS_DIR",
   ],
   contracts: {
     groupMembership: "AgentGroup.members[{ agentId, role }] exactly three, one per role",
