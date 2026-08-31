@@ -250,6 +250,19 @@ export interface LandedMemoryFile {
   removedAt: string | null;
 }
 
+/** A read-only file in the group-shared codebase shown in the Teams explorer. */
+export interface SharedCodeFile {
+  path: string;
+  size: number;
+}
+
+/** A safe, read-only instruction or skill file belonging to a group member. */
+export interface AgentWorkspaceFile {
+  path: string;
+  size: number;
+  kind: "instructions" | "skill";
+}
+
 export interface GrantRecord {
   id: string;
   groupTaskId: string;

@@ -37,6 +37,8 @@ const groupTaskParams = z.object({
 });
 const noteIdParams = z.object({ id: z.string().uuid() });
 const taskIdParams = z.object({ id: z.string().uuid() });
+const codebaseFileQuery = z.object({ path: z.string().trim().min(1).max(500) });
+const groupAgentParams = z.object({ id: z.string().uuid(), agentId: z.string().uuid() });
 
 // A4's "exactly three, one per role" is gone. `role` is a free-form label the
 // UI can show; it no longer selects work, so it is optional and defaults to
@@ -329,6 +331,34 @@ export async function createApp(
   app.get("/api/tasks/:id/grants", async (request) => {
     const { id } = taskIdParams.parse(request.params);
     return { grants: service.listTaskGrants(id) };
+  });
+
+  // The right-hand Teams explorer has a shared-code view and a tightly bounded
+  // per-member view (AGENTS.md plus .agents/skills only). It never becomes a
+  // general private-workspace reader.
+  app.get("/api/groups/:id/codebase", async (request) => {
+    const { id } = groupIdParams.parse(request.params);
+    return { files: await service.listGroupCodeFiles(id) };
+  });
+
+  app.get("/api/groups/:id/codebase/file", async (request) => {
+    const { id } = groupIdParams.parse(request.params);
+    const { path } = codebaseFileQuery.parse(request.query);
+    return { path, content: await service.readGroupCodeFile(id, path) };
+  });
+
+  app.get("/api/groups/:id/agents/:agentId/workspace", async (request) => {
+    const { id, agentId } = groupAgentParams.parse(request.params);
+    return { files: await service.listGroupAgentWorkspaceFiles(id, agentId) };
+  });
+
+  app.get("/api/groups/:id/agents/:agentId/workspace/file", async (request) => {
+    const { id, agentId } = groupAgentParams.parse(request.params);
+    const { path } = codebaseFileQuery.parse(request.query);
+    return {
+      path,
+      content: await service.readGroupAgentWorkspaceFile(id, agentId, path),
+    };
   });
 
   /**

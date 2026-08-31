@@ -25,7 +25,6 @@ import type {
 import { ConversationPanel } from "./ConversationPanel";
 import { GroupEditor } from "./GroupEditor";
 import { isAwaitingReview, isTerminal, statusTone } from "./format";
-import { LiveTerminal } from "./LiveTerminal";
 import { MemberRail } from "./MemberRail";
 import {
   ChainPanel,
@@ -39,6 +38,7 @@ import { ProofPanel } from "./ProofPanel";
 import { ReviewPanel } from "./ReviewPanel";
 import { useAgentMemory } from "./useAgentMemory";
 import { useGroupTask } from "./useGroupTask";
+import { WorkspaceExplorer } from "./WorkspaceExplorer";
 
 type View =
   | "chat"
@@ -153,19 +153,6 @@ export function GroupWorkspace({
   const state = useGroupTask(selectedGroupId, taskId, watchedAgentIds);
   const task = state.task?.task ?? null;
   const running = task !== null && !isTerminal(task.status);
-
-  // The runs the Live Terminal streams: EVERY node running right now, because
-  // independent branches run concurrently — picking the first one narrated one
-  // agent while three others worked in silence. Falls back to the most recent
-  // run so the panel does not blank the moment a task finishes.
-  const runningRunIds = (state.task?.nodes ?? [])
-    .filter((node) => node.status === "running" && node.runId)
-    .map((node) => node.runId as string);
-  const lastRunId = [...(state.task?.nodes ?? [])]
-    .reverse()
-    .find((node) => node.runId)?.runId;
-  const liveRunIds =
-    runningRunIds.length > 0 ? runningRunIds : lastRunId ? [lastRunId] : [];
 
   // The rail reads each member's workspace through the API. Bump the revision
   // — never poll — whenever something could have changed one: a different
@@ -678,10 +665,10 @@ export function GroupWorkspace({
 
         {group && (
           <div className="cc-rail">
-            <LiveTerminal
-              runIds={liveRunIds}
+            <WorkspaceExplorer
+              group={group}
               agents={agents}
-              running={running}
+              refreshKey={(task?.id ?? "no-task") + ":" + (task?.status ?? "idle")}
             />
             <MemberRail
               group={group}

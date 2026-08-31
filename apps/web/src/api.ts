@@ -1,5 +1,6 @@
 import type {
   Agent,
+  AgentWorkspaceFile,
   AgentGroup,
   AgentRun,
   CreateGroupInput,
@@ -14,6 +15,7 @@ import type {
   RevokeNoteInput,
   RunTraceSummary,
   SendMessageInput,
+  SharedCodeFile,
   SystemInfo,
   TraceSpan,
   UpdateGroupInput,
@@ -172,6 +174,22 @@ export const api = {
     }),
   agentMemory: (id: string) =>
     request<{ files: LandedMemoryFile[] }>("/api/agents/" + id + "/memory"),
+  groupCodebase: (id: string) =>
+    request<{ files: SharedCodeFile[] }>("/api/groups/" + id + "/codebase"),
+  groupCodebaseFile: (id: string, path: string) =>
+    request<{ path: string; content: string }>(
+      "/api/groups/" + id + "/codebase/file?" +
+        new URLSearchParams({ path }).toString(),
+    ),
+  groupAgentWorkspace: (groupId: string, agentId: string) =>
+    request<{ files: AgentWorkspaceFile[] }>(
+      "/api/groups/" + groupId + "/agents/" + agentId + "/workspace",
+    ),
+  groupAgentWorkspaceFile: (groupId: string, agentId: string, path: string) =>
+    request<{ path: string; content: string }>(
+      "/api/groups/" + groupId + "/agents/" + agentId + "/workspace/file?" +
+        new URLSearchParams({ path }).toString(),
+    ),
   taskGrants: (id: string) =>
     request<{ grants: GrantRecord[] }>("/api/tasks/" + id + "/grants"),
 };

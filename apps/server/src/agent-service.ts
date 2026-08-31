@@ -36,7 +36,11 @@ import type {
   TraceSpan,
   UpdateAgentInput,
 } from "./types.js";
-import { WorkspaceManager } from "./workspace.js";
+import {
+  WorkspaceManager,
+  type AgentWorkspaceFile,
+  type SharedCodeFile,
+} from "./workspace.js";
 
 const now = () => new Date().toISOString();
 
@@ -636,6 +640,44 @@ export class AgentService implements AgentLease {
 
   getGroupTask(taskId: string): GroupTaskResponse {
     return this.groupRunner.getGroupTask(taskId);
+  }
+
+  async listGroupCodeFiles(groupId: string): Promise<SharedCodeFile[]> {
+    this.getGroup(groupId);
+    return this.workspaces.listSharedCodeFiles(groupId);
+  }
+
+  async readGroupCodeFile(groupId: string, relativePath: string): Promise<string> {
+    this.getGroup(groupId);
+    return this.workspaces.readSharedCodeFile(groupId, relativePath);
+  }
+
+  async listGroupAgentWorkspaceFiles(
+    groupId: string,
+    agentId: string,
+  ): Promise<AgentWorkspaceFile[]> {
+    return this.workspaces.listAgentWorkspaceFiles(
+      this.getGroupMemberAgent(groupId, agentId),
+    );
+  }
+
+  async readGroupAgentWorkspaceFile(
+    groupId: string,
+    agentId: string,
+    relativePath: string,
+  ): Promise<string> {
+    return this.workspaces.readAgentWorkspaceFile(
+      this.getGroupMemberAgent(groupId, agentId),
+      relativePath,
+    );
+  }
+
+  private getGroupMemberAgent(groupId: string, agentId: string): Agent {
+    const group = this.getGroup(groupId);
+    if (!group.members.some((member) => member.agentId === agentId)) {
+      throw new HttpError(404, "Agent is not a member of this group");
+    }
+    return this.getAgent(agentId);
   }
 
   listNotes(query: ListNotesQuery): MemoryNote[] {

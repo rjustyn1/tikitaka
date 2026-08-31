@@ -197,4 +197,67 @@ describe("group + memory routes", () => {
     expect(denied.statusCode).toBe(401);
     await app.close();
   });
+
+  it("serves the group-shared codebase through its read-only routes", async () => {
+    const groupId = randomUUID();
+    const agentId = randomUUID();
+    const codebaseService = {
+      ...groupService,
+      listGroupCodeFiles: async (id: string) => {
+        expect(id).toBe(groupId);
+        return [{ path: "src/api.ts", size: 24 }];
+      },
+      readGroupCodeFile: async (id: string, filePath: string) => {
+        expect(id).toBe(groupId);
+        expect(filePath).toBe("src/api.ts");
+        return "export const ok = true;\n";
+      },
+      listGroupAgentWorkspaceFiles: async (id: string, memberId: string) => {
+        expect(id).toBe(groupId);
+        expect(memberId).toBe(agentId);
+        return [{ path: "AGENTS.md", size: 32, kind: "instructions" }];
+      },
+      readGroupAgentWorkspaceFile: async (id: string, memberId: string, filePath: string) => {
+        expect(id).toBe(groupId);
+        expect(memberId).toBe(agentId);
+        expect(filePath).toBe("AGENTS.md");
+        return "# Platform-managed Agent instructions\n";
+      },
+    } as unknown as AgentService;
+    const app = await createApp(loadConfig({ NODE_ENV: "test" }), codebaseService);
+
+    const files = await app.inject({
+      method: "GET",
+      url: "/api/groups/" + groupId + "/codebase",
+    });
+    expect(files.statusCode).toBe(200);
+    expect(files.json()).toEqual({ files: [{ path: "src/api.ts", size: 24 }] });
+
+    const file = await app.inject({
+      method: "GET",
+      url: "/api/groups/" + groupId + "/codebase/file?path=src%2Fapi.ts",
+    });
+    expect(file.statusCode).toBe(200);
+    expect(file.json()).toEqual({ path: "src/api.ts", content: "export const ok = true;\n" });
+
+    const agentFiles = await app.inject({
+      method: "GET",
+      url: "/api/groups/" + groupId + "/agents/" + agentId + "/workspace",
+    });
+    expect(agentFiles.statusCode).toBe(200);
+    expect(agentFiles.json()).toEqual({
+      files: [{ path: "AGENTS.md", size: 32, kind: "instructions" }],
+    });
+
+    const agentFile = await app.inject({
+      method: "GET",
+      url: "/api/groups/" + groupId + "/agents/" + agentId + "/workspace/file?path=AGENTS.md",
+    });
+    expect(agentFile.statusCode).toBe(200);
+    expect(agentFile.json()).toEqual({
+      path: "AGENTS.md",
+      content: "# Platform-managed Agent instructions\n",
+    });
+    await app.close();
+  });
 });
