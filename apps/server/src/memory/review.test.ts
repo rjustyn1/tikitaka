@@ -34,6 +34,20 @@ async function setup() {
   await store.initialize();
   await store.mutate((db) => {
     db.agents.push(target, other);
+    // Both Agents are members: recipients are validated against the group, so
+    // a fixture without one cannot land anything (the guard fails closed).
+    db.groups.push({
+      id: "group-1",
+      name: "Team",
+      description: "",
+      members: [
+        { agentId: TARGET, role: "backend" },
+        { agentId: OTHER, role: "frontend" },
+      ],
+      activeTaskId: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
     db.groupTasks.push({
       id: "task-1",
       groupId: "group-1",
@@ -135,6 +149,54 @@ async function exists(target: string): Promise<boolean> {
 }
 
 describe("ReviewService", () => {
+  it("refuses to route a note to an Agent outside the source group", async () => {
+    // Placement IS the security boundary: a note reaches an Agent iff a file
+    // was written into that Agent's workspace. Review is the one place a human
+    // can change recipients, so it is the one place the boundary can be
+    // widened. The Teams UI only offers group members, but the API validates
+    // targetAgentIds as UUIDs and nothing more -- so a direct caller could
+    // otherwise grant a note to an Agent that never took part.
+    const { store, review } = await setup();
+    const OUTSIDER = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    await store.mutate((db) => {
+      db.agents.push(agentAt(OUTSIDER, path.join(tmpdir(), "outsider-ws")));
+    });
+
+    // A severe note parks as pending, which is what a human then edits.
+    const severe = candidate({ severity: "severe" });
+    const pending = await review.processCandidate(
+      severe,
+      safety({ note: severe }),
+    );
+    expect(pending.status).toBe("pending");
+
+    await expect(
+      review.edit(pending.id, {
+        reviewerName: "someone",
+        targetAgentIds: [OUTSIDER],
+        approveAfterEdit: true,
+      }),
+    ).rejects.toThrow(/outside the source group/);
+
+    // The rejected recipients must not be persisted either, or a later plain
+    // approve would pick them up.
+    const stored = store.snapshot().notes.find((note) => note.id === pending.id);
+    expect(stored?.targetAgentIds).not.toContain(OUTSIDER);
+    expect(stored?.status).toBe("pending");
+  });
+
+  it("still allows narrowing recipients within the group", async () => {
+    const { review } = await setup();
+    const severe = candidate({ severity: "severe", targetAgentIds: [TARGET, OTHER] });
+    const pending = await review.processCandidate(severe, safety({ note: severe }));
+
+    const edited = await review.edit(pending.id, {
+      reviewerName: "someone",
+      targetAgentIds: [OTHER],
+    });
+    expect(edited.targetAgentIds).toEqual([OTHER]);
+  });
+
   it("auto-activates a clean, narrow normal note and lands + grants it", async () => {
     const { review, store, ledger, target } = await setup();
     const note = await review.processCandidate(candidate(), safety());

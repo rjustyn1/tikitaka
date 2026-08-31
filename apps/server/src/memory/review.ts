@@ -15,6 +15,7 @@ import type {
 } from "../types.js";
 import type { JsonStore } from "../store.js";
 import { HttpError } from "../errors.js";
+import { readMembers } from "./group-chain.js";
 import type { LandingService } from "./landing.js";
 import type { LedgerService } from "./ledger.js";
 import type { CandidateMemoryNote, SafetyResult } from "./types.js";
@@ -141,6 +142,14 @@ export class ReviewService {
 
   async edit(noteId: string, input: EditNoteInput): Promise<MemoryNote> {
     let note = this.mustGetNote(noteId);
+    if (input.targetAgentIds) {
+      // Validate the PROPOSED recipients before persisting them, so a rejected
+      // edit cannot be left on the note for a later approve to pick up.
+      this.assertRecipientsInGroup({
+        ...note,
+        targetAgentIds: input.targetAgentIds,
+      });
+    }
     note = await this.patchNote(noteId, {
       content: input.content ?? note.content,
       severity: input.severity ?? note.severity,
@@ -206,10 +215,49 @@ export class ReviewService {
 
   // --- internals -----------------------------------------------------------
 
+  /**
+   * Recipients may only ever be members of the note's own group.
+   *
+   * The entire security claim is placement: a note reaches an Agent IFF a file
+   * was written into that Agent's workspace. Review is the one place a human
+   * can change recipients, so it is the one place that boundary can be widened
+   * -- and widening it is exactly what must not be possible.
+   *
+   * The Teams UI already only offers group members, but a direct API call is
+   * not bound by the UI. `targetAgentIds` is validated as UUIDs and nothing
+   * more, so without this an edit could route a note to any Agent on the
+   * platform, including one that never took part. Enforced here, on the server,
+   * because that is where the claim actually lives.
+   *
+   * Narrowing is always fine. A missing group fails CLOSED: if membership
+   * cannot be established, nothing lands.
+   */
+  private assertRecipientsInGroup(note: MemoryNote): void {
+    const group = this.store
+      .snapshot()
+      .groups.find((item) => item.id === note.groupId);
+    if (!group) {
+      throw new HttpError(
+        409,
+        `Group ${note.groupId} no longer exists, so recipients cannot be verified`,
+      );
+    }
+    const members = new Set(readMembers(group).map((member) => member.agentId));
+    const outside = note.targetAgentIds.filter((id) => !members.has(id));
+    if (outside.length > 0) {
+      throw new HttpError(
+        400,
+        "Memory routing cannot target Agents outside the source group: " +
+          outside.join(", "),
+      );
+    }
+  }
+
   private async activate(
     note: MemoryNote,
     reviewerName: string | null,
   ): Promise<MemoryNote> {
+    this.assertRecipientsInGroup(note);
     let landed;
     try {
       landed = await this.landing.landMemory(note);

@@ -47,7 +47,12 @@ async function seededStore() {
       id: "group-1",
       name: "Upload Team",
       description: "",
-      memberAgentIds: [AGENT_A, AGENT_B],
+      // Post-backfill shape. store.initialize() migrates legacy memberAgentIds
+      // to members, so anything reading a group sees this form.
+      members: [
+        { agentId: AGENT_A, role: "backend" },
+        { agentId: AGENT_B, role: "frontend" },
+      ],
       activeTaskId: "task-1",
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
