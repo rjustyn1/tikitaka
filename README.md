@@ -49,6 +49,9 @@ Volcengine ECS.
   not per individual task
 - **Recognition** — decides *which* Agents receive each note, by embedding
   similarity rather than by asking the extractor to guess
+- **Incremental consolidation** — within one task, when the agents' work drifts
+  to a new subject (node-level embedding drift), the accumulated nodes are
+  consolidated mid-DAG rather than only at task end
 - **Safety + human review** — secret redaction and a quarantine heuristic run
   before anything is written; severe, redacted, quarantined, and low-confidence
   notes go to a human
@@ -334,6 +337,13 @@ cp deploy/volcengine/terraform.tfvars.example \
 | `MEMORY_SBERT_MODEL_DIR` | `data/recognition/model` | Checkpoint directory. |
 | `MEMORY_SBERT_BRIDGE` | `scripts/embed-recognizer.py` | Inference bridge path. |
 | `MEMORY_EMBEDDING_TIMEOUT_MS` | `30000` | Embedding call timeout. |
+
+**Node drift (intra-task consolidation)**
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `MEMORY_DRIFT_MODEL_DIR` | `data/drift-model` | GENERAL embedder for node drift. Ships via Git LFS (`git lfs pull`). Deliberately not the routing checkpoint, which groups by Agent, not subject. A local path also works. |
+| `MEMORY_NODE_DRIFT_THRESHOLD` | `0.55` | Cosine drift above which the accumulated node buffer is consolidated mid-DAG. Calibrate with `scripts/node-drift-stats.mjs`. |
 
 See [.env.example](.env.example) for the annotated full list.
 

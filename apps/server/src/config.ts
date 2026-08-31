@@ -66,6 +66,20 @@ const envSchema = z.object({
     .trim()
     .min(1)
     .default(path.join(repositoryRoot, "scripts", "embed-recognizer.py")),
+  // Node-level TOPIC-DRIFT embedder. Deliberately a GENERAL model, not the
+  // routing checkpoint: the fine-tuned SBERT organizes its space by which Agent
+  // a note belongs to, which cannot separate "same feature, different role" from
+  // "different subject" (measured — see scripts/probe-drift.mjs). A HF id here
+  // is auto-downloaded by the bridge; a local path also works.
+  MEMORY_DRIFT_MODEL_DIR: z
+    .string()
+    .trim()
+    .min(1)
+    .default(path.join(repositoryRoot, "data", "drift-model")),
+  // Cosine-drift above which a node's work is a NEW subject, so the accumulated
+  // node buffer is flushed to consolidation mid-DAG. Calibrated ~0.55 on the
+  // general drift model (scripts/probe-drift.mjs); range 0..2.
+  MEMORY_NODE_DRIFT_THRESHOLD: z.coerce.number().min(0).max(2).default(0.55),
   MEMORY_RECOGNITION_AGENT_THRESHOLD: z.coerce.number().min(-1).max(1).default(0.35),
   MEMORY_RECOGNITION_SKILL_THRESHOLD: z.coerce.number().min(-1).max(1).default(0.45),
   MEMORY_EMBEDDING_TIMEOUT_MS: z.coerce.number().int().min(1000).default(30000),
@@ -144,6 +158,10 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
     memorySbertPython: env.MEMORY_SBERT_PYTHON,
     memorySbertModelDir: path.resolve(env.MEMORY_SBERT_MODEL_DIR),
     memorySbertBridge: path.resolve(env.MEMORY_SBERT_BRIDGE),
+    // The drift bridge is local-only (local_files_only=True), so this must be a
+    // local checkpoint dir — provisioned by scripts/fetch-drift-model.py.
+    memoryDriftModelDir: path.resolve(env.MEMORY_DRIFT_MODEL_DIR),
+    memoryNodeDriftThreshold: env.MEMORY_NODE_DRIFT_THRESHOLD,
     memoryRecognitionAgentThreshold: env.MEMORY_RECOGNITION_AGENT_THRESHOLD,
     memoryRecognitionSkillThreshold: env.MEMORY_RECOGNITION_SKILL_THRESHOLD,
     memoryEmbeddingTimeoutMs: env.MEMORY_EMBEDDING_TIMEOUT_MS,

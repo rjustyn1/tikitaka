@@ -17,6 +17,13 @@ import type {
 
 export interface BuildSegmentBufferInput {
   segmentId: string;
+  /**
+   * Restrict the buffer to this exact set of plan nodes (an intra-task,
+   * drift-triggered node-buffer flush). Omitted = the whole segment. Either
+   * way, nodes already stamped `consolidatedAt` are excluded, so a node is
+   * never consolidated twice.
+   */
+  onlyNodeIds?: string[] | undefined;
 }
 
 /** Cap on the final serialized buffer handed to the extractor. */
@@ -274,21 +281,45 @@ export class SegmentBufferBuilder {
     // Nodes are ordered topologically WITHIN each task, and tasks are ordered
     // by creation. A segment's tasks are sequential by construction (the group
     // rejects a new task while one runs), so there is no cross-task DAG to sort.
+    // Never consolidate a node twice, and honour an explicit node subset.
+    const consolidatedNodeIds = new Set(
+      db.groupPlanNodes
+        .filter((node) => node.consolidatedAt)
+        .map((node) => node.id),
+    );
+    const onlyNodeIds = input.onlyNodeIds
+      ? new Set(input.onlyNodeIds)
+      : null;
     const orderedNodes: GroupPlanNode[] = tasks.flatMap((task) =>
       topologicalSort(
-        db.groupPlanNodes.filter((node) => node.groupTaskId === task.id),
+        db.groupPlanNodes.filter(
+          (node) =>
+            node.groupTaskId === task.id &&
+            !consolidatedNodeIds.has(node.id) &&
+            (onlyNodeIds === null || onlyNodeIds.has(node.id)),
+        ),
       ),
     );
+    const includedNodeIds = new Set(orderedNodes.map((node) => node.id));
 
+    // The transcript keeps human turns (context) plus only the agent turns of
+    // the included nodes, so a node-subset flush — and a segment close after
+    // intra-task flushes — see exactly the work they consolidate.
     const transcript: SegmentTranscriptLine[] = messagesIn(
       segment,
       db.groupMessages,
-    ).map((message) => ({
-      seq: message.seq,
-      speakerType: message.speakerType,
-      agentId: message.speakerAgentId,
-      content: message.content,
-    }));
+    )
+      .filter(
+        (message) =>
+          message.planNodeId === null ||
+          includedNodeIds.has(message.planNodeId),
+      )
+      .map((message) => ({
+        seq: message.seq,
+        speakerType: message.speakerType,
+        agentId: message.speakerAgentId,
+        content: message.content,
+      }));
 
     // Measure the envelope exactly, then split what is actually left. Reserving
     // a fixed constant instead would overflow the cap whenever the prompts run

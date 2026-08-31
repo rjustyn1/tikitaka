@@ -103,7 +103,10 @@ export function useGroupTask(
         loading: false,
         error: null,
       }));
-      if (ready) await refreshMemory(taskId);
+      // Fetch memory on every poll, not only once the task is flushed: the
+      // intra-task node-drift flush lands notes mid-DAG, and they must surface
+      // in the conversation as soon as they exist, not only at task end.
+      await refreshMemory(taskId);
     } catch (reason) {
       if (!mounted.current) return;
       setState((prev) => ({
