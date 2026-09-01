@@ -250,6 +250,19 @@ export interface LandedMemoryFile {
   removedAt: string | null;
 }
 
+/** A read-only file in the group-shared codebase shown in the Teams explorer. */
+export interface SharedCodeFile {
+  path: string;
+  size: number;
+}
+
+/** A safe, read-only instruction or skill file belonging to a group member. */
+export interface AgentWorkspaceFile {
+  path: string;
+  size: number;
+  kind: "instructions" | "skill";
+}
+
 export interface GrantRecord {
   id: string;
   groupTaskId: string;
@@ -295,4 +308,52 @@ export interface UpdateGroupInput {
   name?: string;
   description?: string;
   members?: GroupMember[];
+}
+
+/** Live consolidator activity. Mirrors MemoryPipelineStatus on the server. */
+export const MEMORY_PHASES = [
+  "buffering",
+  "consolidating",
+  "recognizing-agents",
+  "recognizing-skills",
+  "safety",
+  "reviewing",
+] as const;
+
+export type MemoryPhase = (typeof MEMORY_PHASES)[number];
+
+export interface MemoryRunStatus {
+  segmentId: string;
+  groupId: string | null;
+  phase: MemoryPhase;
+  startedAt: string;
+  nodeCount: number | null;
+  candidates: number;
+  candidateIndex: number;
+}
+
+export interface MemoryLastRun {
+  segmentId: string;
+  groupId: string | null;
+  finishedAt: string;
+  durationMs: number;
+  ok: boolean;
+  candidates: number;
+  notes: number;
+  error: string | null;
+}
+
+export interface MemoryPipelineStatus {
+  active: MemoryRunStatus[];
+  lastRun: MemoryLastRun | null;
+}
+
+/** What approving a note would write to one Agent's file. */
+export interface MemoryFilePreview {
+  agentId: string;
+  path: string;
+  kind: "agents_md" | "skill";
+  mode: "create" | "modify";
+  before: string;
+  after: string;
 }

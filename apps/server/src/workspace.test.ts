@@ -376,6 +376,90 @@ describe("shared code", () => {
   });
 });
 
+describe("shared code explorer", () => {
+  it("reads only regular files inside one group's shared tree", async () => {
+    const root = await makeRoot();
+    const workspaces = new WorkspaceManager(root);
+    await workspaces.initialize();
+    const shared = (await workspaces.ensureSharedCodeDirectory("group-1")).path;
+    await mkdir(path.join(shared, "src"), { recursive: true });
+    await mkdir(path.join(shared, "node_modules", "ignored"), { recursive: true });
+    await writeFile(path.join(shared, "src", "api.ts"), "export const ok = true;\n", "utf8");
+    await writeFile(path.join(shared, ".env"), "SECRET=not-for-the-ui\n", "utf8");
+    await writeFile(path.join(shared, "node_modules", "ignored", "index.js"), "ignored", "utf8");
+
+    const files = await workspaces.listSharedCodeFiles("group-1");
+    expect(files).toContainEqual({ path: "src/api.ts", size: 24 });
+    expect(files.map((file) => file.path)).not.toContain(".env");
+    expect(files.map((file) => file.path)).not.toContain("node_modules/ignored/index.js");
+    await expect(workspaces.readSharedCodeFile("group-1", "src/api.ts")).resolves.toBe(
+      "export const ok = true;\n",
+    );
+  });
+
+  it("rejects traversal and private-path reads", async () => {
+    const root = await makeRoot();
+    const workspaces = new WorkspaceManager(root);
+    await workspaces.initialize();
+    await workspaces.ensureSharedCodeDirectory("group-1");
+
+    await expect(
+      workspaces.readSharedCodeFile("group-1", "../agent-1/AGENTS.md"),
+    ).rejects.toMatchObject({ statusCode: 400 });
+    await expect(
+      workspaces.readSharedCodeFile("group-1", ".env"),
+    ).rejects.toMatchObject({ statusCode: 400 });
+  });
+});
+
+describe("Agent workspace explorer", () => {
+  it("shows only AGENTS.md and saved skills", async () => {
+    const root = await makeRoot();
+    const workspaces = new WorkspaceManager(root);
+    await workspaces.initialize();
+    const agent = makeAgent(root);
+    await workspaces.create(agent);
+    await mkdir(path.join(agent.workspacePath, ".agents", "skills", "memory-auth"), {
+      recursive: true,
+    });
+    await writeFile(
+      path.join(agent.workspacePath, ".agents", "skills", "memory-auth", "SKILL.md"),
+      "# Authentication memory\n",
+      "utf8",
+    );
+    await writeFile(
+      path.join(agent.workspacePath, ".agents", "skills", "memory-auth", ".env"),
+      "SECRET=not-for-the-ui\n",
+      "utf8",
+    );
+    await writeFile(path.join(agent.workspacePath, "private.txt"), "not exposed\n", "utf8");
+
+    const files = await workspaces.listAgentWorkspaceFiles(agent);
+    expect(files).toContainEqual(expect.objectContaining({ path: "AGENTS.md", kind: "instructions" }));
+    expect(files).toContainEqual(expect.objectContaining({
+      path: ".agents/skills/memory-auth/SKILL.md",
+      kind: "skill",
+    }));
+    expect(files.map((file) => file.path)).not.toContain("private.txt");
+    expect(files.map((file) => file.path)).not.toContain(".agents/skills/memory-auth/.env");
+    await expect(
+      workspaces.readAgentWorkspaceFile(agent, ".agents/skills/memory-auth/SKILL.md"),
+    ).resolves.toBe("# Authentication memory\n");
+  });
+
+  it("rejects traversal and files outside the durable-artifact allowlist", async () => {
+    const root = await makeRoot();
+    const workspaces = new WorkspaceManager(root);
+    await workspaces.initialize();
+    const agent = makeAgent(root);
+    await workspaces.create(agent);
+
+    await expect(workspaces.readAgentWorkspaceFile(agent, "../other/AGENTS.md")).rejects.toMatchObject({ statusCode: 400 });
+    await expect(workspaces.readAgentWorkspaceFile(agent, "README.md")).rejects.toMatchObject({ statusCode: 400 });
+    await expect(workspaces.readAgentWorkspaceFile(agent, ".agents/skills/.env")).rejects.toMatchObject({ statusCode: 400 });
+  });
+});
+
 describe("startup workspace assertions", () => {
   it("rejects governed memory under global Codex skills", async () => {
     const root = await makeRoot();

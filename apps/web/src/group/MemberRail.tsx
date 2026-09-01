@@ -13,6 +13,7 @@ import type {
   GroupPlanNode,
   GroupTaskStatus,
   LandedMemoryFile,
+  MemoryNote,
 } from "../types";
 import { agentName, fileTail, roleClass } from "./format";
 import { liveStatusFor } from "./liveStatus";
@@ -26,6 +27,8 @@ export function MemberRail({
   memoryLoading,
   memoryFailed,
   onOpenTrace,
+  pendingNotes,
+  onReviewNote,
 }: {
   group: AgentGroup;
   agents: Agent[];
@@ -35,6 +38,9 @@ export function MemberRail({
   memoryLoading: boolean;
   memoryFailed: boolean;
   onOpenTrace: (runId: string) => void;
+  /** Notes still awaiting a human decision, any recipient. */
+  pendingNotes: MemoryNote[];
+  onReviewNote: (note: MemoryNote) => void;
 }) {
   return (
     <aside className="member-rail" aria-label="Team members">
@@ -51,6 +57,12 @@ export function MemberRail({
         );
         const liveNode = nodes.find(
           (node) => node.agentId === member.agentId && node.status === "running",
+        );
+        // Everything waiting on a human for THIS Agent. A note routed to
+        // several Agents appears under each of them, because approving it
+        // writes a file into each of their workspaces.
+        const waiting = pendingNotes.filter((note) =>
+          note.targetAgentIds.includes(member.agentId),
         );
         return (
           <article
@@ -85,6 +97,37 @@ export function MemberRail({
                 </button>
               )}
             </div>
+
+            {waiting.length > 0 && (
+              <div className="member-pending">
+                <span className="eyebrow">
+                  Waiting for you · {waiting.length}
+                </span>
+                <ul className="member-pending-list">
+                  {waiting.map((note) => (
+                    <li key={note.id}>
+                      <span
+                        className={
+                          "member-pending-kind " +
+                          (note.severity === "severe" ? "is-severe" : "is-skill")
+                        }
+                      >
+                        {note.severity === "severe" ? "AGENTS.md" : "skill"}
+                      </span>
+                      <span className="member-pending-text" title={note.content}>
+                        {note.description}
+                      </span>
+                      <button
+                        className="member-pending-review"
+                        onClick={() => onReviewNote(note)}
+                      >
+                        Review
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             <div className="member-memory">
               <span className="eyebrow">Governed memory</span>

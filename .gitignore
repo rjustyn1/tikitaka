@@ -37,3 +37,4 @@ deploy/volcengine/terraform.tfvars
 # 322 MB, well past GitHub's 100 MB per-file limit).
 .venv-recognition/
 !data/drift-model/
+.codex-home/

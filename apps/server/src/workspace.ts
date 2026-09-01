@@ -14,6 +14,24 @@ import type { AppConfig } from "./config.js";
 import { HttpError } from "./errors.js";
 import type { Agent, GroupTask } from "./types.js";
 
+/** A safe, read-only entry in a group's shared code tree. */
+export interface SharedCodeFile {
+  path: string;
+  size: number;
+}
+
+/** A safe, read-only file that demonstrates an Agent's durable instructions. */
+export interface AgentWorkspaceFile {
+  path: string;
+  size: number;
+  kind: "instructions" | "skill";
+}
+
+const CODE_EXPLORER_IGNORED = new Set([".git", ".codex", "node_modules", ".env"]);
+const CODE_EXPLORER_MAX_FILES = 400;
+const CODE_EXPLORER_MAX_DEPTH = 8;
+const CODE_EXPLORER_MAX_FILE_BYTES = 200 * 1024;
+
 /**
  * Managed blocks -- `middlewaredoc/components/WORKSPACE-EXTENSIONS.md`.
  *
@@ -175,6 +193,180 @@ export class WorkspaceManager {
    */
   sharedCodePath(groupId: string): string {
     return path.join(this.root, "shared-code", groupId);
+  }
+
+  /**
+   * Read-only codebase explorer for the Teams UI. It deliberately exposes the
+   * group's shared `code/` tree, never an individual Agent workspace where
+   * private instructions and governed memory live.
+   */
+  async listSharedCodeFiles(groupId: string): Promise<SharedCodeFile[]> {
+    const root = this.sharedCodePath(groupId);
+    const files: SharedCodeFile[] = [];
+    const walk = async (relative: string, depth: number): Promise<void> => {
+      if (depth > CODE_EXPLORER_MAX_DEPTH || files.length >= CODE_EXPLORER_MAX_FILES) {
+        return;
+      }
+      let entries;
+      try {
+        entries = await readdir(path.join(root, relative), { withFileTypes: true });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+        throw error;
+      }
+      for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+        if (CODE_EXPLORER_IGNORED.has(entry.name) || files.length >= CODE_EXPLORER_MAX_FILES) {
+          continue;
+        }
+        const child = relative ? path.join(relative, entry.name) : entry.name;
+        if (entry.isDirectory()) {
+          await walk(child, depth + 1);
+          continue;
+        }
+        // Do not follow a symlink created by a coding Agent outside of the
+        // shared tree. A viewer must never become a local-file reader.
+        if (!entry.isFile() || entry.isSymbolicLink()) continue;
+        const stat = await lstat(path.join(root, child));
+        files.push({ path: child.split(path.sep).join("/"), size: stat.size });
+      }
+    };
+    await walk("", 0);
+    return files.sort((left, right) => left.path.localeCompare(right.path));
+  }
+
+  async readSharedCodeFile(groupId: string, relativePath: string): Promise<string> {
+    const root = this.sharedCodePath(groupId);
+    const normalized = relativePath.replaceAll("\\", "/");
+    if (
+      !normalized ||
+      path.isAbsolute(normalized) ||
+      normalized.split("/").some((part) => !part || part === "." || part === "..")
+    ) {
+      throw new HttpError(400, "A safe relative codebase path is required");
+    }
+    if (normalized.split("/").some((part) => CODE_EXPLORER_IGNORED.has(part))) {
+      throw new HttpError(400, "That codebase path is not available in the explorer");
+    }
+    const target = path.resolve(root, normalized);
+    if (path.relative(root, target).startsWith(".." + path.sep) || path.relative(root, target) === "..") {
+      throw new HttpError(400, "Codebase path escapes the shared workspace");
+    }
+    let stat;
+    try {
+      stat = await lstat(target);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new HttpError(404, "Codebase file not found");
+      }
+      throw error;
+    }
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      throw new HttpError(400, "Codebase path must name a regular file");
+    }
+    if (stat.size > CODE_EXPLORER_MAX_FILE_BYTES) {
+      throw new HttpError(413, "Codebase file is too large to preview");
+    }
+    const content = await readFile(target, "utf8");
+    if (content.includes("\0")) {
+      throw new HttpError(415, "Binary files cannot be previewed");
+    }
+    return content;
+  }
+
+  /**
+   * The demo may inspect the durable artefacts belonging to one team member,
+   * but never turn the Teams UI into a general private-workspace browser.
+   * `AGENTS.md` proves always-on instructions; `.agents/skills/` proves
+   * scoped, on-match memory. The caller establishes group membership.
+   */
+  async listAgentWorkspaceFiles(agent: Agent): Promise<AgentWorkspaceFile[]> {
+    const root = agent.workspacePath;
+    const files: AgentWorkspaceFile[] = [];
+    const addIfRegularFile = async (
+      relativePath: string,
+      kind: AgentWorkspaceFile["kind"],
+    ): Promise<void> => {
+      try {
+        const stat = await lstat(path.join(root, relativePath));
+        if (stat.isFile() && !stat.isSymbolicLink()) {
+          files.push({
+            path: relativePath.split(path.sep).join("/"),
+            size: stat.size,
+            kind,
+          });
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    };
+
+    await addIfRegularFile("AGENTS.md", "instructions");
+
+    const skillsRoot = path.join(root, ".agents", "skills");
+    const walkSkills = async (relative: string, depth: number): Promise<void> => {
+      if (depth > CODE_EXPLORER_MAX_DEPTH || files.length >= CODE_EXPLORER_MAX_FILES) {
+        return;
+      }
+      let entries;
+      try {
+        entries = await readdir(path.join(skillsRoot, relative), { withFileTypes: true });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+        throw error;
+      }
+      for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+        if (CODE_EXPLORER_IGNORED.has(entry.name) || files.length >= CODE_EXPLORER_MAX_FILES) {
+          continue;
+        }
+        const child = relative ? path.join(relative, entry.name) : entry.name;
+        if (entry.isDirectory()) {
+          await walkSkills(child, depth + 1);
+        } else if (entry.isFile() && !entry.isSymbolicLink()) {
+          await addIfRegularFile(path.join(".agents", "skills", child), "skill");
+        }
+      }
+    };
+    await walkSkills("", 0);
+    return files.sort((left, right) => left.path.localeCompare(right.path));
+  }
+
+  async readAgentWorkspaceFile(agent: Agent, relativePath: string): Promise<string> {
+    const normalized = relativePath.replaceAll("\\", "/");
+    const skillPrefix = ".agents/skills/";
+    if (
+      !normalized ||
+      path.isAbsolute(normalized) ||
+      normalized.split("/").some((part) => !part || part === "." || part === "..") ||
+      (normalized !== "AGENTS.md" && !normalized.startsWith(skillPrefix)) ||
+      normalized.split("/").some((part) => CODE_EXPLORER_IGNORED.has(part))
+    ) {
+      throw new HttpError(400, "That Agent workspace path is not available in the explorer");
+    }
+    const root = path.resolve(agent.workspacePath);
+    const target = path.resolve(root, normalized);
+    if (path.relative(root, target).startsWith(".." + path.sep) || path.relative(root, target) === "..") {
+      throw new HttpError(400, "Agent workspace path escapes the workspace");
+    }
+    let stat;
+    try {
+      stat = await lstat(target);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new HttpError(404, "Agent workspace file not found");
+      }
+      throw error;
+    }
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      throw new HttpError(400, "Agent workspace path must name a regular file");
+    }
+    if (stat.size > CODE_EXPLORER_MAX_FILE_BYTES) {
+      throw new HttpError(413, "Agent workspace file is too large to preview");
+    }
+    const content = await readFile(target, "utf8");
+    if (content.includes("\0")) {
+      throw new HttpError(415, "Binary files cannot be previewed");
+    }
+    return content;
   }
 
   async initialize(): Promise<void> {

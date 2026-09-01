@@ -2054,11 +2054,15 @@ textarea:focus {
 }
 
 /* --- command center: right column (Live Terminal + Members) --- */
+/* The column scrolls as one, and the member list runs to its natural height.
+   It used to be the other way round -- a fixed-height rail with its own
+   scrollbar -- which cropped the member cards and hid whatever sat lowest,
+   now including anything waiting for approval. */
 .cc-rail {
   min-height: 0;
   height: 100%;
   max-height: 100%;
-  overflow: hidden; /* the column itself never scrolls */
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -2067,14 +2071,138 @@ textarea:focus {
 /* The Live Terminal is pinned at the top of the column: fixed height, does not
    scroll away. Only the member list below it scrolls. */
 .cc-rail .live-terminal { flex: none; }
+/* The explorer keeps a fixed height at the top of the column; the members
+   below it grow, and the column scrolls. */
+.cc-rail .workspace-explorer { flex: none; height: 340px; }
 .cc-rail .member-rail {
   position: static;
-  flex: 1;
+  flex: none;
   min-height: 0;
   max-height: none;
-  overflow-y: auto;
+  overflow: visible;
   padding-bottom: 4px;
 }
+
+/* --- Workspace explorer ---
+   The top-right rail contrasts one shared code tree with an individual
+   member's durable instructions and skills. Both views are read-only. */
+.workspace-explorer {
+  flex: none;
+  height: 336px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--paper);
+  overflow: hidden;
+}
+.workspace-explorer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.workspace-explorer-title,
+.workspace-explorer-subtitle { display: block; }
+.workspace-explorer-title { font-size: 12px; font-weight: 700; color: var(--ink); }
+.workspace-explorer-subtitle { margin-top: 2px; font-size: 10px; color: var(--muted); }
+.workspace-explorer-controls {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 35px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--line);
+}
+.workspace-scope {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 4px 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.workspace-scope:hover { color: var(--ink); }
+.workspace-scope.selected { color: var(--purple-dark); background: var(--purple-soft); border-color: #d9c9f6; }
+.workspace-agent-select {
+  min-width: 0;
+  margin-left: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 5px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 10px;
+}
+.workspace-explorer-state { margin: auto 12px; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.workspace-file-size { flex: none; color: var(--muted); font-size: 9px; }
+.workspace-file-kind { flex: none; border-radius: 4px; padding: 2px 3px; font-size: 8px; font-family: ui-sans-serif, system-ui, sans-serif; font-weight: 700; }
+.workspace-file-kind.is-instructions { color: #8a4514; background: #fff0d6; }
+.workspace-file-kind.is-skill { color: #5c398d; background: var(--purple-soft); }
+.workspace-code-preview { min-width: 0; display: flex; flex-direction: column; background: #242421; color: #e9e7df; }
+.workspace-code-path { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-bottom: 1px solid #3a3a36; color: #b9b7ad; font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
+.workspace-code-path-text { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-code-preview pre { flex: 1; min-height: 0; margin: 0; overflow: auto; padding: 9px 10px; font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; line-height: 1.55; white-space: pre; }
+.workspace-code-state { margin: auto 10px; color: #aaa8a0; font-size: 11px; }
+
+/* --- Member strip -------------------------------------------------------
+   Every member at once, each with its granted-skill count, so the Agent that
+   holds a note and the Agent it was withheld from are on screen together.
+   `.empty` is the withheld case and is deliberately the quiet one. */
+.workspace-member-strip { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 8px 8px; border-bottom: 1px solid var(--line); }
+.workspace-member {
+  display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid var(--line); border-radius: 999px;
+  padding: 3px 4px 3px 9px; background: #fff;
+  color: var(--muted); font-size: 10px; font-weight: 600; cursor: pointer;
+}
+.workspace-member:hover { color: var(--ink); }
+.workspace-member.selected { color: var(--purple-dark); background: var(--purple-soft); border-color: #d9c9f6; }
+.workspace-member-name { max-width: 92px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-member-count {
+  flex: none; min-width: 15px; border-radius: 999px; padding: 1px 5px;
+  background: var(--purple); color: #fff; font-size: 9px; font-weight: 700; text-align: center;
+}
+.workspace-member.empty .workspace-member-count { background: transparent; border: 1px dashed var(--line); color: var(--muted); font-weight: 600; }
+
+/* --- Governed diff ------------------------------------------------------
+   Approval is the moment a note becomes durable, so a governed file reads as
+   what approval added: `+` lines against the file that was already there.
+   Nothing is shown as removed because landing only inserts or replaces its
+   own managed block. */
+.workspace-diff-toggle {
+  flex: none; border: 1px solid #4a4a44; border-radius: 5px; padding: 2px 7px;
+  background: transparent; color: #b9b7ad;
+  font-family: ui-sans-serif, system-ui, sans-serif; font-size: 9px; font-weight: 700; cursor: pointer;
+}
+.workspace-diff-toggle:hover { color: #e9e7df; border-color: #6a6a62; }
+.workspace-diff-toggle.selected { color: #cfe9dc; background: rgba(51, 144, 109, 0.22); border-color: rgba(51, 144, 109, 0.55); }
+.workspace-diff-legend {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 10px; border-bottom: 1px solid #3a3a36;
+  background: rgba(51, 144, 109, 0.1); color: #b9b7ad;
+  font-family: ui-sans-serif, system-ui, sans-serif; font-size: 9px;
+}
+.workspace-diff-added-count { color: #7fd3ab; font-weight: 700; }
+/* Diff lines wrap rather than scroll sideways: a fact nobody can read without
+   dragging a scrollbar is no use in front of an audience. Wrapped lines hang
+   under the text, clear of the +/- gutter. */
+.workspace-code-preview pre.workspace-diff { padding: 0; white-space: normal; }
+.workspace-diff-line {
+  position: relative; display: block; padding: 0 10px 0 22px;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.workspace-diff-line.is-added { background: rgba(51, 144, 109, 0.18); color: #e2f4eb; }
+.workspace-diff-line.is-marker { color: #8fa79a; }
+/* Absolute so the gutter hangs outside the wrapped text rather than being
+   pulled off the left edge by a negative indent. */
+.workspace-diff-sign { position: absolute; left: 7px; top: 0; color: #7f8078; user-select: none; }
+.workspace-diff-line.is-added .workspace-diff-sign { color: #7fd3ab; }
+.workspace-diff-note { padding: 7px 10px; border-top: 1px solid #3a3a36; color: #aaa8a0; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 9px; line-height: 1.5; }
 
 /* --- Live Terminal ---
    Reuses the sidebar's dark surface (#242421) so it reads as a terminal while
@@ -2280,3 +2408,227 @@ textarea:focus {
   border-radius: 5px;
   padding: 1px 6px;
 }
+
+/* --- Plan graph ---------------------------------------------------------
+   The plan drawn as the DAG it is, with a progress line for where the run has
+   got to. Sits above the per-step cards: graph for shape and position, cards
+   for what each step was told to do. */
+.plan-graph { margin-bottom: 14px; background: #f0efea; border-radius: 12px; padding: 12px 14px 6px; }
+.plan-progress-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.plan-progress-head strong { font-size: 13px; color: var(--ink); }
+.plan-progress-count { font-size: 11px; color: var(--muted); }
+.plan-progress-track { margin-top: 7px; height: 5px; border-radius: 999px; background: #e0dfd8; overflow: hidden; }
+.plan-progress-fill { height: 100%; border-radius: 999px; background: var(--green); transition: width 320ms ease; }
+.plan-progress-fill.has-failure { background: var(--red); }
+
+.plan-graph-scroll { margin-top: 12px; overflow-x: auto; }
+/* Never upscale a small plan to fill the panel: a two-node graph blown up to
+   full width reads as a diagram of something bigger than it is. */
+.plan-graph-svg { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+
+.plan-edge { stroke: #c8c7bf; stroke-width: 1.5; }
+.plan-edge.is-active { stroke: var(--purple); stroke-width: 2; stroke-dasharray: 4 3; }
+
+.plan-node { cursor: pointer; }
+.plan-node-box { fill: #fff; stroke: var(--line); stroke-width: 1; }
+.plan-node:hover .plan-node-box { stroke: var(--purple); }
+.plan-node.selected .plan-node-box { stroke: var(--purple); stroke-width: 2; fill: var(--purple-soft); }
+.plan-node:focus { outline: none; }
+.plan-node:focus-visible .plan-node-box { stroke: var(--purple); stroke-width: 2; }
+.plan-node-role { font-size: 11px; font-weight: 700; fill: var(--ink); }
+.plan-node-status { font-size: 9px; fill: var(--muted); }
+
+.plan-node.status-completed .plan-node-box { fill: #eef7f2; stroke: #b6ddca; }
+.plan-node.status-running .plan-node-box { stroke: var(--purple); stroke-width: 2; }
+.plan-node.status-failed .plan-node-box { fill: #fdf0f0; stroke: var(--red); }
+.plan-node.status-cancelled .plan-node-box, .plan-node.status-queued .plan-node-box { fill: #f7f6f2; }
+.plan-node.status-queued .plan-node-role { fill: var(--muted); }
+
+/* Same palette as the .role-* dots elsewhere, but as `fill` -- those rules set
+   `background`, which does nothing to an SVG circle. */
+.plan-node-dot { fill: var(--muted); }
+.plan-node-dot.role-backend { fill: var(--purple); }
+.plan-node-dot.role-frontend { fill: #2f8fbf; }
+.plan-node-dot.role-security { fill: #c07a2b; }
+.plan-node-pulse { fill: var(--purple); animation: plan-pulse 1.3s ease-in-out infinite; }
+@keyframes plan-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+@media (prefers-reduced-motion: reduce) {
+  .plan-node-pulse { animation: none; }
+  .plan-progress-fill { transition: none; }
+}
+
+.chain-node.selected { border-color: var(--purple); box-shadow: 0 0 0 3px var(--purple-soft); }
+
+/* --- Workspace file tree ------------------------------------------------
+   The listing is a real directory tree: connectors come from file-tree.ts as
+   text, so the trunk lines stay glued to the rows in a monospace column and
+   there is no CSS guide-line to drift out of alignment. */
+.workspace-tree-scroll { flex: 1; min-height: 0; overflow: auto; padding: 6px 4px 8px; }
+/* Tight leading on purpose: the connectors are text, so a tall line box leaves
+   gaps between one row's "│" and the next and the trunk reads as dotted. */
+.workspace-tree { display: flex; flex-direction: column; font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; line-height: 1.45; }
+.workspace-tree-row {
+  width: 100%; display: flex; align-items: center; gap: 6px;
+  border: 0; border-radius: 5px; padding: 1px 5px;
+  background: transparent; color: var(--ink); text-align: left;
+  font: inherit; white-space: pre;
+}
+.workspace-tree-prefix { flex: none; color: #c2c1b8; user-select: none; }
+.workspace-tree-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.workspace-tree-label.is-dir { color: var(--purple-dark); font-weight: 700; }
+.workspace-tree-row.is-file { cursor: pointer; }
+.workspace-tree-row.is-file:hover { background: var(--purple-soft); }
+.workspace-tree-row.selected { background: var(--purple-soft); color: var(--purple-dark); font-weight: 700; }
+/* The size is the first thing to go when the column is tight. */
+.workspace-tree .workspace-file-size, .workspace-tree .workspace-file-kind { margin-left: auto; }
+.workspace-tree .workspace-file-kind + .workspace-file-size { margin-left: 0; }
+
+.workspace-explorer-expand {
+  flex: none; border: 1px solid var(--line); border-radius: 7px;
+  width: 26px; height: 26px; display: grid; place-items: center;
+  background: #fff; color: var(--muted); font-size: 13px; line-height: 1; cursor: pointer;
+}
+.workspace-explorer-expand:hover { color: var(--purple-dark); border-color: var(--purple); }
+
+/* --- Maximised file viewer ---------------------------------------------
+   The rail lists; this reads. Contents are only fetched while this is open. */
+.workspace-viewer-backdrop { place-items: stretch; }
+.workspace-viewer {
+  display: flex; flex-direction: column; min-height: 0;
+  width: 100%; border-radius: 16px; background: var(--paper);
+  border: 1px solid rgba(255, 255, 255, 0.55); box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.workspace-viewer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 16px 18px 12px; }
+.workspace-viewer-head h2 { margin: 0; font-size: 17px; }
+.workspace-viewer-head p { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
+.workspace-viewer .workspace-explorer-controls { padding-bottom: 10px; }
+.workspace-viewer-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(220px, 1fr) minmax(0, 2.4fr); border-top: 1px solid var(--line); }
+.workspace-viewer-body .workspace-tree-scroll { border-right: 1px solid var(--line); padding: 10px 8px; }
+.workspace-viewer-body .workspace-tree { font-size: 11px; }
+.workspace-viewer-body .workspace-code-preview { min-height: 0; }
+
+/* --- Memory consolidator status ----------------------------------------
+   Sits under the plan graph. The pipeline is fire-and-forget, so this is the
+   only place its activity is visible while it happens rather than after. */
+.consolidator { margin-bottom: 14px; background: #f0efea; border-radius: 12px; padding: 12px 14px; }
+.consolidator-head { display: flex; align-items: flex-start; gap: 9px; }
+.consolidator-headline { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.consolidator-headline strong { font-size: 13px; color: var(--ink); }
+.consolidator-sub { font-size: 11px; color: var(--muted); }
+.consolidator-elapsed { flex: none; font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--muted); }
+
+.consolidator-dot { flex: none; width: 8px; height: 8px; margin-top: 4px; border-radius: 50%; background: var(--muted); }
+.consolidator-dot.is-idle { background: #c2c1b8; }
+.consolidator-dot.is-unknown { background: var(--red); }
+.consolidator-dot.is-working { background: var(--purple); animation: consolidator-pulse 1.2s ease-in-out infinite; }
+@keyframes consolidator-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(105, 84, 217, 0.45); }
+  50% { opacity: 0.55; box-shadow: 0 0 0 5px rgba(105, 84, 217, 0); }
+}
+
+/* --- Concurrent runs ---
+   Consolidation is concurrent, so each run is its own row with its own place
+   in the flow. */
+.consolidator-runs { margin: 10px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+.consolidator-run { border-top: 1px solid #e2e1da; padding-top: 9px; }
+.consolidator-runs > .consolidator-run:first-child { border-top: 0; padding-top: 0; }
+.consolidator-run-head { display: flex; align-items: center; gap: 7px; }
+.consolidator-run-scope { font-size: 11px; font-weight: 600; color: var(--ink); }
+.consolidator-run-count { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; color: var(--muted); }
+.consolidator-run-head .consolidator-elapsed { margin-left: auto; }
+
+/* --- The stage flow ---
+   Left to right in the order MEMORY_PIPELINE.md runs them. Chevrons are drawn
+   between steps rather than on them, so the last step has no trailing arrow. */
+.consolidator-flow {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 3px;
+  margin: 8px 0 0; padding: 0; list-style: none;
+}
+.consolidator-step { display: flex; align-items: center; }
+.consolidator-step + .consolidator-step::before {
+  content: "›"; margin: 0 3px; color: #c2c1b8; font-size: 12px; line-height: 1;
+}
+.consolidator-step-label {
+  border-radius: 999px; padding: 2px 8px;
+  background: #e6e5de; color: var(--muted);
+  font-size: 10px; font-weight: 600; white-space: nowrap;
+}
+.consolidator-step.is-done .consolidator-step-label { background: #e2f0e9; color: #2c7a5c; }
+.consolidator-step.is-current .consolidator-step-label {
+  background: var(--purple); color: #fff;
+  animation: consolidator-step-pulse 1.4s ease-in-out infinite;
+}
+@keyframes consolidator-step-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(105, 84, 217, 0.4); }
+  50% { box-shadow: 0 0 0 4px rgba(105, 84, 217, 0); }
+}
+
+.consolidator-hint { margin: 7px 0 0; font-size: 11px; line-height: 1.5; color: var(--muted); }
+.consolidator-last { margin-top: 10px; }
+.consolidator-last p { margin: 3px 0 0; font-size: 11px; color: var(--muted); }
+.consolidator-last.is-error p { color: var(--red); }
+
+@media (prefers-reduced-motion: reduce) {
+  .consolidator-dot.is-working,
+  .consolidator-step.is-current .consolidator-step-label { animation: none; }
+}
+
+/* --- Outstanding approvals on a member card -----------------------------
+   What an Agent is waiting on belongs next to what it already holds: both are
+   answers to "what does this Agent know?", one settled and one pending. */
+.member-pending { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 9px; }
+.member-pending .eyebrow { color: var(--purple-dark); }
+.member-pending-list { margin: 6px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.member-pending-list li { display: flex; align-items: center; gap: 6px; }
+.member-pending-kind {
+  flex: none; border-radius: 4px; padding: 2px 5px;
+  font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+}
+.member-pending-kind.is-severe { color: #8a4514; background: #fff0d6; }
+.member-pending-kind.is-skill { color: #5c398d; background: var(--purple-soft); }
+.member-pending-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--ink); }
+.member-pending-review {
+  flex: none; border: 1px solid var(--purple); border-radius: 6px; padding: 2px 8px;
+  background: var(--purple-soft); color: var(--purple-dark);
+  font-size: 10px; font-weight: 700; cursor: pointer;
+}
+.member-pending-review:hover { background: var(--purple); color: #fff; }
+
+/* --- Review dialog ------------------------------------------------------ */
+.review-dialog-backdrop { place-items: stretch; }
+.review-dialog {
+  display: flex; flex-direction: column; min-height: 0; width: 100%;
+  border-radius: 16px; background: var(--paper);
+  border: 1px solid rgba(255, 255, 255, 0.55); box-shadow: var(--shadow); overflow: hidden;
+}
+.review-dialog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 16px 18px 12px; border-bottom: 1px solid var(--line); }
+.review-dialog-head h2 { margin: 0; font-size: 17px; }
+.review-dialog-head p { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
+.review-dialog-body { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 18px; }
+.review-note-content { margin: 0 0 14px; border-left: 3px solid var(--purple); padding: 2px 0 2px 11px; color: var(--ink); font-size: 13px; line-height: 1.55; }
+.review-file { margin-bottom: 16px; }
+.review-file-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.review-file-head strong { font-size: 13px; }
+.review-file-head code { font-size: 10px; color: var(--muted); }
+.review-mode { border-radius: 4px; padding: 2px 6px; font-size: 9px; font-weight: 700; }
+.review-mode.is-create { color: #2c7a5c; background: #e2f0e9; }
+.review-mode.is-modify { color: #8a4514; background: #fff0d6; }
+
+/* Two panes for an edit, one for a create. Each scrolls on its own axis so a
+   long line never widens the dialog. */
+.review-diff { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+.review-diff.is-create { grid-template-columns: 1fr; }
+.review-diff-pane { min-width: 0; display: flex; flex-direction: column; background: #242421; }
+.review-pane-head { padding: 6px 10px; border-bottom: 1px solid #3a3a36; background: #2b2b27; color: #b9b7ad; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+.review-diff-pane pre { margin: 0; max-height: 320px; overflow: auto; padding: 6px 0; font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; line-height: 1.55; color: #e9e7df; }
+.review-line { display: block; padding-right: 10px; white-space: pre; }
+.review-line.is-added { background: rgba(51, 144, 109, 0.2); }
+.review-line.is-removed { background: rgba(197, 83, 83, 0.18); }
+.review-gutter { display: inline-block; width: 30px; padding-right: 8px; text-align: right; color: #7f8078; user-select: none; }
+.review-sign { display: inline-block; width: 12px; color: #7f8078; user-select: none; }
+.review-line.is-added .review-sign { color: #7fd3ab; }
+.review-line.is-removed .review-sign { color: #e79a9a; }
+
+.review-dialog-foot { display: flex; align-items: center; gap: 9px; padding: 12px 18px; border-top: 1px solid var(--line); }
+.review-reason { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; background: #fff; font: inherit; font-size: 12px; }

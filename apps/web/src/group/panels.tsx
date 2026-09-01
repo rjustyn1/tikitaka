@@ -4,6 +4,7 @@
  * These render only what the server persisted. Nothing here infers state the
  * backend did not record, because the demo's claim is that the audit is real.
  */
+import { useEffect, useRef, useState } from "react";
 import type {
   Agent,
   AgentGroup,
@@ -26,6 +27,9 @@ import {
   statusTone,
   withheldReason,
 } from "./format";
+import { ConsolidatorStatus } from "./ConsolidatorStatus";
+import { PlanGraph } from "./PlanGraph";
+import { useMemoryStatus } from "./useMemoryStatus";
 
 export function Pill({
   tone,
@@ -94,9 +98,54 @@ export function ChainPanel({
       />
     );
   }
+  return (
+    <ChainBody nodes={nodes} agents={agents} group={group} onOpenTrace={onOpenTrace} />
+  );
+}
+
+/**
+ * Split out so the selection hooks sit below the empty-state early return
+ * rather than being called conditionally.
+ */
+function ChainBody({
+  nodes,
+  agents,
+  group,
+  onOpenTrace,
+}: {
+  nodes: GroupPlanNode[];
+  agents: Agent[];
+  group: AgentGroup;
+  onOpenTrace: (runId: string) => void;
+}) {
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const cardRefs = useRef(new Map<string, HTMLDivElement>());
+  const memory = useMemoryStatus(group.id);
+
+  // Picking a node in the graph brings its card into view; the graph is the
+  // map, the card is the detail.
+  useEffect(() => {
+    if (!selectedId) return;
+    cardRefs.current
+      .get(selectedId)
+      ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [selectedId]);
+
   const parallelGroups = concurrentSteps(nodes);
   return (
     <div className="chain">
+      <PlanGraph
+        nodes={nodes}
+        agents={agents}
+        group={group}
+        selectedId={selectedId}
+        onSelect={(id) => setSelectedId((current) => (current === id ? null : id))}
+      />
+      <ConsolidatorStatus
+        status={memory.status}
+        loaded={memory.loaded}
+        failed={memory.failed}
+      />
       {parallelGroups > 0 && (
         <p className="chain-shape">
           This plan branches: {parallelGroups} step
@@ -105,7 +154,17 @@ export function ChainPanel({
         </p>
       )}
       {orderedNodes(nodes).map((node, index) => (
-        <div key={node.id} className={"chain-node status-" + node.status}>
+        <div
+          key={node.id}
+          ref={(element) => {
+            if (element) cardRefs.current.set(node.id, element);
+            else cardRefs.current.delete(node.id);
+          }}
+          className={
+            "chain-node status-" + node.status +
+            (node.id === selectedId ? " selected" : "")
+          }
+        >
           <div className="chain-index">{index + 1}</div>
           <div className="chain-body">
             <div className="chain-title">

@@ -6,12 +6,32 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
+import nodePath from "node:path";
 import type { Agent, LandedMemoryFile, MemoryNote } from "../types.js";
 import type { JsonStore } from "../store.js";
 import { memoryMarkerId } from "../workspace.js";
+import {
+  composeAgentsMemory,
+  composeSkill,
+  noteSlug,
+} from "./workspace-memory.js";
 import { WorkspaceMemoryWriter } from "./workspace-memory.js";
 
 const now = () => new Date().toISOString();
+
+/**
+ * What approving a note would do to one Agent's file. `before` is empty and
+ * `mode` is "create" when the file does not exist yet, which is the common
+ * case for a skill; an `AGENTS.md` edit is always a modify.
+ */
+export interface MemoryFilePreview {
+  agentId: string;
+  path: string;
+  kind: LandedMemoryFile["kind"];
+  mode: "create" | "modify";
+  before: string;
+  after: string;
+}
 
 export interface LandMemoryResult {
   noteId: string;
@@ -61,6 +81,61 @@ export class LandingService {
     private readonly store: JsonStore,
     private readonly writer: WorkspaceMemoryWriter = new WorkspaceMemoryWriter(),
   ) {}
+
+  /**
+   * The exact file change approving this note would make, per recipient,
+   * computed with the same composition the writer uses so the diff a human
+   * approves cannot drift from what lands.
+   */
+  previewMemory(note: MemoryNote): MemoryFilePreview[] {
+    const db = this.store.snapshot();
+    const agents = db.agents.filter((agent) =>
+      note.targetAgentIds.includes(agent.id),
+    );
+    const kind = kindForSeverity(note);
+
+    return agents.map((agent) => {
+      const skillKey =
+        note.skillAssignments?.find(
+          (assignment) => assignment.agentId === agent.id,
+        )?.skillKey ??
+        note.skillKey ??
+        noteSlug(note);
+      const filePath =
+        kind === "agents_md"
+          ? nodePath.join(agent.workspacePath, "AGENTS.md")
+          : nodePath.join(
+              agent.workspacePath,
+              ".agents",
+              "skills",
+              skillKey,
+              "SKILL.md",
+            );
+
+      let before: string | null = null;
+      try {
+        before = readFileSync(filePath, "utf8");
+      } catch {
+        before = null;
+      }
+
+      const after =
+        kind === "agents_md"
+          ? composeAgentsMemory(before ?? "", note)
+          : composeSkill(before, note, skillKey);
+
+      return {
+        agentId: agent.id,
+        path: filePath,
+        kind,
+        mode: before === null ? "create" : "modify",
+        // A brand-new skill has no "before"; showing the scaffold as if it were
+        // pre-existing would misreport a create as a modify.
+        before: before ?? "",
+        after,
+      };
+    });
+  }
 
   async landMemory(note: MemoryNote): Promise<LandMemoryResult> {
     const db = this.store.snapshot();

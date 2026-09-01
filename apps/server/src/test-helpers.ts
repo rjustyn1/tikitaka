@@ -13,7 +13,10 @@
 import { randomUUID } from "node:crypto";
 import { RunCancelledError } from "./errors.js";
 import type { AgentRunner, RunnerRequest, RunnerResult } from "./types.js";
-import type { MemoryPipeline } from "./memory/pipeline.js";
+import type {
+  MemoryPipeline,
+  MemoryPipelineStatus,
+} from "./memory/pipeline.js";
 
 export interface FakeRunnerOptions {
   /** Defaults to `"Completed: " + prompt`, matching the original local fake. */
@@ -171,5 +174,9 @@ export class RecordingMemoryPipeline implements MemoryPipeline {
 
   async resetAutoNotes(groupTaskId: string): Promise<void> {
     this.resetCalls.push(groupTaskId);
+  }
+
+  status(): MemoryPipelineStatus {
+    return { active: [], lastRun: null };
   }
 }

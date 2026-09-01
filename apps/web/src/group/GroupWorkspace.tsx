@@ -20,12 +20,12 @@ import type {
   AgentGroup,
   GroupMember,
   GroupTask,
+  MemoryNote,
   ReviewNoteInput,
 } from "../types";
 import { ConversationPanel } from "./ConversationPanel";
 import { GroupEditor } from "./GroupEditor";
 import { isAwaitingReview, isTerminal, statusTone } from "./format";
-import { LiveTerminal } from "./LiveTerminal";
 import { MemberRail } from "./MemberRail";
 import {
   ChainPanel,
@@ -36,9 +36,11 @@ import {
   Pill,
 } from "./panels";
 import { ProofPanel } from "./ProofPanel";
+import { ReviewDialog } from "./ReviewDialog";
 import { ReviewPanel } from "./ReviewPanel";
 import { useAgentMemory } from "./useAgentMemory";
 import { useGroupTask } from "./useGroupTask";
+import { WorkspaceExplorer } from "./WorkspaceExplorer";
 
 type View =
   | "chat"
@@ -69,15 +71,13 @@ const PLAN_VIEWS: { id: View; label: string }[] = [
   { id: "chain", label: "Plan" },
 ];
 
-// The audit surfaces — everything that inspects what a finished task produced.
-// Memory approval itself happens inline in the conversation (the approval card);
-// Review here is the full surface (severity, routing, the match description).
+// Review is the only audit surface in the strip now. Context, Ledger,
+// Workspaces and Proof each answered a question the rail now answers in place:
+// what an Agent holds and what it is still waiting on is on its member card,
+// and the file evidence is in the workspace explorer. Their panels are still
+// mounted by `view`, so nothing was deleted -- only the tabs.
 const AUDIT_VIEWS: { id: View; label: string }[] = [
-  { id: "context", label: "Context" },
   { id: "review", label: "Review" },
-  { id: "ledger", label: "Ledger" },
-  { id: "memory", label: "Workspaces" },
-  { id: "proof", label: "Proof" },
 ];
 
 const REVIEWER_KEY = "launchpad.reviewerName";
@@ -117,6 +117,8 @@ export function GroupWorkspace({
   const [auditOpen, setAuditOpen] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [editing, setEditing] = useState<"new" | "edit" | null>(null);
+  /** The note open in the approval popup, if any. */
+  const [reviewingNote, setReviewingNote] = useState<MemoryNote | null>(null);
   const [busy, setBusy] = useState(false);
   const [busyNoteId, setBusyNoteId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -153,19 +155,6 @@ export function GroupWorkspace({
   const state = useGroupTask(selectedGroupId, taskId, watchedAgentIds);
   const task = state.task?.task ?? null;
   const running = task !== null && !isTerminal(task.status);
-
-  // The runs the Live Terminal streams: EVERY node running right now, because
-  // independent branches run concurrently — picking the first one narrated one
-  // agent while three others worked in silence. Falls back to the most recent
-  // run so the panel does not blank the moment a task finishes.
-  const runningRunIds = (state.task?.nodes ?? [])
-    .filter((node) => node.status === "running" && node.runId)
-    .map((node) => node.runId as string);
-  const lastRunId = [...(state.task?.nodes ?? [])]
-    .reverse()
-    .find((node) => node.runId)?.runId;
-  const liveRunIds =
-    runningRunIds.length > 0 ? runningRunIds : lastRunId ? [lastRunId] : [];
 
   // The rail reads each member's workspace through the API. Bump the revision
   // — never poll — whenever something could have changed one: a different
@@ -678,10 +667,10 @@ export function GroupWorkspace({
 
         {group && (
           <div className="cc-rail">
-            <LiveTerminal
-              runIds={liveRunIds}
+            <WorkspaceExplorer
+              group={group}
               agents={agents}
-              running={running}
+              refreshKey={(task?.id ?? "no-task") + ":" + (task?.status ?? "idle")}
             />
             <MemberRail
               group={group}
@@ -692,10 +681,26 @@ export function GroupWorkspace({
               memoryLoading={railMemory.loading}
               memoryFailed={railMemory.failed}
               onOpenTrace={onOpenTrace}
+              pendingNotes={state.notes.filter(isAwaitingReview)}
+              onReviewNote={setReviewingNote}
             />
           </div>
         )}
       </div>
+
+      {reviewingNote && group && (
+        <ReviewDialog
+          note={reviewingNote}
+          agents={agents}
+          reviewer={reviewer.trim() || "operator"}
+          busy={busyNoteId === reviewingNote.id}
+          onReview={(noteId, input) => {
+            reviewNote(noteId, input);
+            setReviewingNote(null);
+          }}
+          onClose={() => setReviewingNote(null)}
+        />
+      )}
 
       {editing && (
         <GroupEditor
