@@ -822,7 +822,27 @@ export class GroupRunner {
       // drifts to a new subject, flush the buffered nodes to consolidation now
       // (not at task end) and start a fresh buffer with this node. Never fails a
       // completed node. Grep the server log for "[node-drift]".
-      if (this.config.memoryEnabled && this.config.nodeEnv !== "test") {
+      // Demo mode consolidates on a fixed cadence instead of on measured
+      // topic drift. The drift path needs the local embedding bridge; when
+      // that is unavailable the embed throws, the flush never fires, and the
+      // consolidator looks idle all run. A demo must not depend on that.
+      if (this.config.demoMode && this.config.memoryEnabled) {
+        const buffer = nodeDriftBuffers.get(taskId) ?? { ids: [], vecs: [] };
+        buffer.ids.push(nodeId);
+        nodeDriftBuffers.set(taskId, buffer);
+        // Fire one step AFTER the join: the join is where the branches have
+        // agreed, so that is the first point everything before it is worth
+        // remembering as one thing. Derived from the graph, not from a node
+        // name -- a node is "after the join" when its single dependency is
+        // itself a node several branches fed into.
+        if (this.isStepAfterJoin(node)) {
+          const toFlush = buffer.ids.slice();
+          nodeDriftBuffers.set(taskId, { ids: [], vecs: [] });
+          // Not awaited: consolidation runs alongside the steps that follow,
+          // which is the behaviour the demo exists to show.
+          void this.flushNodeBuffer(taskId, toFlush).catch(() => undefined);
+        }
+      } else if (this.config.memoryEnabled && this.config.nodeEnv !== "test") {
         void (async () => {
           try {
             const explanation = (result.output ?? "").trim();
@@ -1077,6 +1097,20 @@ export class GroupRunner {
    * review -> landing -> ledger) scoped to just these nodes. Never throws into a
    * run — memory must not fail a completed node.
    */
+  /**
+   * True when this node's only dependency is a join -- a node that several
+   * branches fed into. Reading the shape rather than a role name keeps the
+   * trigger correct if the plan is worded differently.
+   */
+  private isStepAfterJoin(node: GroupPlanNode): boolean {
+    if (node.dependsOn.length !== 1) return false;
+    const parentId = node.dependsOn[0];
+    const parent = this.store
+      .snapshot()
+      .groupPlanNodes.find((item) => item.id === parentId);
+    return (parent?.dependsOn.length ?? 0) >= 2;
+  }
+
   private async flushNodeBuffer(
     taskId: string,
     nodeIds: string[],

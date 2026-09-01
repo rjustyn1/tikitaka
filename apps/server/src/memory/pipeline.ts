@@ -134,8 +134,24 @@ export interface MemoryPipelineOptions {
   extractTimeoutMs?: number;
   /** Optional runtime router; absent preserves legacy consolidator routing. */
   recognizer?: NoteRecognizer;
+  /** Overrides the extractor the config would select. Used by DEMO_MODE. */
+  extractor?: ExtractorClient;
+  /**
+   * Drop a candidate when the group already holds a live note with the same
+   * skill key. Consolidation runs more than once over a task -- a mid-DAG
+   * flush, then the segment close -- and the same durable rule is often worth
+   * stating from both, which shows up as the same note twice.
+   */
+  dedupeBySkillKey?: boolean;
   /** Optional sink for structured errors; defaults to console.error. */
   onError?: (message: string, error: unknown) => void;
+  /**
+   * Demo pacing. The offline extractor and recognizer return instantly, so a
+   * whole run finishes in ~100ms and the status panel shows nothing but a
+   * flicker. Holding each phase briefly makes the stages readable. Zero (the
+   * default) means no pacing at all -- this must never slow a real run.
+   */
+  phaseDelayMs?: number;
 }
 
 export interface RecognitionRuntimeConfig {
@@ -159,6 +175,8 @@ export class RealMemoryPipeline implements MemoryPipeline {
   /** Runs in flight, keyed by segment: concurrent flushes are possible. */
   private readonly active = new Map<string, MemoryRunStatus>();
   private lastRun: MemoryLastRun | null = null;
+  private readonly phaseDelayMs: number;
+  private readonly dedupeBySkillKey: boolean;
 
   constructor(
     private readonly store: JsonStore,
@@ -176,6 +194,8 @@ export class RealMemoryPipeline implements MemoryPipeline {
     );
     this.buffers = new SegmentBufferBuilder(store);
     this.recognizer = options.recognizer;
+    this.phaseDelayMs = options.phaseDelayMs ?? 0;
+    this.dedupeBySkillKey = options.dedupeBySkillKey ?? false;
     this.onError =
       options.onError ?? ((message, error) => console.error(message, error));
   }
@@ -185,6 +205,17 @@ export class RealMemoryPipeline implements MemoryPipeline {
       active: [...this.active.values()],
       lastRun: this.lastRun,
     };
+  }
+
+  /** Move a run to a phase, pausing first when demo pacing is on. */
+  private async enterPhase(
+    run: MemoryRunStatus,
+    phase: MemoryPhase,
+  ): Promise<void> {
+    if (this.phaseDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, this.phaseDelayMs));
+    }
+    run.phase = phase;
   }
 
   async runMemoryPipeline(
@@ -207,7 +238,7 @@ export class RealMemoryPipeline implements MemoryPipeline {
     try {
       const buffer = this.buffers.build({ segmentId, onlyNodeIds });
       run.groupId = buffer.groupId;
-      run.phase = "consolidating";
+      await this.enterPhase(run, "consolidating");
       const db = this.store.snapshot();
 
       // Every agent that worked anywhere in the segment, not just in one task.
@@ -234,12 +265,28 @@ export class RealMemoryPipeline implements MemoryPipeline {
 
       for (const [index, candidate] of candidates.entries()) {
         run.candidateIndex = index + 1;
+        // A rule the group already holds is not news. Rejected and revoked
+        // notes do not count: a human decided those, and the same fact
+        // arising again is a new decision to make, not a duplicate.
+        if (
+          this.dedupeBySkillKey &&
+          candidate.skillKey &&
+          db.notes.some(
+            (note) =>
+              note.groupId === buffer.groupId &&
+              note.skillKey === candidate.skillKey &&
+              note.status !== "rejected" &&
+              note.status !== "revoked",
+          )
+        ) {
+          continue;
+        }
         const routed = await this.routeCandidate(candidate, members, run);
         if (!routed) continue;
         noteCount += 1;
-        run.phase = "safety";
+        await this.enterPhase(run, "safety");
         const safety = evaluateNoteSafety(routed);
-        run.phase = "reviewing";
+        await this.enterPhase(run, "reviewing");
         // processCandidate reads candidate ids/severity/routing and safety's
         // redacted content; pass the pre-redaction candidate.
         await this.review.processCandidate(routed, safety);
@@ -283,13 +330,13 @@ export class RealMemoryPipeline implements MemoryPipeline {
   ): Promise<CandidateMemoryNote | null> {
     if (!this.recognizer) return null;
     try {
-      if (run) run.phase = "recognizing-agents";
+      if (run) await this.enterPhase(run, "recognizing-agents");
       const recognition = await this.recognizer.recognizeAgents(
         [candidate.description, candidate.content].join("\n"),
         members,
       );
       if (recognition.matches.length === 0) return null;
-      if (run) run.phase = "recognizing-skills";
+      if (run) await this.enterPhase(run, "recognizing-skills");
       const skillAssignments = await this.assignSkills(
         [candidate.description, candidate.content].join("\n"),
         candidate.skillKey,
@@ -463,7 +510,7 @@ export function createMemoryPipeline(
   // extractor client that could later make a network call.
   if (config.memoryEnabled === false) return new NoopMemoryPipeline();
   const recognizer = options.recognizer ?? createRuntimeRecognizer(config);
-  return new RealMemoryPipeline(store, createExtractorClient(config), {
+  return new RealMemoryPipeline(store, options.extractor ?? createExtractorClient(config), {
     extractTimeoutMs: config.memoryExtractTimeoutMs,
     ...options,
     ...(recognizer ? { recognizer } : {}),

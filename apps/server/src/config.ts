@@ -79,6 +79,11 @@ const envSchema = z.object({
   // Cosine-drift above which a node's work is a NEW subject, so the accumulated
   // node buffer is flushed to consolidation mid-DAG. Calibrated ~0.55 on the
   // general drift model (scripts/probe-drift.mjs); range 0..2.
+  /**
+   * Offline end-to-end demo: a mock runner, a branched offline plan, and a
+   * deterministic mid-DAG consolidation trigger. No model, key or container.
+   */
+  DEMO_MODE: z.coerce.boolean().default(false),
   MEMORY_NODE_DRIFT_THRESHOLD: z.coerce.number().min(0).max(2).default(0.55),
   MEMORY_RECOGNITION_AGENT_THRESHOLD: z.coerce.number().min(-1).max(1).default(0.35),
   MEMORY_RECOGNITION_SKILL_THRESHOLD: z.coerce.number().min(-1).max(1).default(0.45),
@@ -162,6 +167,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
     // local checkpoint dir — provisioned by scripts/fetch-drift-model.py.
     memoryDriftModelDir: path.resolve(env.MEMORY_DRIFT_MODEL_DIR),
     memoryNodeDriftThreshold: env.MEMORY_NODE_DRIFT_THRESHOLD,
+    demoMode: env.DEMO_MODE,
     memoryRecognitionAgentThreshold: env.MEMORY_RECOGNITION_AGENT_THRESHOLD,
     memoryRecognitionSkillThreshold: env.MEMORY_RECOGNITION_SKILL_THRESHOLD,
     memoryEmbeddingTimeoutMs: env.MEMORY_EMBEDDING_TIMEOUT_MS,

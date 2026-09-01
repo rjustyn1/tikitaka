@@ -9,6 +9,8 @@ import {
 } from "./config.js";
 import { createExtractorClient } from "./memory/extractor-client.js";
 import { createMemoryPipeline } from "./memory/pipeline.js";
+import { DemoExtractorClient } from "./demo/demo-extractor.js";
+import { DemoPlannerClient } from "./demo/demo-planner.js";
 import { FakePlannerClient, TaskPlanner } from "./memory/planner.js";
 import { createRunner } from "./runner-factory.js";
 import { JsonStore } from "./store.js";
@@ -41,10 +43,32 @@ const runner = createRunner(config);
  * So decide it ONCE, here, out loud, instead of rediscovering it per task.
  */
 const arkReady = isArkConfigured(config);
-const effectiveExtractor =
-  config.memoryExtractor === "ark" && !arkReady ? "fake" : config.memoryExtractor;
+// Demo mode is entirely offline: the canned extractor, and the deterministic
+// recognizer that actually routes notes to Agents.
+const effectiveExtractor = config.demoMode
+  ? "fake"
+  : config.memoryExtractor === "ark" && !arkReady
+    ? "fake"
+    : config.memoryExtractor;
 
-if (config.nodeEnv !== "test" && effectiveExtractor !== config.memoryExtractor) {
+if (config.demoMode && config.nodeEnv !== "test") {
+  console.warn(
+    [
+      "",
+      "  DEMO_MODE=1 — the whole workflow runs offline.",
+      "",
+      "    - agents      : MockAgentRunner (writes real files, no Codex)",
+      "    - plan        : DemoPlannerClient (branched DAG with a join)",
+      "    - extraction  : canned notes, recognizer forced to `fake`",
+      "    - consolidator: fires every " + 2 + " completed nodes, mid-DAG",
+      "",
+      "  Nothing here calls a model. Unset DEMO_MODE for the real thing.",
+      "",
+    ].join("\n"),
+  );
+}
+
+if (config.nodeEnv !== "test" && !config.demoMode && effectiveExtractor !== config.memoryExtractor) {
   console.warn(
     [
       "",
@@ -65,7 +89,12 @@ if (config.nodeEnv !== "test" && effectiveExtractor !== config.memoryExtractor) 
 // W1 + W2 - the real governed-memory pipeline.
 const memoryPipeline = createMemoryPipeline(
   store,
-  { ...config, memoryExtractor: effectiveExtractor },
+  {
+    ...config,
+    memoryExtractor: effectiveExtractor,
+    // The local SBERT bridge is not part of the offline demo.
+    ...(config.demoMode ? { memoryRecognizer: "fake" as const } : {}),
+  },
   {
     // Model-backed routing may propose recipients, but it cannot auto-grant
     // until a reviewed holdout explicitly authorizes it. That applies to any
@@ -80,12 +109,21 @@ const memoryPipeline = createMemoryPipeline(
       config.reviewAllSkills ||
       ((config.memoryRecognizer === "sbert" || config.memoryRecognizer === "ark") &&
         !config.memoryAutoGrantEnabled),
+    // Offline stages finish in milliseconds; hold each one so the status
+    // panel is legible during a demo. No effect outside DEMO_MODE.
+    // Long enough to read each stage while the next DAG step runs.
+    ...(config.demoMode ? { phaseDelayMs: 2200, dedupeBySkillKey: true } : {}),
+    // Notes that describe the work the demo actually did, rather than the
+    // canned upload notes the offline stub returns for any input.
+    ...(config.demoMode ? { extractor: new DemoExtractorClient() } : {}),
   },
 );
 const planner = new TaskPlanner(
-  effectiveExtractor === "ark"
-    ? createExtractorClient(config)
-    : new FakePlannerClient(),
+  config.demoMode
+    ? new DemoPlannerClient()
+    : effectiveExtractor === "ark"
+      ? createExtractorClient(config)
+      : new FakePlannerClient(),
   config.memoryExtractTimeoutMs,
   (reason) => {
     if (config.nodeEnv !== "test") {
